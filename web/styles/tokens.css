@@ -1,0 +1,277 @@
+/* ==========================================================================
+   台股研究儀表板 — Design Tokens
+   原則：Primitive → Semantic。外部只能引用 Semantic 層。
+   ⚠️ 台股慣例：--color-up = 紅、--color-down = 綠（與西方相反）。
+   ========================================================================== */
+
+@layer tokens {
+  :root {
+    /* ---------- Primitive · Red (漲) ---------- */
+    --up-50:  #FEF2F1;
+    --up-100: #FDE1DD;
+    --up-200: #FABFB7;
+    --up-300: #F5958A;
+    --up-400: #EC6558;
+    --up-500: #D9342B;
+    --up-600: #B8241C;
+    --up-700: #961912;
+    --up-800: #73120D;
+    --up-900: #4F0A07;
+
+    /* ---------- Primitive · Green (跌) ---------- */
+    --down-50:  #F0FAF3;
+    --down-100: #D4F0DD;
+    --down-200: #A7E0B8;
+    --down-300: #6FCB8A;
+    --down-400: #3AAE5F;
+    --down-500: #16A34A;
+    --down-600: #108038;
+    --down-700: #0B6128;
+    --down-800: #074A1E;
+    --down-900: #033114;
+
+    /* ---------- Primitive · Brand (深鋼藍) ---------- */
+    --brand-50:  #EEF2F8;
+    --brand-100: #D6DEEB;
+    --brand-200: #B0BFDA;
+    --brand-300: #7E93BE;
+    --brand-400: #51699E;
+    --brand-500: #2F4A80;
+    --brand-600: #243A68;
+    --brand-700: #1B2D51;
+    --brand-800: #131F3A;
+    --brand-900: #0A1325;
+
+    /* ---------- Primitive · Neutral ---------- */
+    --neutral-50:  #F8FAFC;
+    --neutral-100: #F1F4F8;
+    --neutral-200: #E3E8EF;
+    --neutral-300: #CBD2DC;
+    --neutral-400: #9AA4B2;
+    --neutral-500: #697586;
+    --neutral-600: #4A5566;
+    --neutral-700: #364152;
+    --neutral-800: #202939;
+    --neutral-900: #121926;
+    --neutral-950: #0A0E17;
+
+    /* ---------- Primitive · Semantic accents ---------- */
+    --info-500: #0E7AB8;
+    --warning-500: #D98A00;
+    --error-500: #B3261E;
+  }
+
+  /* ---------- Semantic · Light (預設) ---------- */
+  :root,
+  [data-theme="light"] {
+    color-scheme: light;
+
+    /* 表面 */
+    --bg-canvas:    var(--neutral-50);
+    --bg-surface:   #FFFFFF;
+    --bg-subtle:    var(--neutral-100);
+    --bg-muted:     var(--neutral-200);
+    --border-default: var(--neutral-200);
+    --border-strong:  var(--neutral-300);
+
+    /* 文字 */
+    --text-primary:   var(--neutral-900);
+    --text-secondary: var(--neutral-700);
+    --text-tertiary:  var(--neutral-500);
+    --text-disabled:  var(--neutral-400);
+    --text-inverse:   #FFFFFF;
+
+    /* 漲跌（台股慣例） */
+    --color-up:        var(--up-600);
+    --color-up-bg:     var(--up-50);
+    --color-up-border: var(--up-300);
+    --color-down:        var(--down-600);
+    --color-down-bg:     var(--down-50);
+    --color-down-border: var(--down-300);
+    --color-flat:    var(--neutral-500);
+    --color-flat-bg: var(--neutral-100);
+
+    /* 分數色階（五段，對應現有 color_score） */
+    --score-strong-pos-bg: #CDEBD6; --score-strong-pos-fg: #0B5227;
+    --score-pos-bg:        #E3F3E8; --score-pos-fg:        #1E6E35;
+    --score-neutral-bg:    #FFF4D6; --score-neutral-fg:    #8A5A00;
+    --score-caution-bg:    #FFE2DE; --score-caution-fg:    #962017;
+    --score-danger-bg:     #FFC4BC; --score-danger-fg:     #6B0D07;
+
+    /* 推薦 tag */
+    --reco-buy-fg:  #FFFFFF; --reco-buy-bg:  var(--up-600);
+    --reco-hold-fg: #6B4700; --reco-hold-bg: #FFE7A6;
+    --reco-sell-fg: #FFFFFF; --reco-sell-bg: var(--down-600);
+
+    /* Info / Warning / Error 面板（非漲跌類提示） */
+    --info-bg:      var(--brand-50);
+    --info-fg:      var(--brand-700);
+    --info-border:  var(--brand-200);
+    --warning-bg:     #FFF3DC;
+    --warning-fg:     var(--warning-500);
+    --warning-border: rgba(217, 138, 0, 0.35);
+    --error-bg:     #FBE8E6;
+    --error-fg:     var(--error-500);
+    --error-border: rgba(179, 38, 30, 0.35);
+
+    /* 圖表 */
+    --chart-grid: var(--neutral-200);
+    --chart-axis: var(--neutral-500);
+    /* tooltip：InfoTip 與圖表 tooltip 共用同一組 token，避免漂移 */
+    --tooltip-bg: var(--neutral-900);
+    --tooltip-fg: #FFFFFF;
+    --tooltip-border: rgba(255, 255, 255, 0.08);
+    --chart-tooltip-bg: var(--tooltip-bg);
+    --chart-tooltip-fg: var(--tooltip-fg);
+    /* 圖表系列色（短/中/長/綜合分數線、K 線 MA20/MA60）；
+       composite 與 ma60 都用紫，因 composite 在分數折線圖、ma60 在 K 線圖，不同框 */
+    --chart-series-short:     var(--up-500);
+    --chart-series-mid:       var(--brand-500);
+    --chart-series-long:      var(--down-500);
+    --chart-series-composite: #7048E8;
+    --chart-ma20:             var(--brand-500);
+    --chart-ma60:             #7048E8;
+
+    --focus-ring: 0 0 0 3px rgb(47 74 128 / 0.35);
+
+    /* Brand-tinted surfaces for hover/selected/active states.
+       兩主題分開定義，避免 light: brand-50 / dark: rgba(...) 的雙寫散在 className。 */
+    --brand-tint-soft:    var(--brand-50);   /* 輕：hover */
+    --brand-tint:         var(--brand-50);   /* 中：selected card / icon bg */
+    --brand-tint-strong:  var(--brand-50);   /* 強：active tag bg */
+    --brand-tint-border:  var(--brand-200);  /* active tag border */
+  }
+
+  /* ---------- Semantic · Dark ---------- */
+  [data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg-canvas:    #0B0D11;
+    --bg-surface:   #141821;
+    --bg-subtle:    #1A1E28;
+    --bg-muted:     #262B36;
+    --border-default: #262B36;
+    --border-strong:  #3B4252;
+
+    --text-primary:   #E5E9F0;
+    --text-secondary: #B0B8C4;
+    --text-tertiary:  #858E9E;
+    --text-disabled:  #5B6472;
+    --text-inverse:   #0A0E17;
+
+    --color-up:        #E85A4F;
+    --color-up-bg:     rgba(217, 52, 43, 0.14);
+    --color-up-border: rgba(217, 52, 43, 0.45);
+    --color-down:        #4FB872;
+    --color-down-bg:     rgba(22, 163, 74, 0.14);
+    --color-down-border: rgba(22, 163, 74, 0.45);
+    --color-flat:    #858E9E;
+    --color-flat-bg: rgba(134, 142, 158, 0.12);
+
+    --score-strong-pos-bg: #153D22; --score-strong-pos-fg: #9FDDB2;
+    --score-pos-bg:        #1B2E22; --score-pos-fg:        #6FCB8A;
+    --score-neutral-bg:    #2E2411; --score-neutral-fg:    #F5C054;
+    --score-caution-bg:    #3A1612; --score-caution-fg:    #F29287;
+    --score-danger-bg:     #4E110B; --score-danger-fg:     #FFB5AB;
+
+    --reco-buy-fg:  #FFFFFF; --reco-buy-bg:  var(--up-500);
+    --reco-hold-fg: #1A1D23; --reco-hold-bg: #F5C054;
+    --reco-sell-fg: #FFFFFF; --reco-sell-bg: var(--down-500);
+
+    /* Info / Warning / Error 面板（暗色） */
+    --info-bg:      rgba(126, 147, 190, 0.15);
+    --info-fg:      var(--brand-300);
+    --info-border:  rgba(126, 147, 190, 0.35);
+    --warning-bg:     rgba(217, 138, 0, 0.15);
+    --warning-fg:     #F2B24C;
+    --warning-border: rgba(242, 178, 76, 0.35);
+    --error-bg:     rgba(179, 38, 30, 0.18);
+    --error-fg:     #F2615A;
+    --error-border: rgba(242, 97, 90, 0.45);
+
+    --chart-grid: #262B36;
+    --chart-axis: #858E9E;
+    /* dark mode：tooltip 改用淺底深字，提高對比 */
+    --tooltip-bg: #F8FAFC;
+    --tooltip-fg: #0B0D11;
+    --tooltip-border: rgba(0, 0, 0, 0.08);
+    --chart-tooltip-bg: var(--tooltip-bg);
+    --chart-tooltip-fg: var(--tooltip-fg);
+    /* dark mode：series 色改用較亮版本，深底上對比夠 */
+    --chart-series-short:     #EC6558;  /* up-400，比 light 的 up-500 亮 */
+    --chart-series-mid:       #7E93BE;  /* brand-300 */
+    --chart-series-long:      #4FB872;  /* 對齊 dark 的 --color-down */
+    --chart-series-composite: #9D8DF1;  /* violet 亮版 */
+    --chart-ma20:             #7E93BE;
+    --chart-ma60:             #9D8DF1;
+
+    --focus-ring: 0 0 0 3px rgb(126 157 213 / 0.45);
+
+    /* dark mode：brand 用低飽和的 alpha overlay，分三個層次以維持 hover/selected/active 對比 */
+    --brand-tint-soft:    rgba(126, 147, 190, 0.08);
+    --brand-tint:         rgba(126, 147, 190, 0.12);
+    --brand-tint-strong:  rgba(126, 147, 190, 0.18);
+    --brand-tint-border:  rgba(126, 147, 190, 0.35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+
+      --bg-canvas:    #0B0D11;
+      --bg-surface:   #141821;
+      --bg-subtle:    #1A1E28;
+      --bg-muted:     #262B36;
+      --border-default: #262B36;
+      --border-strong:  #3B4252;
+
+      --text-primary:   #E5E9F0;
+      --text-secondary: #B0B8C4;
+      --text-tertiary:  #858E9E;
+      --text-disabled:  #5B6472;
+      --text-inverse:   #0A0E17;
+
+      --color-up:        #E85A4F;
+      --color-up-bg:     rgba(217, 52, 43, 0.14);
+      --color-up-border: rgba(217, 52, 43, 0.45);
+      --color-down:        #4FB872;
+      --color-down-bg:     rgba(22, 163, 74, 0.14);
+      --color-down-border: rgba(22, 163, 74, 0.45);
+      --color-flat:    #858E9E;
+      --color-flat-bg: rgba(134, 142, 158, 0.12);
+
+      --score-strong-pos-bg: #153D22; --score-strong-pos-fg: #9FDDB2;
+      --score-pos-bg:        #1B2E22; --score-pos-fg:        #6FCB8A;
+      --score-neutral-bg:    #2E2411; --score-neutral-fg:    #F5C054;
+      --score-caution-bg:    #3A1612; --score-caution-fg:    #F29287;
+      --score-danger-bg:     #4E110B; --score-danger-fg:     #FFB5AB;
+
+      --info-bg:      rgba(126, 147, 190, 0.15);
+      --info-fg:      var(--brand-300);
+      --info-border:  rgba(126, 147, 190, 0.35);
+      --warning-bg:     rgba(217, 138, 0, 0.15);
+      --warning-fg:     #F2B24C;
+      --warning-border: rgba(242, 178, 76, 0.35);
+      --error-bg:     rgba(179, 38, 30, 0.18);
+      --error-fg:     #F2615A;
+      --error-border: rgba(242, 97, 90, 0.45);
+
+      --tooltip-bg: #F8FAFC;
+      --tooltip-fg: #0B0D11;
+      --tooltip-border: rgba(0, 0, 0, 0.08);
+      --chart-tooltip-bg: var(--tooltip-bg);
+      --chart-tooltip-fg: var(--tooltip-fg);
+      --chart-series-short:     #EC6558;
+      --chart-series-mid:       #7E93BE;
+      --chart-series-long:      #4FB872;
+      --chart-series-composite: #9D8DF1;
+      --chart-ma20:             #7E93BE;
+      --chart-ma60:             #9D8DF1;
+
+      --brand-tint-soft:    rgba(126, 147, 190, 0.08);
+      --brand-tint:         rgba(126, 147, 190, 0.12);
+      --brand-tint-strong:  rgba(126, 147, 190, 0.18);
+      --brand-tint-border:  rgba(126, 147, 190, 0.35);
+    }
+  }
+}

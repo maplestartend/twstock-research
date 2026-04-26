@@ -1,0 +1,138 @@
+# 維運手冊
+
+> 推播、備份、Observability、測試。日常使用見 [../USAGE.md](../USAGE.md)。
+
+## 推播通知設定
+
+由 [../app/notifier.py](../app/notifier.py) 抽象出的通知層，目前實作 Discord，未來可擴充 ntfy / Telegram / Email。
+觸發點：`--push` 時送出早報、執行中止（top-level exception）、收工時的警告總結（WARNING+ 記錄）。
+
+> LINE Notify 已於 2025/3/31 停止服務，原本的 `LINE_NOTIFY_TOKEN` 已不再有效，改用 Discord。
+
+### Discord（推薦）
+
+1. Discord 選一個頻道 → 頻道設定 → 整合 → 建立 Webhook → 複製 Webhook URL
+2. 貼進 `config.yaml`：
+   ```yaml
+   notify:
+     channel: discord
+     discord:
+       webhook_url: "https://discord.com/api/webhooks/..."
+   ```
+3. 跑時加 `--push`：
+   ```bash
+   python -m scripts.market_update --push
+   ```
+
+### 環境變數覆寫
+
+- `NOTIFY_CHANNEL=none`：暫時關掉推播，不動 yaml
+- `DISCORD_WEBHOOK_URL=...`：覆寫 yaml 裡的 webhook URL（換新 URL 但不想碰檔案）
+
+### 新增其他管道
+
+在 `app/notifier.py` 加 `_send_xxx(message, title, cfg)` 函式，主 `notify()` 函式多一個分支，config 改 `channel: xxx` 即可。無需碰其他檔案。
+
+> 早報同時會存到 `reports/YYYY-MM-DD.md` 與 `reports/latest.md`，即使沒推播也有本地檔案可查。
+
+## 備份（opt-in）
+
+備份機制**預設關閉**。想啟用需兩步：
+
+1. **找到 Google Drive 同步資料夾**：安裝 Google Drive for Desktop 後會出現 `C:\Users\<你>\Google Drive\My Drive\` 或 `G:\My Drive\` 路徑
+2. **改 config.yaml** 的 `backup:` 區塊：
+   ```yaml
+   backup:
+     enabled: true
+     path: "G:/My Drive/台股備份"
+     keep_days: 14
+     keep_weeks: 8
+     keep_months: 12
+   ```
+
+之後每次 `market_update` 跑完會自動用 `VACUUM INTO` 產生一份 `stock_YYYYMMDD.db`（原子且一致）到該資料夾，Google Drive 會自動上雲。保留規則：最近 14 天每日、每週一保留 8 週、每月 1 號保留 12 個月。
+
+若 path 資料夾不存在會 fallback 到本機 `data/backup/`（並記 log 警告）。
+
+## 執行記錄 (Observability)
+
+每次 `market_update` 執行都會記到 `run_log` 表（自動建）。查詢：
+
+```bash
+python -m scripts.run_stats                # 近 30 天統計（成功率、平均耗時、警告數）
+python -m scripts.run_stats --tail 20      # 最近 20 次明細
+python -m scripts.run_stats --show-errors  # 只看錯誤
+```
+
+用途：排程設了之後偶爾掃一眼，失敗率突升或平均耗時明顯變長就表示該 debug。
+
+## 測試
+
+核心純函式模組 + router 整合測試：
+
+```bash
+pip install pytest
+python -m pytest tests/ -q
+# 80 passed in 1s
+```
+
+覆蓋：
+- `tests/test_risk.py`：ATR、部位計算、集中度
+- `tests/test_adjuster.py`：還原價因子鏈
+- `tests/test_rubric.py`：評分上下界、缺資料處理、方向性
+- `tests/test_preset.py`：權重 preset CRUD
+- `tests/test_routers.py`：FastAPI router 整合（用 TestClient + 合成 SQLite），含 holdings ATR 欄位 schema 檢查
+- `tests/test_backtest_engine.py`：策略迴圈純邏輯——漲跌停跳過 / 切片 flat-reset / Sharpe / 盤中暫態
+
+改 `app/risk.py`、`app/data/adjuster.py`、`app/scoring/rubric.py`、`app/backtest/engine.py`、`api/routers/*` 時先跑一次測試再 commit，可以避免 regression。
+
+> 前端的數字格式化 (`fmtPrice` / `fmtScore` / `fmtPct`) 邏輯搬到 `web/lib/format.ts`，由 TypeScript 端維護。
+
+## .bat 工具盤點
+
+公開（雙擊用）：
+
+| 檔案 | 用途 |
+|------|------|
+| `launch.bat` | 啟動 FastAPI:8000 + Next.js:3000 + 開瀏覽器 |
+| `stop.bat` | call `_kill-servers.bat` → 驗收兩個 port 都釋出 |
+| `restart.bat` | call `_kill-servers.bat` → `snapshot_today()` 強制重產 signal_history → call `_launch-servers.bat` |
+| `status.bat` | 顯示 port 8000 / 3000 LISTENING 狀態（含 PID）+ `signal_history.MAX(as_of)` vs `daily_price.MAX(date)` 對齊狀況 |
+| `daily-update.bat` | 跑 `scripts.market_update --push`，給 Windows 排程跑（人也可手動雙擊） |
+| `install-schedule.bat` | 註冊 Windows 工作排程，每日 15:30 自動跑 daily-update |
+| `uninstall-schedule.bat` | 移除排程 |
+
+私有（被其他 .bat call，不要雙擊）：
+
+| 檔案 | 用途 |
+|------|------|
+| `_launch-servers.bat` | `start "title" cmd /k uvicorn / next dev` 把兩個 server 開在獨立 cmd 視窗 |
+| `_kill-servers.bat` | `netstat | findstr LISTENING | taskkill` + 收掉 `TW Stock *` 開頭的 cmd 視窗 |
+
+**為什麼 restart.bat 要重產 snapshot？**
+
+`ensure_fresh()`（[../app/scoring/snapshot_freshness.py](../app/scoring/snapshot_freshness.py)）只在 `signal_history.MAX(as_of) < daily_price.MAX(date)` 時才會重跑。改了 `app/scoring/engine.py` / `rubric.py` / `radar.py` 但沒新進資料的話，日期不會變，`ensure_fresh` 看不出 engine 換版 → 雷達/自選讀的還是舊邏輯算的快照、個股詳情頁是即時呼叫新 engine → 兩邊分數對不上。`restart.bat` 在重起前無條件 `snapshot_today()` 一次解決這個問題。
+
+**找不到 process 在哪？** 雙擊 `stop.bat`。手動的話：
+```
+netstat -ano | findstr ":8000 :3000 "
+taskkill /PID <pid> /T /F
+```
+
+## 前端 dev / build 工序（地雷）
+
+**規則：在 `next dev` 還活著的時候不要跑 `npm run build`。**
+
+- **Why**：兩者寫同一個 `web/.next/` 目錄。`next dev` 是逐頁增量 compile，`next build` 是一次寫完整 chunk graph。並行跑時 chunk hash / build manifest 會互相覆蓋 → dev server 直接 500、所有頁面噴 `Cannot find module './XXX.js'` / `vendor-chunks/clsx.js MODULE_NOT_FOUND`。一旦壞了，連停掉 build 也救不回來，必須整個收掉重來。
+- **怎麼修壞掉的狀態**：
+  1. 雙擊 `stop.bat`
+  2. `rm -rf web/.next`
+  3. 重跑 `launch.bat`
+- **想做 production build 比對 bundle size**：
+  - 先把 `next dev` 整個收掉
+  - `cd web && npm run build`
+  - 量完數字後想看 production 跑起來 → `npm start --port 3001`
+  - 完事後再回 `launch.bat` 起 dev
+- **想拍截圖驗收 mobile / 視覺**：用 dev server（`launch.bat` 那台 port 3000）就夠，**不要為了拍乾淨截圖而跑 build**。dev server 拍出來和 prod 視覺一致，差別只是 First Load JS 大小。
+
+> 如果你（或 Claude）正在批次改 10+ 個檔案，dev 的 hot-reload 偶爾會吃不消（`Jest worker exceeded retry limit`），這時用上面的「修壞掉的狀態」三步驟還原即可。
