@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+config.yaml
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/cache/
+data/backup/
+.vscode/
+.idea/
+.pytest_cache/
+*.log
+logs/
+reports/
+
+# 個人 memory（跨 session 私人筆記，不進 repo）
+memory/
+
+# Web (Next.js)
+web/node_modules/
+web/.next/
+web/out/
+web/.turbo/
+
+# Screenshot 輸出（每次跑會重產，不進 git；script 本身有進）
+web/scripts/screenshots/
+web/scripts/screenshots-all/
+web/scripts/screenshots-mobile/
+
+# 暫時除錯產物
+probe*.json
+probe*.html

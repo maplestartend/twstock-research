@@ -1,0 +1,191 @@
+"""市場級資料更新：用 TWSE + TPEx 官方 Open Data，每天一次全市場抓取。
+
+每日流程（~8 個 HTTP requests）：
+1. TWSE daily OHLCV      → daily_price
+2. TWSE institutional    → institutional
+3. TWSE margin           → margin
+4. TWSE PER/PBR          → per_pbr
+5-8. 同上，但換成 TPEx
+
+也負責：
+- 更新 stock_info（以 OHLCV 裡的代號/名稱為準）
+- 記錄每個 dataset 最後抓到哪天
+"""
+from __future__ import annotations
+
+import logging
+from datetime import date, datetime, timedelta
+from typing import Iterable
+
+import pandas as pd
+
+from app.data.db import Database
+from app.data.tpex_fetcher import TpexFetcher, TpexError
+from app.data.twse_fetcher import TwseFetcher, TwseError
+
+logger = logging.getLogger(__name__)
+
+
+class MarketUpdater:
+    def __init__(self, db: Database, request_delay: float = 1.0):
+        self.db = db
+        self.twse = TwseFetcher(request_delay=request_delay)
+        self.tpex = TpexFetcher(request_delay=request_delay)
+
+    # ======================================================================
+    # 單日抓取 + 寫入
+    # ======================================================================
+    def fetch_one_date(self, date_ymd: str) -> dict[str, int]:
+        """抓取單一日期，兩個市場共 8 個端點。回傳每個 dataset 寫入的筆數。"""
+        results: dict[str, int] = {}
+
+        def _run(label: str, fn, table: str, market_tag: str | None = None):
+            try:
+                df = fn(date_ymd)
+            except (TwseError, TpexError) as e:
+                logger.warning("%s %s 失敗: %s", market_tag, label, e)
+                return 0
+            if df.empty:
+                return 0
+            n = self.db.upsert_df(df, table)
+            return n
+
+        # OHLCV：要先抓，因為也更新 stock_info
+        twse_ohlcv = self._safe(self.twse.daily_ohlcv, date_ymd, label="TWSE OHLCV")
+        tpex_ohlcv = self._safe(self.tpex.daily_ohlcv, date_ymd, label="TPEx OHLCV")
+
+        # 指數（與 OHLCV 共用 MI_INDEX 請求，但為了封裝清楚還是獨立 call 一次）
+        indices = self._safe(self.twse.daily_indices, date_ymd, label="TWSE 指數")
+        if not indices.empty:
+            results["index_daily"] = self.db.upsert_df(indices, "index_daily")
+
+        price_frames: list[pd.DataFrame] = []
+        info_frames: list[pd.DataFrame] = []
+        for df, market in [(twse_ohlcv, "twse"), (tpex_ohlcv, "tpex")]:
+            if df.empty:
+                continue
+            # 拆出 stock_info
+            info = df[["stock_id", "stock_name"]].drop_duplicates("stock_id").copy()
+            info["type"] = market
+            info_frames.append(info)
+            # daily_price 丟掉 stock_name
+            price_frames.append(df.drop(columns=["stock_name"]))
+
+        if info_frames:
+            info_all = pd.concat(info_frames, ignore_index=True).drop_duplicates("stock_id")
+            # 用 UPSERT 只更新 stock_name 與 type；industry_category 改由 scripts/refresh_industry.py 單獨補
+            # is_tradable 寫入時就用 _STOCK_PATTERN 算好（避免新插入的權證 row 吃 DEFAULT 1 漏網）
+            from app.scoring.radar import _STOCK_PATTERN  # 共用同一份正則
+            with self.db.connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO stock_info (stock_id, stock_name, type, is_tradable)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(stock_id) DO UPDATE SET
+                        stock_name = excluded.stock_name,
+                        type = excluded.type,
+                        is_tradable = excluded.is_tradable,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    [
+                        (
+                            r["stock_id"],
+                            r["stock_name"],
+                            r["type"],
+                            1 if _STOCK_PATTERN.match(str(r["stock_id"]) or "") else 0,
+                        )
+                        for _, r in info_all.iterrows()
+                    ],
+                )
+                conn.commit()
+        if price_frames:
+            price_all = pd.concat(price_frames, ignore_index=True)
+            results["daily_price"] = self.db.upsert_df(price_all, "daily_price")
+
+        # 其他三個 dataset
+        for label, twse_fn, tpex_fn, table in [
+            ("institutional", self.twse.institutional, self.tpex.institutional, "institutional"),
+            ("margin", self.twse.margin, self.tpex.margin, "margin"),
+            ("per_pbr", self.twse.per_pbr, self.tpex.per_pbr, "per_pbr"),
+        ]:
+            frames = []
+            for fn, market in [(twse_fn, "twse"), (tpex_fn, "tpex")]:
+                df = self._safe(fn, date_ymd, label=f"{market} {label}")
+                if not df.empty:
+                    frames.append(df)
+            if frames:
+                combined = pd.concat(frames, ignore_index=True)
+                results[table] = self.db.upsert_df(combined, table)
+
+        return results
+
+    def _safe(self, fn, *args, label: str = "") -> pd.DataFrame:
+        try:
+            return fn(*args)
+        except (TwseError, TpexError) as e:
+            logger.warning("%s 失敗: %s", label, e)
+            return pd.DataFrame()
+
+    # ======================================================================
+    # 日期範圍批次
+    # ======================================================================
+    def fetch_date_range(self, start: str | date, end: str | date, skip_weekends: bool = True) -> None:
+        """抓取日期範圍（含端點）。遇到非交易日（假日）會被 TWSE/TPEx 回傳空資料自動跳過。"""
+        if isinstance(start, str):
+            start = datetime.strptime(start, "%Y-%m-%d").date()
+        if isinstance(end, str):
+            end = datetime.strptime(end, "%Y-%m-%d").date()
+
+        d = start
+        n_days = 0
+        while d <= end:
+            if skip_weekends and d.weekday() >= 5:
+                d += timedelta(days=1)
+                continue
+            date_ymd = d.strftime("%Y%m%d")
+            logger.info("抓取 %s", d.isoformat())
+            res = self.fetch_one_date(date_ymd)
+            if res:
+                logger.info("  %s", ", ".join(f"{k}={v}" for k, v in res.items()))
+            else:
+                logger.info("  （非交易日或無資料）")
+            # 更新 fetch_log：每個 table 各記一次 last_date
+            for table in res:
+                self.db.set_last_fetch_date("__market__", table, d.isoformat())
+            n_days += 1
+            d += timedelta(days=1)
+        logger.info("完成 %d 個日期", n_days)
+
+    # ======================================================================
+    # 從 last_fetch_date 自動續抓至今
+    # ======================================================================
+    # 四個核心 dataset 的 fetch_log 進度都要看齊 — 避免「早上 OHLCV 發佈時跑一次、
+    # 但三大法人/融資/PER 那時還沒出」造成 daily_price 搶跑、其他 dataset 永遠補不回來。
+    _TRACKED_TABLES = ("daily_price", "institutional", "margin", "per_pbr")
+
+    def update_incremental(self, default_start: str, today: date | None = None) -> None:
+        today = today or date.today()
+
+        # 取各 dataset 的 last_date，以「最舊的那個」當整體進度指標。
+        # 因為 upsert 是 idempotent（INSERT OR REPLACE），重抓已有的日期不會有副作用。
+        last_pairs = [
+            (t, self.db.get_last_fetch_date("__market__", t))
+            for t in self._TRACKED_TABLES
+        ]
+        last_pairs = [(t, d) for t, d in last_pairs if d]
+
+        if last_pairs:
+            laggard_table, earliest = min(last_pairs, key=lambda x: x[1])
+            start = datetime.strptime(earliest, "%Y-%m-%d").date() + timedelta(days=1)
+            if laggard_table != "daily_price":
+                logger.info(
+                    "%s 落後（last_date=%s），將從 %s 起重抓以補齊所有 dataset",
+                    laggard_table, earliest, start,
+                )
+        else:
+            start = datetime.strptime(default_start, "%Y-%m-%d").date()
+
+        if start > today:
+            logger.info("已經是最新")
+            return
+        self.fetch_date_range(start, today)

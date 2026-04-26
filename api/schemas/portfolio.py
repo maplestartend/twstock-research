@@ -1,0 +1,79 @@
+"""持股 / 風險 DTO。"""
+from __future__ import annotations
+
+from api.schemas.common import CamelModel, StockRef, StockRefOptional
+
+
+class PortfolioSummary(CamelModel):
+    total_market_value: float = 0.0
+    total_cost: float = 0.0
+    unrealized_pnl: float = 0.0          # 毛損益（不含賣出成本）
+    unrealized_pnl_pct: float | None = None
+    net_unrealized_pnl: float = 0.0      # 扣預估賣出手續費 + 證交稅 0.3%
+    net_unrealized_pnl_pct: float | None = None
+    estimated_sell_costs: float = 0.0    # 預估「現在全賣」的稅費總和
+    today_pnl: float = 0.0
+    today_pnl_pct: float | None = None
+    holding_count: int = 0
+
+
+class HoldingRow(StockRef):
+    shares: float
+    avg_cost: float
+    price: float | None = None
+    prev_close: float | None = None
+    today_pct: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None       # 毛
+    unrealized_pnl_pct: float | None = None
+    net_unrealized_pnl: float | None = None   # 扣預估賣出成本
+    net_unrealized_pnl_pct: float | None = None
+    estimated_sell_costs: float | None = None
+    short_score: float | None = None
+    mid_score: float | None = None
+    long_score: float | None = None
+    composite_score: float | None = None
+    warnings: list[str] = []
+    # ATR 動態停損：trailing 優先（有 entry_date 才算），其次 fixed（用 avg_cost 當參考）
+    atr_stop: float | None = None        # 停損價
+    atr_distance_pct: float | None = None  # (latest_close - stop) / latest_close，正值表示距停損還有空間
+    atr_kind: str | None = None          # "trailing" | "fixed" | None
+    atr_below_stop: bool = False         # latest_close < stop → UI 應顯示紅色警示
+
+
+class RiskAlert(CamelModel):
+    severity: str  # "info" | "warning" | "critical"
+    title: str
+    description: str
+    stock_id: str | None = None
+
+
+class TradeRow(StockRefOptional):
+    id: int
+    trade_date: str
+    action: str  # "BUY" | "SELL"
+    shares: float
+    price: float
+    fee: float | None = None
+    tax: float | None = None
+    note: str | None = None
+
+
+class RealizedPnlRow(StockRefOptional):
+    buy_date: str
+    sell_date: str
+    shares: float
+    buy_price: float
+    sell_price: float
+    cost: float
+    proceed: float
+    pnl: float
+    pnl_pct: float | None = None
+
+
+class RealizedPnlSummary(CamelModel):
+    total_pnl: float = 0.0
+    pair_count: int = 0
+    win_count: int = 0
+    win_rate: float | None = None
+    rows: list[RealizedPnlRow] = []

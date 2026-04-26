@@ -1,0 +1,22 @@
+pandas>=2.2              # 實環境跑在 3.x；test suite 全綠故解除上限
+numpy>=2.0               # pandas-ta 0.4+ 已支援 numpy 2
+requests>=2.32
+PyYAML>=6.0
+python-dateutil>=2.9
+pandas-ta>=0.4           # 0.4 系列開始支援 numpy 2
+pyarrow>=14              # 雷達磁碟快取 (parquet)
+
+# UI 後端（Next.js 前端的 API 層，見 api/）
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.10
+
+# 測試（選用）
+pytest>=9.0
+httpx>=0.28              # FastAPI starlette.testclient 在執行時 import；缺 httpx 時整批 router 測試 collection 階段直接 error
+
+# ======================================================================
+# 若要重現穩定環境，使用 requirements.lock.txt 而非此檔：
+#     py -m pip install -r requirements.lock.txt
+# 此檔用於首次安裝與升級試驗時使用。
+# ======================================================================

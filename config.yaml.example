@@ -1,0 +1,36 @@
+finmind:
+  # 也可用環境變數 FINMIND_TOKEN 覆寫此欄，方便不動 yaml 就換 token
+  token: "YOUR_FINMIND_TOKEN_HERE"
+  base_url: "https://api.finmindtrade.com/api/v4"
+
+database:
+  path: "data/stock.db"
+
+fetch:
+  start_date: "2022-01-01"
+  request_delay: 0.5
+
+logging:
+  level: "INFO"
+  file: "logs/app.log"
+
+broker:
+  fee_discount: 1.0    # 1.0 = 無折扣；0.6 = 6 折；0.28 = 28 折
+  fee_min: 20          # 單筆最低手續費
+
+# 推播通知。channel: discord / none（env var NOTIFY_CHANNEL 會覆寫；"none" 關閉推播）
+# 新增其他管道只需在 app/notifier.py 加對應 _send_xxx 函式
+notify:
+  channel: none
+  discord:
+    # 也可用環境變數 DISCORD_WEBHOOK_URL 覆寫
+    webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_TOKEN"
+
+# 備份設定（opt-in；enabled=false 時完全不跑）
+# 指向 Google Drive for Desktop 的同步資料夾即可自動上雲
+backup:
+  enabled: false
+  path: "~/Google Drive/My Drive/台股備份"   # Windows: %USERPROFILE%\Google Drive\My Drive\台股備份
+  keep_days: 14     # 每日備份保留天數
+  keep_weeks: 8     # 每週一備份額外保留週數
+  keep_months: 12   # 每月 1 號備份額外保留月數
