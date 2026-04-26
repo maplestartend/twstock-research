@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { hierarchy, treemap, treemapSquarify } from "d3-hierarchy";
 import type { HierarchyRectangularNode } from "d3-hierarchy";
@@ -107,6 +107,7 @@ export function IndustryHeatmap({
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<LaidTile | null>(null);
+  const [mouse, setMouse] = useState<{ x: number; y: number } | null>(null);
   const height = computeHeight(width);
 
   // 量容器寬度（高度由 width 推導）
@@ -209,6 +210,8 @@ export function IndustryHeatmap({
               role="img"
               aria-label="產業熱力圖"
               style={{ display: "block" }}
+              onMouseMove={(e) => setMouse({ x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setMouse(null)}
             >
               {tiles.map((t) => (
                 <Tile
@@ -221,8 +224,8 @@ export function IndustryHeatmap({
               ))}
             </svg>
           )}
-          {hover && containerRef.current && (
-            <HoverCard tile={hover} containerEl={containerRef.current} />
+          {hover && mouse && (
+            <HoverCard tile={hover} mouse={mouse} />
           )}
         </div>
       </div>
@@ -231,7 +234,7 @@ export function IndustryHeatmap({
         <div className="flex items-center gap-3 flex-wrap">
           <ColorScaleLegend />
           {asOf && (
-            <span className="text-[10px] text-[var(--text-tertiary)] numeric">
+            <span className="text-[11px] text-[var(--text-tertiary)] numeric">
               資料截至 {asOf}
             </span>
           )}
@@ -322,31 +325,22 @@ function Tile({
   );
 }
 
-function HoverCard({ tile, containerEl }: { tile: LaidTile; containerEl: HTMLElement }) {
-  // 錨在磚的右外側；超出 viewport 翻左外側；上下 clamp 不超出畫面
+function HoverCard({ tile, mouse }: { tile: LaidTile; mouse: { x: number; y: number } }) {
+  // 錨在鼠標右下；右側超出視窗就翻到鼠標左邊，下側超出就翻到鼠標上方。
   const cardW = 220;
   const cardH = 160;
-  const gap = 8;
+  const gap = 14;
 
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const winW = typeof window !== "undefined" ? window.innerWidth : 1440;
+  const winH = typeof window !== "undefined" ? window.innerHeight : 900;
 
-  useEffect(() => {
-    const rect = containerEl.getBoundingClientRect();
-    const tileRight = rect.left + tile.x + tile.w;
-    const tileLeft = rect.left + tile.x;
-    const tileTop = rect.top + tile.y;
-    const winW = window.innerWidth;
-    const winH = window.innerHeight;
-    let left = tileRight + gap;
-    if (left + cardW > winW - 8) {
-      left = tileLeft - gap - cardW;
-    }
-    if (left < 8) left = 8;
-    let top = tileTop;
-    if (top + cardH > winH - 8) top = winH - 8 - cardH;
-    if (top < 8) top = 8;
-    setPos({ left, top });
-  }, [tile, containerEl]);
+  let left = mouse.x + gap;
+  if (left + cardW > winW - 8) left = mouse.x - gap - cardW;
+  if (left < 8) left = 8;
+
+  let top = mouse.y + gap;
+  if (top + cardH > winH - 8) top = mouse.y - gap - cardH;
+  if (top < 8) top = 8;
 
   const tone =
     tile.ret == null
@@ -357,12 +351,10 @@ function HoverCard({ tile, containerEl }: { tile: LaidTile; containerEl: HTMLEle
       ? "var(--color-down)"
       : "var(--text-secondary)";
 
-  if (!pos) return null;
-
   return (
     <div
       className="fixed z-50 rounded-lg border border-[var(--border-default)] bg-surface shadow-lg p-3 text-xs pointer-events-none"
-      style={{ left: pos.left, top: pos.top, width: cardW }}
+      style={{ left, top, width: cardW }}
     >
       <div className="font-semibold text-[var(--text-primary)] text-sm mb-2">
         {tile.industry}
@@ -381,7 +373,7 @@ function HoverCard({ tile, containerEl }: { tile: LaidTile; containerEl: HTMLEle
         <Stat label="持平" value={tile.nFlat} color="var(--text-secondary)" />
         <Stat label="下跌" value={tile.nDown} color="var(--color-down)" />
       </div>
-      <div className="flex justify-between text-[10px] text-[var(--text-tertiary)] pt-2 border-t border-[var(--border-default)]">
+      <div className="flex justify-between text-[11px] text-[var(--text-tertiary)] pt-2 border-t border-[var(--border-default)]">
         <span>成交值 {fmtTradeValue(tile.totalAmount)}</span>
         <span className="numeric">大盤占比 {(tile.pct * 100).toFixed(1)}%</span>
       </div>
@@ -392,7 +384,7 @@ function HoverCard({ tile, containerEl }: { tile: LaidTile; containerEl: HTMLEle
 function Stat({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="rounded bg-subtle py-1">
-      <div className="text-[10px] text-[var(--text-tertiary)] leading-none">{label}</div>
+      <div className="text-[11px] text-[var(--text-tertiary)] leading-none">{label}</div>
       <div
         className="numeric text-sm font-semibold leading-tight mt-0.5"
         style={{ color, fontVariantNumeric: "tabular-nums" }}
@@ -420,7 +412,7 @@ function ColorScaleLegend() {
     "var(--color-up)",
   ];
   return (
-    <div className="flex items-center gap-2 text-[10px] text-[var(--text-tertiary)]">
+    <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)]">
       <span className="numeric">−10%</span>
       <div className="flex h-3 w-48 rounded overflow-hidden border border-[var(--border-default)]">
         {stops.map((c, i) => (

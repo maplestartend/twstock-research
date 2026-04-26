@@ -10,6 +10,8 @@ import { NextStepCards } from "@/components/primitives/NextStepCard";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Field } from "@/components/primitives/Field";
 import { Th, TdCompact as Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { DownloadCsvButton } from "@/components/primitives/DownloadCsvButton";
 import { fmtPct, tone, toneClass as tc } from "@/lib/format";
 import { btnPrimary, btnSecondary, inputCls, rangeCls } from "@/lib/formClasses";
@@ -110,7 +112,7 @@ export default async function PortfolioBacktestPage({
         <h2 className="text-sm font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1.5">
           <Icon name="palette" size={16} className="text-[var(--brand-500)]" />
           情景預設
-          <span className="text-[10px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用 + 直接執行）</span>
+          <span className="text-[11px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用 + 直接執行）</span>
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {(Object.entries(SCENARIOS) as [keyof typeof SCENARIOS, typeof SCENARIOS[keyof typeof SCENARIOS]][]).map(([key, sc]) => {
@@ -143,10 +145,10 @@ export default async function PortfolioBacktestPage({
                 <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
                   <Icon name={sc.icon} size={16} filled={isActive && hasRun} className="text-[var(--brand-500)]" />
                   {sc.label}
-                  {isActive && hasRun && <span className="text-[10px] text-[var(--brand-500)] ml-auto">已套用</span>}
+                  {isActive && hasRun && <span className="text-[11px] text-[var(--brand-500)] ml-auto">已套用</span>}
                 </span>
                 <span className="text-xs text-[var(--text-tertiary)]">{sc.desc}</span>
-                <span className="text-[10px] text-[var(--text-tertiary)] numeric">
+                <span className="text-[11px] text-[var(--text-tertiary)] numeric">
                   進 {sc.cfg.entry}・出 {sc.cfg.exit}・停損 {(sc.cfg.sl*100).toFixed(0)}%・停利 {(sc.cfg.tp*100).toFixed(0)}%
                 </span>
               </Link>
@@ -253,10 +255,10 @@ export default async function PortfolioBacktestPage({
                 size="sm"
               />
             </div>
-            <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-              <table className="w-full text-sm min-w-[900px]">
+            <TableContainer>
+              <table className="w-full text-[15px] min-w-[900px]">
                 <thead className="bg-subtle">
-                  <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                  <tr>
                     <Th>代號 / 名稱</Th>
                     <Th align="right">交易次數</Th>
                     <Th align="right"><span className="inline-flex items-center gap-1">勝率<InfoTip term="win_rate" /></span></Th>
@@ -272,10 +274,7 @@ export default async function PortfolioBacktestPage({
                   {result.rows.map((r) => (
                     <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle">
                       <Td>
-                        <Link href={`/stocks/${r.stockId}`} className="flex flex-col hover:underline">
-                          <span className="numeric font-semibold">{r.stockId}</span>
-                          <span className="text-[var(--text-tertiary)] text-xs">{r.stockName}</span>
-                        </Link>
+                        <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                       </Td>
                       <Td align="right" numeric>{r.nTrades}</Td>
                       <Td align="right" numeric>{r.nTrades===0?"—":fmtPct(r.winRate, 1)}</Td>
@@ -289,7 +288,7 @@ export default async function PortfolioBacktestPage({
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableContainer>
             <p className="text-xs text-[var(--text-tertiary)]">
               回測區間 {result.startDate} → {result.endDate}
             </p>

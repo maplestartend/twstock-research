@@ -47,7 +47,7 @@ export function SnapshotDeltaPanel({ delta }: { delta: SnapshotDelta }) {
                 {h.stockId}
               </Link>
               <span className="text-[var(--text-secondary)] flex-1 truncate">{h.stockName}</span>
-              <span className="text-[10px] text-[var(--text-tertiary)] truncate max-w-[180px]">
+              <span className="text-[11px] text-[var(--text-tertiary)] truncate max-w-[180px]">
                 +{h.strategies.join(", ")}
               </span>
               {h.composite != null && (
@@ -72,7 +72,7 @@ export function SnapshotDeltaPanel({ delta }: { delta: SnapshotDelta }) {
                 {h.stockId}
               </Link>
               <span className="text-[var(--text-secondary)] flex-1 truncate">{h.stockName}</span>
-              <span className="text-[10px] text-[var(--text-tertiary)] truncate max-w-[180px]">
+              <span className="text-[11px] text-[var(--text-tertiary)] truncate max-w-[180px]">
                 −{h.strategies.join(", ")}
               </span>
               {h.composite != null && (

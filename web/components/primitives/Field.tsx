@@ -34,7 +34,7 @@ export function Field({
       </span>
       {children}
       {finalHint && (
-        <span className="text-[10px] text-[var(--text-tertiary)]">{finalHint}</span>
+        <span className="text-[11px] text-[var(--text-tertiary)]">{finalHint}</span>
       )}
     </label>
   );

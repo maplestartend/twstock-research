@@ -1,11 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Icon } from "@/components/primitives/Icon";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { Th, Td } from "@/components/primitives/Table";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
+import { TableContainer } from "@/components/primitives/TableContainer";
 import { apiDelete, apiPost, type TradeRow } from "@/lib/api";
 import { btnDestructive, btnPrimary, inputCls } from "@/lib/formClasses";
 import { fmtMoney, fmtPrice } from "@/lib/format";
@@ -207,19 +208,19 @@ export function TradesPanel({ initialTrades }: { initialTrades: TradeRow[] }) {
       {initialTrades.length === 0 ? (
         <EmptyState size="sm">尚無交易紀錄</EmptyState>
       ) : (
-        <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-          <table className="w-full text-sm min-w-[900px] table-fixed">
+        <TableContainer>
+          <table className="w-full text-[15px] min-w-[1020px] table-fixed">
             <thead className="bg-subtle">
-              <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
-                <Th className="w-[110px]">交易日</Th>
-                <Th className="w-[140px]">代號 / 名稱</Th>
-                <Th align="right" className="w-[80px]">動作</Th>
-                <Th align="right" className="w-[100px]">股數</Th>
-                <Th align="right" className="w-[90px]">成交價</Th>
-                <Th align="right" className="w-[110px]">金額</Th>
-                <Th align="right" className="w-[120px]">手續費 / 稅</Th>
+              <tr>
+                <Th className="w-[140px] whitespace-nowrap">交易日</Th>
+                <Th className="w-[148px]">代號 / 名稱</Th>
+                <Th align="center" className="w-[100px] whitespace-nowrap">動作</Th>
+                <Th align="right" className="w-[108px]">股數</Th>
+                <Th align="right" className="w-[100px]">成交價</Th>
+                <Th align="right" className="w-[120px]">金額</Th>
+                <Th align="right" className="w-[128px]">手續費 / 稅</Th>
                 <Th>備註</Th>
-                <Th align="right" className="w-[80px]">操作</Th>
+                <Th align="center" className="w-[100px] whitespace-nowrap">操作</Th>
               </tr>
             </thead>
             <tbody>
@@ -227,16 +228,13 @@ export function TradesPanel({ initialTrades }: { initialTrades: TradeRow[] }) {
                 const isBuy = t.action === "BUY";
                 return (
                   <tr key={t.id} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
-                    <Td numeric>{t.tradeDate}</Td>
+                    <Td numeric className="whitespace-nowrap">{t.tradeDate}</Td>
                     <Td>
-                      <Link href={`/stocks/${t.stockId}`} className="flex flex-col hover:underline">
-                        <span className="numeric font-semibold text-[var(--text-primary)]">{t.stockId}</span>
-                        <span className="text-[var(--text-tertiary)] text-xs truncate">{t.stockName ?? ""}</span>
-                      </Link>
+                      <StockIdCell stockId={t.stockId} stockName={t.stockName} />
                     </Td>
-                    <Td align="right">
+                    <Td align="center" className="whitespace-nowrap">
                       <span className={cn(
-                        "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium",
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap",
                         isBuy
                           ? "bg-[var(--color-up-bg)] text-[var(--color-up)]"
                           : "bg-[var(--color-down-bg)] text-[var(--color-down)]",
@@ -257,12 +255,12 @@ export function TradesPanel({ initialTrades }: { initialTrades: TradeRow[] }) {
                     <Td>
                       <span className="text-xs text-[var(--text-tertiary)] truncate inline-block max-w-full">{t.note ?? "—"}</span>
                     </Td>
-                    <Td align="right">
+                    <Td align="center" className="whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => handleDelete(t)}
                         disabled={deletingId === t.id || isPending}
-                        className={cn(btnDestructive, "h-7 px-2 text-xs")}
+                        className={cn(btnDestructive, "h-7 px-2 text-xs whitespace-nowrap")}
                         title="刪除此筆並重建該股 holdings"
                       >
                         <Icon name="delete" size={14} />
@@ -274,7 +272,7 @@ export function TradesPanel({ initialTrades }: { initialTrades: TradeRow[] }) {
               })}
             </tbody>
           </table>
-        </div>
+        </TableContainer>
       )}
       <p className="text-xs text-[var(--text-tertiary)]">
         最多顯示 50 筆。刪除一筆後會自動以 trade_log 重建該股 holdings 的 shares / avg_cost。

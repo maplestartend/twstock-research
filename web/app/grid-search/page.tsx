@@ -10,6 +10,7 @@ import { NextStepCards } from "@/components/primitives/NextStepCard";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Field } from "@/components/primitives/Field";
 import { Th, TdCompact as Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
 import { fmtPct, tone, toneClass as tc } from "@/lib/format";
 import { btnPrimary, btnSecondary, inputCls, rangeCls } from "@/lib/formClasses";
 import { cn } from "@/lib/utils";
@@ -147,7 +148,7 @@ export default async function GridSearchPage({
         <h2 className="text-sm font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1.5">
           <Icon name="palette" size={16} className="text-[var(--brand-500)]" />
           掃描範圍預設
-          <span className="text-[10px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用 + 直接執行）</span>
+          <span className="text-[11px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用 + 直接執行）</span>
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {(Object.entries(SCAN_PRESETS) as [keyof typeof SCAN_PRESETS, typeof SCAN_PRESETS[keyof typeof SCAN_PRESETS]][]).map(([key, p]) => {
@@ -176,10 +177,10 @@ export default async function GridSearchPage({
                 <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
                   <Icon name={p.icon} size={16} filled={isActive && hasRun} className="text-[var(--brand-500)]" />
                   {p.label}
-                  <span className="numeric text-[10px] text-[var(--text-tertiary)] ml-auto">{p.combos} 組</span>
+                  <span className="numeric text-[11px] text-[var(--text-tertiary)] ml-auto">{p.combos} 組</span>
                 </span>
                 <span className="text-xs text-[var(--text-tertiary)]">{p.desc}</span>
-                <span className="text-[10px] text-[var(--text-tertiary)] numeric leading-tight">
+                <span className="text-[11px] text-[var(--text-tertiary)] numeric leading-tight">
                   進 [{p.cfg.entries.join("/")}]・出 [{p.cfg.exits.join("/")}]
                 </span>
               </Link>
@@ -200,7 +201,7 @@ export default async function GridSearchPage({
           <label className="inline-flex items-center gap-1.5 relative">
             <input type="radio" name="mode" value="wf" defaultChecked={mode === "wf"} />
             <span>Walk-Forward（更嚴謹）</span>
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[var(--brand-500)] text-white">推薦 🎯</span>
+            <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[var(--brand-500)] text-white">推薦 🎯</span>
             <InfoTip term="walk_forward" />
           </label>
         </div>
@@ -260,8 +261,8 @@ export default async function GridSearchPage({
             <div className="inline-flex items-center gap-1.5">
               <span className="text-[var(--text-tertiary)]">組合數</span>
               <span className="numeric font-semibold">{combos}</span>
-              <span className="text-[10px] text-[var(--text-tertiary)]">/ 80</span>
-              <span className="text-[10px] text-[var(--text-tertiary)] ml-1">
+              <span className="text-[11px] text-[var(--text-tertiary)]">/ 80</span>
+              <span className="text-[11px] text-[var(--text-tertiary)] ml-1">
                 × {stockIds.length || (source === "watchlist" ? wl.length : "?")} 檔
               </span>
             </div>
@@ -357,10 +358,10 @@ function GridResultBlock({ result }: { result: GridSearchResponse }) {
 
       <section className="flex flex-col gap-3">
         <h2 className="text-base font-semibold">所有組合（依 平均 Alpha 降序）</h2>
-        <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-          <table className="w-full text-sm min-w-[700px]">
+        <TableContainer>
+          <table className="w-full text-[15px] min-w-[700px]">
             <thead className="bg-subtle">
-              <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+              <tr>
                 <Th align="right">Entry</Th><Th align="right">Exit</Th><Th align="right">SL</Th><Th align="right">TP</Th>
                 <Th align="right">平均 Alpha</Th><Th align="right">平均報酬</Th><Th align="right">勝率</Th><Th align="right">交易總數</Th>
               </tr>
@@ -380,7 +381,7 @@ function GridResultBlock({ result }: { result: GridSearchResponse }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableContainer>
       </section>
     </>
   );
@@ -415,10 +416,10 @@ function WalkForwardBlock({ result }: { result: WalkForwardResponse }) {
         </div>
       )}
 
-      <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-        <table className="w-full text-sm min-w-[800px]">
+      <TableContainer>
+        <table className="w-full text-[15px] min-w-[800px]">
           <thead className="bg-subtle">
-            <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+            <tr>
               <Th align="right">段</Th>
               <Th>Train 期間</Th>
               <Th>Test 期間</Th>
@@ -446,7 +447,7 @@ function WalkForwardBlock({ result }: { result: WalkForwardResponse }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </TableContainer>
     </>
   );
 }
