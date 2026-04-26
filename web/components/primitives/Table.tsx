@@ -28,7 +28,13 @@ export function Th({
   className?: string;
 }) {
   return (
-    <th className={cn("h-10 px-4 font-medium", ALIGN_CLS[align], className)}>
+    <th
+      className={cn(
+        "h-10 px-4 font-medium text-[12px] tracking-wide text-[var(--text-secondary)]",
+        ALIGN_CLS[align],
+        className,
+      )}
+    >
       {children}
     </th>
   );

@@ -214,9 +214,9 @@ export function WatchlistManageClient({ initialEntries }: { initialEntries: Entr
           <EmptyState>還沒有自選股，用上方新增。</EmptyState>
         ) : (
           <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-hidden">
-            <table className="w-full text-sm">
+            <table className="w-full text-[15px]">
               <thead className="bg-subtle">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                <tr>
                   <Th className="w-10" align="center">
                     <input
                       type="checkbox"

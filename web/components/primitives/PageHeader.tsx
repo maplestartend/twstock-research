@@ -11,8 +11,8 @@ export type PageHeaderProps = {
 export function PageHeader({ title, icon, description, extra }: PageHeaderProps) {
   return (
     <section>
-      <h1 className="text-[22px] font-bold text-[var(--text-primary)] inline-flex items-center gap-2.5">
-        <Icon name={icon} size={26} filled className="text-[var(--brand-500)]" />
+      <h1 className="text-[24px] font-bold text-[var(--text-primary)] inline-flex items-center gap-2.5">
+        <Icon name={icon} size={28} filled className="text-[var(--brand-500)]" />
         {title}
       </h1>
       {description && (

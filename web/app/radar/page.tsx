@@ -8,7 +8,8 @@ import { RecommendationTag } from "@/components/primitives/RecommendationTag";
 import { PriceCell } from "@/components/primitives/PriceCell";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Th, Td } from "@/components/primitives/Table";
-import { TableScrollHint } from "@/components/primitives/TableScrollHint";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
+import { TableContainer } from "@/components/primitives/TableContainer";
 import { Pagination } from "@/components/primitives/Pagination";
 import { DownloadCsvButton } from "@/components/primitives/DownloadCsvButton";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
@@ -100,11 +101,6 @@ export default async function RadarPage({
       <PageHeader
         title="雷達掃描"
         icon="radar"
-        description={
-          <>
-            當日 signal_history 快照。若要重算：<code className="font-mono">python -m scripts.market_update</code>
-          </>
-        }
         extra="ETF 與個股的評分維度不同（ETF 沒有 EPS/ROE/月營收），預設只顯示個股；ETF 請切到右側 tab 單獨看。"
       />
 
@@ -262,19 +258,18 @@ export default async function RadarPage({
             當日無符合 {activeStrategy} 的標的。可切策略或放寬市場篩選。
           </EmptyState>
         ) : (
-          <TableScrollHint>
-          <div data-scroll className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-            <table className="w-full text-sm min-w-[1000px] table-fixed">
+          <TableContainer>
+            <table className="w-full text-[15px] min-w-[1060px] table-fixed">
               <thead className="bg-subtle">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
-                  <Th className="w-[160px]">代號 / 名稱</Th>
-                  <Th align="right" className="w-[72px]">市場</Th>
-                  <Th align="right" className="w-[96px]">收盤</Th>
-                  <Th align="right" className="w-[84px]">短期</Th>
-                  <Th align="right" className="w-[84px]">中期</Th>
-                  {typeTab !== "etf" && <Th align="right" className="w-[84px]">長期</Th>}
-                  <Th align="right" className="w-[84px]">綜合</Th>
-                  <Th align="right" className="w-[100px]">建議</Th>
+                <tr>
+                  <Th className="w-[170px]">代號 / 名稱</Th>
+                  <Th align="center" className="w-[80px]">市場</Th>
+                  <Th align="right" className="w-[100px]">收盤</Th>
+                  <Th align="center" className="w-[88px]">短期</Th>
+                  <Th align="center" className="w-[88px]">中期</Th>
+                  {typeTab !== "etf" && <Th align="center" className="w-[88px]">長期</Th>}
+                  <Th align="center" className="w-[88px]">綜合</Th>
+                  <Th align="center" className="w-[108px]">建議</Th>
                   <Th>命中策略</Th>
                 </tr>
               </thead>
@@ -282,25 +277,22 @@ export default async function RadarPage({
                 {pagedHits.map((h) => (
                   <tr key={h.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                     <Td>
-                      <Link href={`/stocks/${h.stockId}`} className="flex flex-col hover:underline">
-                        <span className="numeric font-semibold text-[var(--text-primary)]">{h.stockId}</span>
-                        <span className="text-[var(--text-tertiary)] text-xs">{h.stockName}</span>
-                      </Link>
+                      <StockIdCell stockId={h.stockId} stockName={h.stockName} />
                     </Td>
-                    <Td align="right">
+                    <Td align="center">
                       <span className="text-xs text-[var(--text-secondary)]">{h.market ?? "—"}</span>
                     </Td>
                     <Td align="right">
                       <PriceCell price={h.close} variant="compact" />
                     </Td>
-                    <Td align="right"><div className="flex justify-end"><ScoreBadge score={h.short} size="sm" horizon="short" /></div></Td>
-                    <Td align="right"><div className="flex justify-end"><ScoreBadge score={h.mid} size="sm" horizon="mid" /></div></Td>
+                    <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.short} size="sm" horizon="short" /></div></Td>
+                    <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.mid} size="sm" horizon="mid" /></div></Td>
                     {typeTab !== "etf" && (
-                      <Td align="right"><div className="flex justify-end"><ScoreBadge score={h.long} size="sm" horizon="long" /></div></Td>
+                      <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.long} size="sm" horizon="long" /></div></Td>
                     )}
-                    <Td align="right"><div className="flex justify-end"><ScoreBadge score={h.composite} size="sm" horizon="composite" /></div></Td>
-                    <Td align="right">
-                      {h.recommendation ? <div className="flex justify-end"><RecommendationTag raw={h.recommendation} size="sm" /></div> : <span className="text-[var(--text-tertiary)]">—</span>}
+                    <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.composite} size="sm" horizon="composite" /></div></Td>
+                    <Td align="center">
+                      {h.recommendation ? <div className="flex justify-center"><RecommendationTag raw={h.recommendation} size="sm" /></div> : <span className="text-[var(--text-tertiary)]">—</span>}
                     </Td>
                     <Td>
                       <div className="flex flex-wrap gap-1">
@@ -308,7 +300,7 @@ export default async function RadarPage({
                           <span
                             key={s}
                             className={cn(
-                              "text-[10px] font-medium px-1.5 py-0.5 rounded border",
+                              "text-[11px] font-medium px-1.5 py-0.5 rounded border",
                               s.trim() === activeStrategy
                                 ? "bg-[var(--brand-tint-strong)] text-[var(--brand-700)] dark:text-[var(--brand-300)] border-[var(--brand-tint-border)]"
                                 : "bg-subtle text-[var(--text-secondary)] border-[var(--border-default)]",
@@ -323,8 +315,7 @@ export default async function RadarPage({
                 ))}
               </tbody>
             </table>
-          </div>
-          </TableScrollHint>
+          </TableContainer>
         )}
 
         {totalPages > 1 && (

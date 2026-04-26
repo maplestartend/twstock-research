@@ -14,6 +14,8 @@ import { KPIStat } from "@/components/primitives/KPIStat";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Field } from "@/components/primitives/Field";
 import { Th, TdCompact as Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { fmtPct, fmtPrice, tone, toneClass as tc } from "@/lib/format";
 import { btnPrimary, btnSecondary, inputCls, rangeCls } from "@/lib/formClasses";
 import { EVENT_SCENARIOS as SCENARIOS } from "@/lib/scenarios";
@@ -88,7 +90,7 @@ export default async function EventBacktestPage({
         <h2 className="text-sm font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1.5">
           <Icon name="palette" size={16} className="text-[var(--brand-500)]" />
           情景預設
-          <span className="text-[10px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用 + 直接執行）</span>
+          <span className="text-[11px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用 + 直接執行）</span>
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {(Object.entries(SCENARIOS) as [keyof typeof SCENARIOS, typeof SCENARIOS[keyof typeof SCENARIOS]][]).map(([key, sc]) => {
@@ -115,7 +117,7 @@ export default async function EventBacktestPage({
                   {sc.label}
                 </span>
                 <span className="text-xs text-[var(--text-tertiary)]">{sc.desc}</span>
-                <span className="text-[10px] text-[var(--text-tertiary)] numeric">
+                <span className="text-[11px] text-[var(--text-tertiary)] numeric">
                   進 D{sc.entry > 0 ? "+" : ""}{sc.entry}・出 D{sc.exit > 0 ? "+" : ""}{sc.exit}
                 </span>
               </Link>
@@ -195,10 +197,10 @@ export default async function EventBacktestPage({
                 每檔表現（依平均含息報酬降序）
                 <span className="numeric text-xs text-[var(--text-tertiary)] font-normal ml-2">{result.byStock.length} 檔</span>
               </h2>
-              <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-                <table className="w-full text-sm">
+              <TableContainer>
+                <table className="w-full text-[15px] min-w-[800px]">
                   <thead className="bg-subtle">
-                    <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                    <tr>
                       <Th>代號 / 名稱</Th>
                       <Th align="right">事件數</Th>
                       <Th align="right">勝率</Th>
@@ -210,10 +212,7 @@ export default async function EventBacktestPage({
                     {result.byStock.map((s) => (
                       <tr key={s.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle">
                         <Td>
-                          <Link href={`/stocks/${s.stockId}`} className="flex flex-col hover:underline">
-                            <span className="numeric font-semibold">{s.stockId}</span>
-                            <span className="text-[var(--text-tertiary)] text-xs">{s.stockName}</span>
-                          </Link>
+                          <StockIdCell stockId={s.stockId} stockName={s.stockName} />
                         </Td>
                         <Td align="right" numeric>{s.nEvents}</Td>
                         <Td align="right" numeric>{s.winRate != null ? `${(s.winRate * 100).toFixed(0)}%` : "—"}</Td>
@@ -225,7 +224,7 @@ export default async function EventBacktestPage({
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableContainer>
             </section>
           )}
 
@@ -288,10 +287,10 @@ function Conclusion({ result }: { result: EventBacktestResponse }) {
 
 function TradesTable({ trades }: { trades: EventTradeRow[] }) {
   return (
-    <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-      <table className="w-full text-sm min-w-[900px]">
+    <TableContainer>
+      <table className="w-full text-[15px] min-w-[900px]">
         <thead className="bg-subtle">
-          <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+          <tr>
             <Th>除息日</Th>
             <Th>代號 / 名稱</Th>
             <Th align="right">進場日</Th>
@@ -308,10 +307,7 @@ function TradesTable({ trades }: { trades: EventTradeRow[] }) {
             <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle">
               <Td numeric className="text-xs">{t.exDate}</Td>
               <Td>
-                <Link href={`/stocks/${t.stockId}`} className="flex flex-col hover:underline">
-                  <span className="numeric font-semibold">{t.stockId}</span>
-                  <span className="text-[var(--text-tertiary)] text-xs">{t.stockName}</span>
-                </Link>
+                <StockIdCell stockId={t.stockId} stockName={t.stockName} />
               </Td>
               <Td align="right" numeric className="text-xs">{t.entryDate ?? "—"}</Td>
               <Td align="right" numeric>{t.entryPrice != null ? fmtPrice(t.entryPrice) : "—"}</Td>
@@ -324,7 +320,7 @@ function TradesTable({ trades }: { trades: EventTradeRow[] }) {
           ))}
         </tbody>
       </table>
-    </div>
+    </TableContainer>
   );
 }
 

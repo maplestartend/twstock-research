@@ -15,10 +15,15 @@
   - `btnPrimary`：藍底主按鈕（h-10）
   - `btnSecondary`：灰邊次按鈕（h-10）
   - `btnDestructive`：紅底刪除按鈕（h-9）
-- **共用 Th/Td**：[web/components/primitives/Table.tsx](../web/components/primitives/Table.tsx)
+- **共用表格 primitives**（[web/components/primitives/](../web/components/primitives/)）
+  - **`Table.tsx`** — `Th`（h-10，預設 12px tracking-wide secondary 色）、`Td`（h-14 comfortable / h-12 compact，由 `size` 切換）
+  - **`TableContainer.tsx`** — `rounded-xl + border + bg-surface + overflow-x-auto`，內含 `<TableScrollHint>`（mobile 右側 chevron 提示可橫向捲動）
+  - **`StockIdCell.tsx`** — 「代號 / 名稱」cell，代號 numeric semibold + primary 色，名稱 12px secondary。13 處 listing 表共用
   - listing 表（雷達/自選/持股/行事曆/歷史）用 `size="comfortable"`（h-14，預設）
   - 結果表 / 工具表（回測明細、grid、DQ、watchlist-manage）用 `size="compact"`（h-12）
 - **欄寬穩定**：分頁間欄寬要一致 → `table-fixed` + 顯式 `<Th className="w-[NNpx]">`
+- **表格字級**：base `text-[15px]` + Th 自帶 12px header；分數 / 建議欄 `align="center"`，數字欄 `align="right"`
+- **頁面 hierarchy**：page H1（PageHeader）24px / 600；section H2（SectionTitle）16px / 600；KPI primary 22-28px tabular-nums；body 15px；secondary chip 11px floor
 - **台股慣例配色**：漲紅跌綠（`--color-up` = 紅、`--color-down` = 綠）
 - **錯誤處理**：所有頁面 RSC `try / catch` 後 `<BackendDownError>`；表單錯誤走 `humanizeApiError(rawMsg)`
 - **API base URL**：`process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000"`，dev 時 `next.config.mjs` 把 `/api/*` rewrite 到後端

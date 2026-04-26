@@ -1,9 +1,9 @@
-import Link from "next/link";
 import type { HoldingRow } from "@/lib/api";
 import { fmtMoney, fmtPrice, fmtPct, toneClass } from "@/lib/format";
 import { ScoreBadge } from "./ScoreBadge";
 import { Th, Td } from "./Table";
-import { TableScrollHint } from "./TableScrollHint";
+import { StockIdCell } from "./StockIdCell";
+import { TableContainer } from "./TableContainer";
 import { cn } from "@/lib/utils";
 
 /** 停損距離 → 三段顏色：<3% 紅（已破或快破）、3-8% 黃（接近）、>8% 綠（安全） */
@@ -45,24 +45,23 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
     );
   }
   return (
-    <TableScrollHint>
-    <div data-scroll className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-      <table className="w-full text-sm min-w-[1040px] table-fixed">
+    <TableContainer>
+      <table className="w-full text-[15px] min-w-[1100px] table-fixed">
         <thead className="bg-subtle">
-          <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
-            <Th className="w-[160px]">代號 / 名稱</Th>
-            <Th align="right" className="w-[72px]">張數</Th>
-            <Th align="right" className="w-[80px]">均價</Th>
-            <Th align="right" className="w-[80px]">現價</Th>
-            <Th align="right" className="w-[72px]">今日%</Th>
-            <Th align="right" className="w-[100px]">市值</Th>
-            <Th align="right" className="w-[130px]">未實現損益</Th>
-            <Th align="right" className="w-[120px]">
+          <tr>
+            <Th className="w-[170px]">代號 / 名稱</Th>
+            <Th align="right" className="w-[80px]">張數</Th>
+            <Th align="right" className="w-[88px]">均價</Th>
+            <Th align="right" className="w-[88px]">現價</Th>
+            <Th align="right" className="w-[80px]">今日%</Th>
+            <Th align="right" className="w-[108px]">市值</Th>
+            <Th align="right" className="w-[140px]">未實現損益</Th>
+            <Th align="right" className="w-[128px]">
               <span title="2×ATR 動態停損。有進場日 → 進場後高點 − 2×ATR；無進場日 → 均價 − 2×ATR">
                 ATR 停損 ⓘ
               </span>
             </Th>
-            <Th align="right">短 / 中 / 長</Th>
+            <Th align="center">短 / 中 / 長</Th>
           </tr>
         </thead>
         <tbody>
@@ -71,10 +70,7 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
             return (
             <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
               <Td>
-                <Link href={`/stocks/${r.stockId}`} className="flex flex-col hover:underline">
-                  <span className="numeric font-semibold text-[var(--text-primary)]">{r.stockId}</span>
-                  <span className="text-[var(--text-tertiary)] text-xs truncate">{r.stockName}</span>
-                </Link>
+                <StockIdCell stockId={r.stockId} stockName={r.stockName} />
               </Td>
               <Td align="right" numeric>{(r.shares / 1000).toFixed(1)}</Td>
               <Td align="right" numeric>{fmtPrice(r.avgCost)}</Td>
@@ -103,7 +99,7 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
                     </span>
                     <span
                       className={cn(
-                        "inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium",
+                        "inline-flex items-center px-1.5 py-0.5 rounded border text-[11px] font-medium",
                         bucket.cls,
                       )}
                       title={`${r.atrKind === "trailing" ? "追蹤式" : "固定式"} ATR 停損`}
@@ -113,8 +109,8 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
                   </div>
                 )}
               </Td>
-              <Td align="right">
-                <div className="flex gap-1 justify-end">
+              <Td align="center">
+                <div className="flex gap-1 justify-center">
                   <ScoreBadge score={r.shortScore} size="sm" horizon="short" />
                   <ScoreBadge score={r.midScore} size="sm" horizon="mid" />
                   <ScoreBadge score={r.longScore} size="sm" horizon="long" />
@@ -125,7 +121,6 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
           })}
         </tbody>
       </table>
-    </div>
-    </TableScrollHint>
+    </TableContainer>
   );
 }

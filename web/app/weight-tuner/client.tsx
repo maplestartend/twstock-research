@@ -7,6 +7,8 @@ import { InfoTip } from "@/components/primitives/InfoTip";
 import { ScoreBadge } from "@/components/primitives/ScoreBadge";
 import { NextStepCards } from "@/components/primitives/NextStepCard";
 import { Th, Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { fmtPrice, toneClass } from "@/lib/format";
 import { PART_LABEL } from "@/lib/labels";
 import { TERMS, type TermKey } from "@/lib/terms";
@@ -197,10 +199,10 @@ export function WeightTunerClient({
           自選股 評分對比（新權重 vs 預設）
           <span className="numeric text-xs text-[var(--text-tertiary)] font-normal ml-2">共 {rows.length} 檔</span>
         </h2>
-        <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-          <table className="w-full text-sm min-w-[900px]">
+        <TableContainer>
+          <table className="w-full text-[15px] min-w-[900px]">
             <thead className="bg-subtle">
-              <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+              <tr>
                 <Th>代號 / 名稱</Th>
                 <Th align="right">收盤</Th>
                 <ThGroup>短期</ThGroup>
@@ -218,10 +220,7 @@ export function WeightTunerClient({
                 return (
                   <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle">
                     <Td>
-                      <Link href={`/stocks/${r.stockId}`} className="flex flex-col hover:underline">
-                        <span className="numeric font-semibold">{r.stockId}</span>
-                        <span className="text-[var(--text-tertiary)] text-xs">{r.stockName}</span>
-                      </Link>
+                      <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                     </Td>
                     <Td align="right" numeric>{fmtPrice(r.close)}</Td>
                     <TdDim oldV={r.shortDefault} newV={r.newShort} />
@@ -246,7 +245,7 @@ export function WeightTunerClient({
               })}
             </tbody>
           </table>
-        </div>
+        </TableContainer>
         <p className="text-xs text-[var(--text-tertiary)]">
           Δ 綜合：新權重算出的綜合分數 − 預設權重的綜合分數。想固化這組權重，用「複製權重 JSON」貼回 <code className="font-mono">app/scoring/rubric.py</code>。
         </p>
@@ -477,7 +476,7 @@ function TdDim({ oldV, newV }: { oldV: number | null; newV: number | null }) {
         <span className="text-[var(--text-tertiary)]">{oldV == null ? "—" : oldV.toFixed(1)}</span>
         <span className="font-semibold text-[var(--text-primary)]">{newV == null ? "—" : newV.toFixed(1)}</span>
         {delta != null && (
-          <span className={cn("text-[10px]", tc(delta))}>
+          <span className={cn("text-[11px]", tc(delta))}>
             {delta > 0 ? "+" : ""}{delta.toFixed(1)}
           </span>
         )}

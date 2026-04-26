@@ -113,7 +113,7 @@ export function Sidebar() {
           <div className="flex flex-col gap-3 px-2">
             {SECTIONS.map((section) => (
               <div key={section.heading} className="flex flex-col gap-0.5">
-                <div className="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                <div className="px-3 pt-1 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
                   {section.heading}
                 </div>
                 <ul className="flex flex-col gap-0.5">

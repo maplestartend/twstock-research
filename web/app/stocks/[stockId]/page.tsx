@@ -88,13 +88,13 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
           <span className="text-xs text-[var(--text-tertiary)] mt-auto">
             資料日期 {score.asOf}
             {score.isStale && (
-              <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-[var(--warning-bg)] text-[var(--warning-fg)] border border-[var(--warning-border)]">
+              <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] bg-[var(--warning-bg)] text-[var(--warning-fg)] border border-[var(--warning-border)]">
                 <Icon name="warning" size={11} filled />
                 過期 {score.staleDays} 天
               </span>
             )}
             {score.isPending && (
-              <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-[var(--warning-bg)] text-[var(--warning-fg)] border border-[var(--warning-border)]" title="盤中暫態：14:00 後才視為當日確定收盤">
+              <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] bg-[var(--warning-bg)] text-[var(--warning-fg)] border border-[var(--warning-border)]" title="盤中暫態：14:00 後才視為當日確定收盤">
                 <Icon name="hourglass_empty" size={11} filled />
                 盤中暫態
               </span>
@@ -205,7 +205,7 @@ function ScoreCard({ label, score, horizon, completeness }: {
         {isLowTrust && (
           // 用中性灰色，避免和漲跌警示色（紅/綠）衝突；只是「可信度低」不是「危險」
           <span
-            className="inline-flex items-center px-1 rounded text-[10px] bg-subtle text-[var(--text-tertiary)] border border-[var(--border-default)]"
+            className="inline-flex items-center px-1 rounded text-[11px] bg-subtle text-[var(--text-tertiary)] border border-[var(--border-default)]"
             title={`僅 ${Math.round((completeness ?? 0) * 100)}% 子指標有資料，分數可信度較低`}
           >
             資料 {Math.round((completeness ?? 0) * 100)}%
