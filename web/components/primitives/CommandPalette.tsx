@@ -189,7 +189,7 @@ export function CommandPalette() {
             className="flex-1 bg-transparent outline-none text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
           />
           {loading && <Icon name="progress_activity" size={16} className="text-[var(--text-tertiary)] animate-spin" />}
-          <kbd className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border-default)] text-[var(--text-tertiary)] font-mono">
+          <kbd className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--border-default)] text-[var(--text-tertiary)] font-mono">
             Esc
           </kbd>
         </div>
@@ -201,7 +201,7 @@ export function CommandPalette() {
             </li>
           )}
           {q.trim() === "" && hits.length > 0 && (
-            <li className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">
+            <li className="px-4 pt-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--text-tertiary)]">
               自選股快速跳轉
             </li>
           )}
@@ -221,7 +221,7 @@ export function CommandPalette() {
                   >
                     <Icon name={it.data.icon} size={18} className="text-[var(--brand-500)]" />
                     <span className="flex-1 text-[var(--text-primary)]">{it.data.label}</span>
-                    <span className="text-[10px] text-[var(--text-tertiary)]">頁面</span>
+                    <span className="text-[11px] text-[var(--text-tertiary)]">頁面</span>
                   </button>
                 </li>
               );
@@ -241,11 +241,11 @@ export function CommandPalette() {
                   <span className="numeric font-semibold text-[var(--text-primary)] w-16 shrink-0">{h.stockId}</span>
                   <span className="flex-1 truncate text-[var(--text-secondary)]">{h.stockName}</span>
                   {h.industry && (
-                    <span className="text-[10px] text-[var(--text-tertiary)] truncate max-w-[8rem]">{h.industry}</span>
+                    <span className="text-[11px] text-[var(--text-tertiary)] truncate max-w-[8rem]">{h.industry}</span>
                   )}
                   {h.market && (
                     <span className={cn(
-                      "text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0",
+                      "text-[11px] px-1.5 py-0.5 rounded font-medium shrink-0",
                       h.market === "ETF" ? "bg-[var(--info-bg)] text-[var(--info-fg)]" : "bg-subtle text-[var(--text-secondary)]",
                     )}>
                       {h.market}
@@ -260,7 +260,7 @@ export function CommandPalette() {
           })}
         </ul>
 
-        <div className="px-4 h-9 border-t border-[var(--border-default)] flex items-center gap-3 text-[10px] text-[var(--text-tertiary)] bg-subtle">
+        <div className="px-4 h-9 border-t border-[var(--border-default)] flex items-center gap-3 text-[11px] text-[var(--text-tertiary)] bg-subtle">
           <span><kbd className="font-mono">↑↓</kbd> 移動</span>
           <span><kbd className="font-mono">Enter</kbd> 選擇</span>
           <span><kbd className="font-mono">Esc</kbd> 關閉</span>

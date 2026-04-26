@@ -17,6 +17,8 @@ import { RiskAlertList } from "@/components/primitives/RiskAlertList";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { Th, Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { fmtMoney, fmtPct, fmtPrice, tone, toneClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { TradesPanel } from "./TradesPanel";
@@ -110,10 +112,10 @@ export default async function HoldingsPage() {
                 tone="neutral"
               />
             </div>
-            <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-              <table className="w-full text-sm min-w-[600px]">
+            <TableContainer>
+              <table className="w-full text-[15px] min-w-[600px]">
                 <thead className="bg-subtle">
-                  <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                  <tr>
                     <Th>代號 / 名稱</Th>
                     <Th align="right">股數</Th>
                     <Th align="right">買 / 賣 價</Th>
@@ -126,10 +128,7 @@ export default async function HoldingsPage() {
                   {realized.rows.map((r, i) => (
                     <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                       <Td>
-                        <Link href={`/stocks/${r.stockId}`} className="flex flex-col hover:underline">
-                          <span className="numeric font-semibold text-[var(--text-primary)]">{r.stockId}</span>
-                          <span className="text-[var(--text-tertiary)] text-xs">{r.stockName ?? ""}</span>
-                        </Link>
+                        <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                       </Td>
                       <Td align="right" numeric>{r.shares.toLocaleString("zh-TW")}</Td>
                       <Td align="right" numeric>
@@ -160,7 +159,7 @@ export default async function HoldingsPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableContainer>
           </>
         )}
       </section>

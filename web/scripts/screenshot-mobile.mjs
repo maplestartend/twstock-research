@@ -32,6 +32,17 @@ try {
     { slug: "stocks-3260", path: "/stocks/3260" },
     { slug: "radar", path: "/radar" },
     { slug: "sectors", path: "/sectors" },
+    // Tables not previously covered — added for typography / column-width regression coverage.
+    { slug: "watchlist", path: "/watchlist" },
+    { slug: "history", path: "/history" },
+    { slug: "dividend-calendar", path: "/dividend-calendar" },
+    { slug: "watchlist-manage", path: "/watchlist-manage" },
+    { slug: "dq", path: "/dq" },
+    { slug: "backtest", path: "/backtest" },
+    { slug: "portfolio-backtest", path: "/portfolio-backtest" },
+    { slug: "event-backtest", path: "/event-backtest" },
+    { slug: "grid-search", path: "/grid-search" },
+    { slug: "weight-tuner", path: "/weight-tuner" },
   ];
 
   // Warm-up pass：dev server 第一次走過每頁時編譯 chunk，CSS 可能 404；

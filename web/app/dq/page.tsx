@@ -7,6 +7,8 @@ import { KPIStat } from "@/components/primitives/KPIStat";
 import { DataFreshnessBadge } from "@/components/primitives/DataFreshnessBadge";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Th, TdCompact as Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { fmtPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -190,10 +192,10 @@ export default async function DqPage({
             {dq.nAnomalies === 0 ? "🎉 焦點股近期無異常" : "目前篩選下沒有結果"}
           </EmptyState>
         ) : (
-          <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-            <table className="w-full text-sm min-w-[800px]">
+          <TableContainer>
+            <table className="w-full text-[15px] min-w-[800px]">
               <thead className="bg-subtle">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                <tr>
                   <Th align="left">嚴重度</Th>
                   <Th align="left">日期</Th>
                   <Th align="left">代號 / 名稱</Th>
@@ -210,21 +212,18 @@ export default async function DqPage({
                   return (
                     <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle">
                       <Td>
-                        <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border", sev.cls)}>
+                        <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border", sev.cls)}>
                           {sev.label}
                         </span>
                       </Td>
                       <Td numeric className="text-xs">{a.date}</Td>
                       <Td>
-                        <Link href={`/stocks/${a.stockId}`} className="flex flex-col hover:underline">
-                          <span className="numeric font-semibold">{a.stockId}</span>
-                          <span className="text-[var(--text-tertiary)] text-xs">{a.stockName}</span>
-                        </Link>
+                        <StockIdCell stockId={a.stockId} stockName={a.stockName} />
                       </Td>
                       <Td>
                         {a.market && (
                           <span className={cn(
-                            "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                            "text-[11px] px-1.5 py-0.5 rounded font-medium",
                             a.market === "ETF" ? "bg-[var(--info-bg)] text-[var(--info-fg)]" : "bg-subtle text-[var(--text-secondary)]",
                           )}>{a.market}</span>
                         )}
@@ -248,7 +247,7 @@ export default async function DqPage({
                 })}
               </tbody>
             </table>
-          </div>
+          </TableContainer>
         )}
       </section>
 
@@ -260,10 +259,10 @@ export default async function DqPage({
             股票級資料缺值
             <span className="numeric text-xs text-[var(--text-tertiary)] font-normal ml-2">{dq.gaps.length} 筆 · 依缺日數降序</span>
           </h2>
-          <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-            <table className="w-full text-sm">
+          <TableContainer>
+            <table className="w-full text-[15px] min-w-[700px]">
               <thead className="bg-subtle">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                <tr>
                   <Th>代號 / 名稱</Th>
                   <Th>表</Th>
                   <Th align="right">缺日數</Th>
@@ -277,10 +276,7 @@ export default async function DqPage({
                   return (
                     <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle">
                       <Td>
-                        <Link href={`/stocks/${g.stockId}`} className="flex flex-col hover:underline">
-                          <span className="numeric font-semibold">{g.stockId}</span>
-                          <span className="text-[var(--text-tertiary)] text-xs">{g.stockName}</span>
-                        </Link>
+                        <StockIdCell stockId={g.stockId} stockName={g.stockName} />
                       </Td>
                       <Td className="text-xs text-[var(--text-secondary)]">{g.table}</Td>
                       <Td align="right" numeric className="text-[var(--color-down)] font-semibold">{g.missingDays}</Td>
@@ -293,7 +289,7 @@ export default async function DqPage({
                 })}
               </tbody>
             </table>
-          </div>
+          </TableContainer>
         </section>
       )}
 

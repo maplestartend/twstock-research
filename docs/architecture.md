@@ -14,7 +14,7 @@
 | `app/scoring/market_scope_cache.py` | 🆕 industry_rotation + market_breadth parquet/JSON cache（key=`MAX(daily_price.date)`，每日只算一次） |
 | `app/scoring/snapshot_freshness.py` | 列表 API 開頭呼叫 `ensure_fresh()`，snapshot 落後 daily_price 時自動補跑（with lock） |
 | `web/` | Next.js 15 App Router，TypeScript，Tailwind v4，自家 design tokens |
-| `web/components/primitives/` | 通用 UI：PageHeader、EmptyState、Field、Th/Td、Pagination、Icon、KPIStat、ScoreBadge、PriceCell、ThemeToggle、🆕 RiskAlertList（同 severity 合併卡）、🆕 SnapshotFreshnessIndicator（topbar 互動 badge + 一鍵 refresh）、🆕 SnapshotDeltaPanel（戰情室「今日 vs 昨日」delta）、🆕 TableScrollHint（mobile 表格水平捲提示）（Taiwan 漲紅跌綠硬編進 token） |
+| `web/components/primitives/` | 通用 UI：PageHeader、EmptyState、Field、Th/Td、🆕 TableContainer（Th + bg + overflow + 內建 ScrollHint）、🆕 StockIdCell（13 個 listing 表共用「代號/名稱」cell）、Pagination、Icon、KPIStat、ScoreBadge、PriceCell、ThemeToggle、RiskAlertList、SnapshotFreshnessIndicator、SnapshotDeltaPanel、TableScrollHint（Taiwan 漲紅跌綠硬編進 token） |
 | `web/components/charts/` | CandlestickChart（lightweight-charts，陽紅陰綠）+ ScoreTimelineChart / BacktestEquityChart（Recharts）+ IndustryHeatmap（d3-hierarchy 自繪 SVG） |
 | `web/lib/` | API 封裝（api.ts）、共用樣式 class（formClasses.ts）、回測情景預設（scenarios.ts）、評分子項中文標籤（labels.ts）、詞彙表（terms.ts） |
 

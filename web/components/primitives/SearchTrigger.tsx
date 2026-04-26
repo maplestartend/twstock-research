@@ -19,7 +19,7 @@ export function SearchTrigger() {
     >
       <Icon name="search" size={16} />
       <span className="hidden md:inline">搜尋...</span>
-      <kbd className="hidden md:inline-flex items-center gap-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--border-default)] bg-surface">
+      <kbd className="hidden md:inline-flex items-center gap-0.5 text-[11px] font-mono px-1.5 py-0.5 rounded border border-[var(--border-default)] bg-surface">
         <span>⌘</span>K
       </kbd>
     </button>

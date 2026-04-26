@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/primitives/PageHeader";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Th, Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
 import { DownloadCsvButton } from "@/components/primitives/DownloadCsvButton";
 import { fmtPrice, fmtPct, fmtDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -127,10 +128,10 @@ export default async function DividendCalendarPage({
               : "近期無除權息事件"}
           </EmptyState>
         ) : (
-          <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-            <table className="w-full text-sm min-w-[700px]">
+          <TableContainer>
+            <table className="w-full text-[15px] min-w-[700px]">
               <thead className="bg-subtle">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                <tr>
                   <Th>除權息日</Th>
                   <Th>代號 / 名稱</Th>
                   <Th align="right">類型</Th>
@@ -194,7 +195,7 @@ export default async function DividendCalendarPage({
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableContainer>
         )}
       </section>
     </div>

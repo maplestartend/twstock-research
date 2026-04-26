@@ -14,6 +14,8 @@ import { PriceCell } from "@/components/primitives/PriceCell";
 import { KPIStat } from "@/components/primitives/KPIStat";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Th, Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { Pagination } from "@/components/primitives/Pagination";
 import { fmtPct, tone, toneClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -244,21 +246,21 @@ export default async function HistoryPage({
                 共 {totalRows} 檔
                 {totalPages > 1 && ` · 第 ${safePage} / ${totalPages} 頁（每頁 ${PAGE_SIZE}）`}
               </span>
-              <span className="text-[10px] text-[var(--text-tertiary)] font-normal ml-2">依綜合分數降序</span>
+              <span className="text-[11px] text-[var(--text-tertiary)] font-normal ml-2">依綜合分數降序</span>
             </h2>
-            <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-              <table className="w-full text-sm min-w-[1100px] table-fixed">
+            <TableContainer>
+              <table className="w-full text-[15px] min-w-[1200px] table-fixed">
                 <thead className="bg-subtle">
-                  <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
-                    <Th className="w-[160px]">代號 / 名稱</Th>
-                    <Th align="right" className="w-[96px]">{asOf} 收盤</Th>
-                    <Th align="right" className="w-[96px]">目前收盤</Th>
-                    <Th align="right" className="w-[80px]">漲跌幅</Th>
-                    <Th align="right" className="w-[76px]">短</Th>
-                    <Th align="right" className="w-[76px]">中</Th>
-                    <Th align="right" className="w-[76px]">長</Th>
-                    <Th align="right" className="w-[76px]">綜合</Th>
-                    <Th align="right" className="w-[100px]">當時建議</Th>
+                  <tr>
+                    <Th className="w-[170px]">代號 / 名稱</Th>
+                    <Th align="right" className="w-[100px]">{asOf} 收盤</Th>
+                    <Th align="right" className="w-[100px]">目前收盤</Th>
+                    <Th align="right" className="w-[88px]">漲跌幅</Th>
+                    <Th align="center" className="w-[88px]">短期</Th>
+                    <Th align="center" className="w-[88px]">中期</Th>
+                    <Th align="center" className="w-[88px]">長期</Th>
+                    <Th align="center" className="w-[88px]">綜合</Th>
+                    <Th align="center" className="w-[108px]">當時建議</Th>
                     <Th>命中策略</Th>
                   </tr>
                 </thead>
@@ -266,10 +268,7 @@ export default async function HistoryPage({
                   {pagedRows.map((r) => (
                     <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                       <Td>
-                        <Link href={`/stocks/${r.stockId}`} className="flex flex-col hover:underline">
-                          <span className="numeric font-semibold text-[var(--text-primary)]">{r.stockId}</span>
-                          <span className="text-[var(--text-tertiary)] text-xs">{r.stockName}</span>
-                        </Link>
+                        <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                       </Td>
                       <Td align="right">
                         <PriceCell price={r.snapshotClose} variant="compact" />
@@ -282,12 +281,12 @@ export default async function HistoryPage({
                           {fmtPct(r.changePct, 2)}
                         </span>
                       </Td>
-                      <Td align="right"><div className="flex justify-end"><ScoreBadge score={r.short} size="sm" horizon="short" /></div></Td>
-                      <Td align="right"><div className="flex justify-end"><ScoreBadge score={r.mid} size="sm" horizon="mid" /></div></Td>
-                      <Td align="right"><div className="flex justify-end"><ScoreBadge score={r.long} size="sm" horizon="long" /></div></Td>
-                      <Td align="right"><div className="flex justify-end"><ScoreBadge score={r.composite} size="sm" horizon="composite" /></div></Td>
-                      <Td align="right">
-                        {r.recommendation ? <div className="flex justify-end"><RecommendationTag raw={r.recommendation} size="sm" /></div> : <span className="text-[var(--text-tertiary)]">—</span>}
+                      <Td align="center"><div className="flex justify-center"><ScoreBadge score={r.short} size="sm" horizon="short" /></div></Td>
+                      <Td align="center"><div className="flex justify-center"><ScoreBadge score={r.mid} size="sm" horizon="mid" /></div></Td>
+                      <Td align="center"><div className="flex justify-center"><ScoreBadge score={r.long} size="sm" horizon="long" /></div></Td>
+                      <Td align="center"><div className="flex justify-center"><ScoreBadge score={r.composite} size="sm" horizon="composite" /></div></Td>
+                      <Td align="center">
+                        {r.recommendation ? <div className="flex justify-center"><RecommendationTag raw={r.recommendation} size="sm" /></div> : <span className="text-[var(--text-tertiary)]">—</span>}
                       </Td>
                       <Td>
                         <div className="flex flex-wrap gap-1">
@@ -295,7 +294,7 @@ export default async function HistoryPage({
                             <span
                               key={s}
                               className={cn(
-                                "text-[10px] font-medium px-1.5 py-0.5 rounded border",
+                                "text-[11px] font-medium px-1.5 py-0.5 rounded border",
                                 s.trim() === validStrategy
                                   ? "bg-[var(--brand-tint-strong)] text-[var(--brand-700)] dark:text-[var(--brand-300)] border-[var(--brand-tint-border)]"
                                   : "bg-subtle text-[var(--text-secondary)] border-[var(--border-default)]",
@@ -310,7 +309,7 @@ export default async function HistoryPage({
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableContainer>
             <p className="text-xs text-[var(--text-tertiary)]">
               漲跌幅 = （目前收盤 − 快照日收盤）/ 快照日收盤，未考慮除權息還原
             </p>

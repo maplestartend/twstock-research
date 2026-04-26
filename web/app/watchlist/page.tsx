@@ -8,6 +8,8 @@ import { RecommendationTag } from "@/components/primitives/RecommendationTag";
 import { PriceCell } from "@/components/primitives/PriceCell";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Th, Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -132,58 +134,55 @@ export default async function WatchlistOverviewPage({
           {/* Main table */}
           <section className="flex flex-col gap-3">
             <SectionTitle icon="table_view">全部自選股</SectionTitle>
-            <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-              <table className="w-full text-sm min-w-[700px]">
+            <TableContainer>
+              <table className="w-full text-[15px] min-w-[700px]">
                 <thead className="bg-subtle">
-                  <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                  <tr>
                     <Th>代號 / 名稱</Th>
                     <Th align="right">收盤</Th>
                     <Th align="right">今日%</Th>
-                    <Th align="right">短期</Th>
-                    <Th align="right">中期</Th>
-                    {tab !== "etf" && <Th align="right">長期</Th>}
-                    <Th align="right">綜合</Th>
-                    <Th align="right">建議</Th>
+                    <Th align="center">短期</Th>
+                    <Th align="center">中期</Th>
+                    {tab !== "etf" && <Th align="center">長期</Th>}
+                    <Th align="center">綜合</Th>
+                    <Th align="center">建議</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => (
                     <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                       <Td>
-                        <Link href={`/stocks/${r.stockId}`} className="flex flex-col hover:underline">
-                          <span className="numeric font-semibold text-[var(--text-primary)]">{r.stockId}</span>
-                          <span className="text-[var(--text-tertiary)] text-xs">{r.stockName}</span>
-                        </Link>
+                        <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                       </Td>
                       <Td align="right" numeric>{fmtPrice(r.close)}</Td>
                       <Td align="right">
                         <PriceCell price={r.close} deltaPct={r.changePct} variant="compact" />
                       </Td>
-                      <Td align="right">
-                        <div className="flex justify-end">
+                      <Td align="center">
+                        <div className="flex justify-center">
                           <ScoreBadge score={r.short} size="sm" horizon="short" />
                         </div>
                       </Td>
-                      <Td align="right">
-                        <div className="flex justify-end">
+                      <Td align="center">
+                        <div className="flex justify-center">
                           <ScoreBadge score={r.mid} size="sm" horizon="mid" />
                         </div>
                       </Td>
                       {tab !== "etf" && (
-                        <Td align="right">
-                          <div className="flex justify-end">
+                        <Td align="center">
+                          <div className="flex justify-center">
                             <ScoreBadge score={r.long} size="sm" horizon="long" />
                           </div>
                         </Td>
                       )}
-                      <Td align="right">
-                        <div className="flex justify-end">
+                      <Td align="center">
+                        <div className="flex justify-center">
                           <ScoreBadge score={r.composite} size="sm" horizon="composite" />
                         </div>
                       </Td>
-                      <Td align="right">
+                      <Td align="center">
                         {r.recommendation ? (
-                          <div className="flex justify-end">
+                          <div className="flex justify-center">
                             <RecommendationTag raw={r.recommendation} size="sm" />
                           </div>
                         ) : (
@@ -194,7 +193,7 @@ export default async function WatchlistOverviewPage({
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableContainer>
           </section>
         </>
       )}

@@ -9,6 +9,7 @@ import { NextStepCards } from "@/components/primitives/NextStepCard";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Field } from "@/components/primitives/Field";
 import { Th, TdCompact as Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
 import { BacktestEquityChart } from "@/components/charts/BacktestEquityChartLazy";
 import { fmtPct, fmtPrice, tone, toneClass } from "@/lib/format";
 import { btnPrimary, btnSecondary, inputCls, rangeCls } from "@/lib/formClasses";
@@ -98,7 +99,7 @@ export default async function BacktestPage({
         <h2 className="text-sm font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1.5">
           <Icon name="palette" size={16} className="text-[var(--brand-500)]" />
           情景預設
-          <span className="text-[10px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用）</span>
+          <span className="text-[11px] text-[var(--text-tertiary)] font-normal ml-1">（一鍵套用）</span>
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {(Object.entries(SCENARIOS) as [keyof typeof SCENARIOS, typeof SCENARIOS[keyof typeof SCENARIOS]][]).map(
@@ -133,10 +134,10 @@ export default async function BacktestPage({
                   <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
                     <Icon name={sc.icon} size={16} filled={isActive} className="text-[var(--brand-500)]" />
                     {sc.label}
-                    {isActive && <span className="text-[10px] text-[var(--brand-500)] ml-auto">已套用</span>}
+                    {isActive && <span className="text-[11px] text-[var(--brand-500)] ml-auto">已套用</span>}
                   </span>
                   <span className="text-xs text-[var(--text-tertiary)]">{sc.desc}</span>
-                  <span className="text-[10px] text-[var(--text-tertiary)] numeric">
+                  <span className="text-[11px] text-[var(--text-tertiary)] numeric">
                     進 {sc.cfg.entry}・出 {sc.cfg.exit}・停損 {(sc.cfg.sl * 100).toFixed(0)}%・停利 {(sc.cfg.tp * 100).toFixed(0)}%
                   </span>
                 </Link>
@@ -353,10 +354,10 @@ export default async function BacktestPage({
                 </div>
               </EmptyState>
             ) : (
-              <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-                <table className="w-full text-sm min-w-[700px]">
+              <TableContainer>
+                <table className="w-full text-[15px] min-w-[700px]">
                   <thead className="bg-subtle">
-                    <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                    <tr>
                       <Th>進場日</Th>
                       <Th>出場日</Th>
                       <Th align="right">持有天數</Th>
@@ -388,7 +389,7 @@ export default async function BacktestPage({
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableContainer>
             )}
           </section>
 

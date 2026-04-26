@@ -13,6 +13,8 @@ import { EmptyState } from "@/components/primitives/EmptyState";
 import { PriceCell } from "@/components/primitives/PriceCell";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { Th, TdCompact as Td } from "@/components/primitives/Table";
+import { TableContainer } from "@/components/primitives/TableContainer";
+import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { IndustryHeatmap } from "@/components/charts/IndustryHeatmap";
 import { fmtNum, fmtPct, tone } from "@/lib/format";
@@ -61,10 +63,10 @@ export default async function SectorsPage({
         {!members || members.length === 0 ? (
           <EmptyState size="sm">無成員資料</EmptyState>
         ) : (
-          <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-            <table className="w-full text-sm min-w-[600px]">
+          <TableContainer>
+            <table className="w-full text-[15px] min-w-[600px]">
               <thead className="bg-subtle">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                <tr>
                   <Th>代號 / 名稱</Th>
                   <Th align="right">收盤</Th>
                   <Th align="right">1日</Th>
@@ -76,10 +78,7 @@ export default async function SectorsPage({
                 {members.map((m) => (
                   <tr key={m.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                     <Td>
-                      <Link href={`/stocks/${m.stockId}`} className="flex flex-col hover:underline">
-                        <span className="numeric font-semibold text-[var(--text-primary)]">{m.stockId}</span>
-                        <span className="text-[var(--text-tertiary)] text-xs">{m.stockName}</span>
-                      </Link>
+                      <StockIdCell stockId={m.stockId} stockName={m.stockName} />
                     </Td>
                     <Td align="right">
                       <PriceCell price={m.close} deltaPct={m.ret1D} variant="compact" />
@@ -97,7 +96,7 @@ export default async function SectorsPage({
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableContainer>
         )}
       </div>
     );
@@ -167,10 +166,10 @@ export default async function SectorsPage({
             <code className="font-mono">python -m scripts.refresh_industry</code>。
           </EmptyState>
         ) : (
-          <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-x-auto">
-            <table className="w-full text-sm min-w-[700px]">
+          <TableContainer>
+            <table className="w-full text-[15px] min-w-[700px]">
               <thead className="bg-subtle">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-secondary)]">
+                <tr>
                   <Th>產業</Th>
                   <Th align="right">成員數</Th>
                   {PCT_COLS.map((c) => (
@@ -221,7 +220,7 @@ export default async function SectorsPage({
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableContainer>
         )}
       </section>
     </div>
@@ -238,9 +237,9 @@ function toneClass(v: number | null | undefined): string {
 function BreadthCard({ label, primary, sub }: { label: string; primary: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-[var(--border-default)] bg-surface p-4 flex flex-col gap-1">
-      <span className="text-xs text-[var(--text-tertiary)]">{label}</span>
-      <span className="numeric text-xl font-bold text-[var(--text-primary)]">{primary}</span>
-      {sub && <span className="numeric text-xs text-[var(--text-tertiary)]">{sub}</span>}
+      <span className="text-[12px] text-[var(--text-secondary)]">{label}</span>
+      <span className="numeric text-[22px] font-semibold text-[var(--text-primary)] tabular-nums tracking-tight">{primary}</span>
+      {sub && <span className="numeric text-[12px] text-[var(--text-secondary)]">{sub}</span>}
     </div>
   );
 }
