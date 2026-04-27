@@ -20,6 +20,7 @@ import pandas as pd
 
 from app import portfolio as pf
 from app import risk as risk_mod
+from app import watchlist as wl_mod
 from app.data.db import Database
 from app.risk import (
     atr_stop_loss,
@@ -107,6 +108,8 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
     上層每個 router function 進入時呼叫 `_holdings_cached(db)` 並在出去前清掉。
     """
     ensure_fresh(db)
+    # 一次載 watchlist set（檔案 IO，避免每檔重讀 yaml）
+    watchlist_ids = set(wl_mod.load().keys())
     out: list[HoldingRow] = []
     for h in pf.list_holdings(db):
         # 一次載入 price df，給 close/prev/ATR/enhanced_risk_signals 共用
@@ -161,6 +164,7 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
             atr_distance_pct=atr_dist,
             atr_kind=atr_kind,
             atr_below_stop=atr_below,
+            in_watchlist=h.stock_id in watchlist_ids,
         ))
     return out
 
