@@ -12,6 +12,7 @@ from api.deps import get_db
 from api.schemas.common import CamelModel
 from api.schemas.stock import (
     IndicatorPoint,
+    IntradayQuoteView,
     OHLCV,
     ScoreHistoryPoint,
     ScoreParts,
@@ -20,6 +21,7 @@ from api.schemas.stock import (
     StockScoreView,
 )
 from app import risk as risk_mod
+from app.data import intraday as intraday_mod
 from app.data.db import Database
 from app.indicators import technical as tech
 from app.scoring.engine import score_stock
@@ -86,12 +88,36 @@ def price(stock_id: str, days: int = 180, db: Database = Depends(get_db)) -> Sto
 
 
 @router.get("/{stock_id}/score", response_model=StockScoreView)
-def score(stock_id: str, db: Database = Depends(get_db)) -> StockScoreView:
-    with db.connect() as conn:
-        r = conn.execute("SELECT stock_name FROM stock_info WHERE stock_id=?", (stock_id,)).fetchone()
-    name = r["stock_name"] if r and r["stock_name"] else stock_id
+def score(
+    stock_id: str,
+    live: int = 0,
+    override_price: float | None = None,
+    db: Database = Depends(get_db),
+) -> StockScoreView:
+    """個股短/中/長期評分。
 
-    s = score_stock(db, stock_id, name)
+    - `live=1`：抓 mis 即時報價當作最新一筆 close，重算技術面 → 短/中分數反映盤中實況。
+      盤後 / 興櫃 / mis 失敗 → fallback 走收盤分數（不報錯，前端透過 `liveUsed=false` 得知）。
+    - `override_price=X`：what-if 模式，把最新 close 換成 X 重算。X 必須 > 0；同時帶 live=1 時
+      以 override_price 為準（手動輸入優先於即時報價）。
+    """
+    with db.connect() as conn:
+        r = conn.execute(
+            "SELECT stock_name, type FROM stock_info WHERE stock_id=?",
+            (stock_id,),
+        ).fetchone()
+    name = r["stock_name"] if r and r["stock_name"] else stock_id
+    market_type = r["type"] if r else None
+
+    live_price: float | None = None
+    if override_price is not None and override_price > 0:
+        live_price = float(override_price)
+    elif live:
+        q = intraday_mod.fetch_quote(stock_id, market_type)
+        if q is not None and q.is_live and q.price > 0:
+            live_price = q.price
+
+    s = score_stock(db, stock_id, name, live_price=live_price)
     if s is None:
         # score_stock 返回 None 的情況：無 daily_price 或不滿 60 日；
         # 用 404 而非 422 比較貼合語意（resource not available）
@@ -128,11 +154,49 @@ def score(stock_id: str, db: Database = Depends(get_db)) -> StockScoreView:
         is_stale=bool(s.is_stale),
         stale_days=int(s.signals.get("stale_days", 0) or 0),
         is_pending=bool(getattr(s, "is_pending", False)),
+        live_price_used=bool(s.signals.get("live_price_used", False)),
+        live_price=_safe_float(s.signals.get("live_price")),
         recommendation=str(s.signals.get("recommendation", "")),
         entry=list(s.signals.get("entry") or []),
         stop_loss=list(s.signals.get("stop_loss") or []),
         take_profit=list(s.signals.get("take_profit") or []),
         warnings=list(s.signals.get("warnings") or []),
+    )
+
+
+@router.get("/{stock_id}/intraday", response_model=IntradayQuoteView)
+def intraday(stock_id: str, db: Database = Depends(get_db)) -> IntradayQuoteView:
+    """盤中即時報價（TWSE mis）。
+
+    - 30 秒記憶體快取避免 hammer 外部 API
+    - 興櫃 / mis 失敗 / 抓不到該股 → 422，前端可隱藏「即時」按鈕並 fallback 收盤分數
+    - 盤後或休市時 mis 仍會回前一日收盤（`isLive=false`），UI 應該標示「非盤中」
+    """
+    with db.connect() as conn:
+        r = conn.execute(
+            "SELECT type FROM stock_info WHERE stock_id=?", (stock_id,)
+        ).fetchone()
+    market_type = r["type"] if r else None
+    q = intraday_mod.fetch_quote(stock_id, market_type)
+    if q is None:
+        raise HTTPException(status_code=422, detail="即時報價無法取得（興櫃 / 休市 / 上游異常）")
+    chg_pct: float | None = None
+    if q.prev_close and q.prev_close > 0 and q.price is not None:
+        chg_pct = (q.price - q.prev_close) / q.prev_close
+    return IntradayQuoteView(
+        stock_id=stock_id,
+        price=q.price,
+        prev_close=q.prev_close,
+        open=q.open,
+        high=q.high,
+        low=q.low,
+        bid1=q.bid1,
+        ask1=q.ask1,
+        volume_lots=q.volume_lots,
+        quote_time=q.quote_time,
+        is_live=q.is_live,
+        quote_source=q.quote_source,
+        change_pct=chg_pct,
     )
 
 
@@ -173,13 +237,34 @@ class AtrTrailing(CamelModel):
     below_stop: bool
 
 
+class AtrTakeProfit(CamelModel):
+    """Chandelier-style 動態停利。需 entry_date + entry_price 才有值。"""
+    take_profit_price: float
+    atr: float
+    peak_since_entry: float
+    latest_close: float
+    days_held: int
+    unrealized_pnl_pct: float
+    armed: bool                # 浮盈 ≥ arm_pnl AND 持有 ≥ arm_days
+    triggered: bool            # armed AND latest_close ≤ take_profit_price
+    multiplier: float
+    arm_pnl_threshold: float
+    arm_days_threshold: int
+
+
 class AtrStopView(CamelModel):
-    """ATR 停損建議。trailing 段在無 entry_date 時為 None。"""
+    """ATR 進出場建議。
+
+    - fixed 段：永遠回傳（用 entry_price 或最後收盤當參考）
+    - trailing 段：需 entry_date
+    - take_profit 段：需 entry_date + entry_price（armed 條件需算浮盈）
+    """
     stock_id: str
     multiplier: float
     period: int
     fixed: AtrFixed | None = None
     trailing: AtrTrailing | None = None
+    take_profit: AtrTakeProfit | None = None
 
 
 @router.get("/{stock_id}/atr-stop", response_model=AtrStopView)
@@ -189,11 +274,17 @@ def atr_stop(
     entry_date: str | None = None,
     multiplier: float = 2.0,
     period: int = 14,
+    tp_multiplier: float = 3.0,
+    tp_arm_pnl: float = 0.08,
+    tp_arm_days: int = 5,
     db: Database = Depends(get_db),
 ) -> AtrStopView:
-    """ATR-based 停損建議。
-    - `entry_price` / `entry_date` 都不給：fixed 用最後收盤算、trailing=None
-    - 給 `entry_date`：trailing 段算「進場以來最高 − N×ATR」
+    """ATR-based 進出場建議（停損 + 動態停利）。
+
+    - `entry_price` / `entry_date` 都不給：fixed 用最後收盤算、trailing/take_profit=None
+    - 給 `entry_date`：trailing 段算「進場以來最高 − multiplier×ATR」
+    - 給 `entry_date` + `entry_price`：take_profit 段算 Chandelier「進場以來最高 high − tp_multiplier×ATR」
+        * armed 條件：浮盈 ≥ tp_arm_pnl AND 持有 ≥ tp_arm_days
     - 資料不足（< period+1 日）→ 422
     """
     df = db.load_daily_price(stock_id)
@@ -201,7 +292,16 @@ def atr_stop(
         raise HTTPException(status_code=404, detail="stock not found")
     fixed = risk_mod.atr_stop_loss(df, entry_price=entry_price, multiplier=multiplier, period=period)
     trailing = risk_mod.trailing_atr_stop(df, entry_date or "", multiplier=multiplier, period=period) if entry_date else None
-    if fixed is None and trailing is None:
+    take_profit = (
+        risk_mod.trailing_atr_take_profit(
+            df, entry_date, entry_price=entry_price,
+            multiplier=tp_multiplier, period=period,
+            arm_pnl=tp_arm_pnl, arm_days=tp_arm_days,
+        )
+        if entry_date and entry_price
+        else None
+    )
+    if fixed is None and trailing is None and take_profit is None:
         raise HTTPException(status_code=422, detail=f"資料不足計算 ATR（至少需 {period + 1} 日）")
     return AtrStopView(
         stock_id=stock_id,
@@ -209,4 +309,5 @@ def atr_stop(
         period=period,
         fixed=AtrFixed(**fixed) if fixed else None,
         trailing=AtrTrailing(**trailing) if trailing else None,
+        take_profit=AtrTakeProfit(**take_profit) if take_profit else None,
     )

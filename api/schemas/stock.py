@@ -47,11 +47,39 @@ class StockScoreView(StockRef):
     is_stale: bool = False                 # 最新資料日期距今 > 3 天
     stale_days: int = 0
     is_pending: bool = False               # as_of=今日且當下 < 14:00 → 資料尚未收盤確認
+    # 盤中即時 / what-if 重算：若呼叫時帶 ?live=1 或 ?override_price=X，這兩個欄位會被填上。
+    # 前端據此標示「盤中估算」並切換 UI 顏色，避免使用者把它當成收盤後 final 分數。
+    live_price_used: bool = False
+    live_price: float | None = None
     recommendation: str
     entry: list[str] = []
     stop_loss: list[str] = []
     take_profit: list[str] = []
     warnings: list[str] = []
+
+
+class IntradayQuoteView(CamelModel):
+    """盤中即時報價（mis.twse.com.tw）。盤後 / 興櫃 / 抓不到 → 422，前端可 fallback 收盤分數。
+
+    quote_source 表示 price 從哪取得（5 秒撮合制下 z 多數時刻為空，要走 fallback）：
+      "match"      — 最新撮合價 (z)
+      "prev_match" — 前一筆撮合價 (pz)
+      "midpoint"   — 最佳買賣中價 ((a1+b1)/2)；盤中正常波動會用到
+      "prev_close" — 昨收 fallback；前三都缺，is_live=False
+    """
+    stock_id: str
+    price: float
+    prev_close: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    bid1: float | None = None
+    ask1: float | None = None
+    volume_lots: float | None = None
+    quote_time: str | None = None
+    is_live: bool = True       # False = 走 prev_close fallback（盤前/休市/三項都缺）
+    quote_source: str = "match"
+    change_pct: float | None = None     # (price - prev_close) / prev_close
 
 
 class ScoreHistoryPoint(CamelModel):

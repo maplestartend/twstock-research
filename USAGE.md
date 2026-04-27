@@ -160,6 +160,11 @@ python -m scripts.backfill_financials_history --quarters 8
 
 ### 🔍 個股詳情（決策工作台）
 - K 線圖（可勾「使用還原價」）
+- **🆕 評分模式切換**：頂端三按鈕「收盤 / 即時 / 假設」
+  - **收盤**（預設）：依昨日收盤算出的分數（雷達/自選看到的也是這個版本）
+  - **即時**：抓 TWSE mis 盤中報價當作最新 close 重算 → 短/中分數反映盤中實況，每 30 秒自動刷新
+  - **假設**：自己輸入「假設成交價」(±10% 滑桿)，秒級看到該價位下的分數變化；用來決定「跌到 X 才進場 vs 漲到 X 該不該追」
+  - 長期分數固定不動（吃 ROE/EPS/股利等財報指標，盤中價無關）；KPI 卡會顯示與收盤分數的 Δ 差
 - 評分拆解（短/中/長 三 tab，每個子項分數）
 - 進出場建議、風險提示
 - 籌碼/基本面明細（可折疊）
@@ -167,6 +172,8 @@ python -m scripts.backfill_financials_history --quarters 8
 - 📉 近 90 天分數折線 + 預設策略近 1 年勝率/Alpha/B&H 快照
 - 🗓️ 近期除權息 / 分割
 - ⚙️ 一鍵跳「策略回測 / 投組回測 / 部位試算」
+
+> 「即時」模式只影響個股詳情頁，**不會寫入 signal_history**（避免污染回測來源）。雷達/自選列表頁仍顯示昨日收盤分數。
 
 ### 💼 我的持股
 單頁分區：KPI 總覽 / 持股明細 / 風險提醒 / 已實現損益 / 交易紀錄。
@@ -199,6 +206,7 @@ python -m scripts.backfill_financials_history --quarters 8
 - **一句話結論卡**：依 Alpha vs 0050 自動產生紅黃綠結論
 - 投組回測：來源（自選 / 雷達 Top N / 自訂），滑價預設 5 bps，自動附 0050 / TAIEX B&H Alpha；每檔明細表可「下載 CSV」
 - 參數掃描：3 卡「保守 8 / 平衡 24 / 激進 48 組」，Alpha 熱力圖 + 🧪 Walk-forward 驗證（train/test 切片偵測 overfit）
+- **動態停利**（選用）：BacktestConfig 新增 `trailing_tp_mode`（off/both/only）、`trailing_tp_atr_multiplier`（K，預設 3.0）、`trailing_tp_arm_pnl`（armed 浮盈門檻，預設 8%）、`trailing_tp_arm_days`（armed 持有日門檻，預設 5）。Chandelier-style：peak_high − K×ATR；exit 優先序 stop_loss > trailing_take_profit > take_profit > score_exit > max_hold
 
 ### 🎉 除權息回測
 事件驅動：每次除權息事件模擬「前 N 日進場、後 M 日出場」歷史報酬。3 預設「提前布局 / 經典套息 / 貼息回補」。報酬含「價差 + 現金股利」（不用還原價，避免事件訊號被消化）。資料源 `adj_event`，每次最多 100 檔。
@@ -255,7 +263,7 @@ python -m scripts.backfill_financials_history --quarters 8
 | POST | `/api/system/backup-now` | 手動觸發 DB 備份（需 config 啟用） |
 | POST | `/api/system/rebuild-holding/{id}` | 以 trade_log 重建單檔 holdings |
 | GET | `/api/system/report/daily?as_of=YYYY-MM-DD` | 讀現成 reports/*.md（無 as_of → latest） |
-| GET | `/api/stocks/{id}/atr-stop?multiplier=2.0&entry_date=...` | ATR 停損建議（fixed + trailing） |
+| GET | `/api/stocks/{id}/atr-stop?entry_date=...&entry_price=...` | ATR 進出場建議（fixed 停損 + trailing 停損 + Chandelier 動態停利）。停利 armed 條件：浮盈 ≥ 8% 且持有 ≥ 5 日；可調 `tp_multiplier`（預設 3.0）/ `tp_arm_pnl` / `tp_arm_days` |
 | POST | `/api/portfolio/position-suggest` | 固定比例風險法的張數試算 |
 | GET | `/api/portfolio/trades?stock_id=2330` | 單檔交易紀錄 |
 | GET | `/api/portfolio/realized-pnl?stock_id=2330` | 單檔已實現損益 |

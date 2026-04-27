@@ -23,17 +23,21 @@ import { fmtMoney, fmtPct, fmtPrice, tone, toneClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { TradesPanel } from "./TradesPanel";
 
-export const revalidate = 60;
+// 持股頁是「頻繁編輯」場景：使用者新增 / 刪除交易後預期立刻看到結果。
+// 用 ISR cache（revalidate=60）會讓 router.refresh() 在 60s 內讀到舊 fetch 結果，
+// 出現「明明刪掉了卻還在」的錯覺。改成 dynamic 不快取，每次 request 都重 fetch。
+export const dynamic = "force-dynamic";
 
 export default async function HoldingsPage() {
   let summary: PortfolioSummary, holdings: HoldingRow[], risks: RiskAlert[], trades: TradeRow[], realized: RealizedPnlSummary;
   try {
+    // 5 個 fetch 全部 noCache，避免 Data Cache 內部仍命中舊版（即便頁面 dynamic）。
     [summary, holdings, risks, trades, realized] = await Promise.all([
-      apiGet<PortfolioSummary>("/api/portfolio/summary"),
-      apiGet<HoldingRow[]>("/api/portfolio/holdings"),
-      apiGet<RiskAlert[]>("/api/portfolio/risk-alerts"),
-      apiGet<TradeRow[]>("/api/portfolio/trades?limit=50"),
-      apiGet<RealizedPnlSummary>("/api/portfolio/realized-pnl"),
+      apiGet<PortfolioSummary>("/api/portfolio/summary", { noCache: true }),
+      apiGet<HoldingRow[]>("/api/portfolio/holdings", { noCache: true }),
+      apiGet<RiskAlert[]>("/api/portfolio/risk-alerts", { noCache: true }),
+      apiGet<TradeRow[]>("/api/portfolio/trades?limit=50", { noCache: true }),
+      apiGet<RealizedPnlSummary>("/api/portfolio/realized-pnl", { noCache: true }),
     ]);
   } catch (e) {
     return <BackendDownError error={e} pageTitle="我的持股" />;

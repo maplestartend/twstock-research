@@ -76,6 +76,11 @@ def backtest_single_stock(
         slippage_bps=req_cfg.slippage_bps,
         fee_rate=req_cfg.fee_rate,
         tax_rate=req_cfg.tax_rate,
+        trailing_tp_mode=req_cfg.trailing_tp_mode,
+        trailing_tp_atr_multiplier=req_cfg.trailing_tp_atr_multiplier,
+        trailing_tp_arm_pnl=req_cfg.trailing_tp_arm_pnl,
+        trailing_tp_arm_days=req_cfg.trailing_tp_arm_days,
+        trailing_tp_atr_period=req_cfg.trailing_tp_atr_period,
     )
 
     try:
@@ -150,6 +155,11 @@ def backtest_single_stock(
         tax_rate=strat.tax_rate,
         lookback_days=req_cfg.lookback_days,
         use_adj=req_cfg.use_adj,
+        trailing_tp_mode=strat.trailing_tp_mode,
+        trailing_tp_atr_multiplier=strat.trailing_tp_atr_multiplier,
+        trailing_tp_arm_pnl=strat.trailing_tp_arm_pnl,
+        trailing_tp_arm_days=strat.trailing_tp_arm_days,
+        trailing_tp_atr_period=strat.trailing_tp_atr_period,
     )
 
     return BacktestResponse(
@@ -171,6 +181,11 @@ def _build_cfg(cfg: BacktestConfig | None) -> StrategyConfig:
         slippage_bps=c.slippage_bps,
         fee_rate=c.fee_rate,
         tax_rate=c.tax_rate,
+        trailing_tp_mode=c.trailing_tp_mode,
+        trailing_tp_atr_multiplier=c.trailing_tp_atr_multiplier,
+        trailing_tp_arm_pnl=c.trailing_tp_arm_pnl,
+        trailing_tp_arm_days=c.trailing_tp_arm_days,
+        trailing_tp_atr_period=c.trailing_tp_atr_period,
     )
 
 
@@ -246,6 +261,11 @@ def backtest_portfolio_endpoint(
         tax_rate=strat.tax_rate,
         lookback_days=cfg.lookback_days,
         use_adj=cfg.use_adj,
+        trailing_tp_mode=strat.trailing_tp_mode,
+        trailing_tp_atr_multiplier=strat.trailing_tp_atr_multiplier,
+        trailing_tp_arm_pnl=strat.trailing_tp_arm_pnl,
+        trailing_tp_arm_days=strat.trailing_tp_arm_days,
+        trailing_tp_atr_period=strat.trailing_tp_atr_period,
     )
     return PortfolioBacktestResponse(
         summary=summary, rows=rows, config=resolved,
@@ -264,7 +284,12 @@ def grid_search_endpoint(
         raise HTTPException(status_code=400, detail="stock_ids 不可為空")
     if len(sids) > 20:
         raise HTTPException(status_code=413, detail="網格掃描目前上限 20 檔")
-    combos = len(body.entry_list) * len(body.exit_list) * len(body.sl_list) * len(body.tp_list)
+    # 動態停利維度：空 list 代表走原本 4D 網格；非空則 5D，每個 k 都跑 trailing_tp_mode="both"
+    k_list: list[float | None] = list(body.trailing_tp_k_list) if body.trailing_tp_k_list else [None]
+    combos = (
+        len(body.entry_list) * len(body.exit_list)
+        * len(body.sl_list) * len(body.tp_list) * len(k_list)
+    )
     if combos == 0:
         raise HTTPException(status_code=400, detail="網格不可為空")
     if combos > 80:
@@ -276,31 +301,37 @@ def grid_search_endpoint(
         for x in body.exit_list:
             for sl in body.sl_list:
                 for tp in body.tp_list:
-                    cfg = StrategyConfig(
-                        entry_threshold=float(e),
-                        exit_threshold=float(x),
-                        stop_loss_pct=float(sl),
-                        take_profit_pct=float(tp),
-                        max_hold_days=body.max_hold_days,
-                        slippage_bps=body.slippage_bps,
-                    )
-                    try:
-                        summaries = backtest_portfolio(db, sids, cfg, lookback_days=body.lookback_days)
-                    except Exception as ex:
-                        logger.debug(
-                            "grid combo skipped entry=%s exit=%s sl=%s tp=%s: %s",
-                            e, x, sl, tp, ex,
+                    for k in k_list:
+                        cfg_kwargs = dict(
+                            entry_threshold=float(e),
+                            exit_threshold=float(x),
+                            stop_loss_pct=float(sl),
+                            take_profit_pct=float(tp),
+                            max_hold_days=body.max_hold_days,
+                            slippage_bps=body.slippage_bps,
                         )
-                        continue
-                    agg = portfolio_summary(summaries) or {}
-                    n_trades_total = int(summaries["n_trades"].sum()) if not summaries.empty else 0
-                    rows.append(GridSearchRow(
-                        entry=float(e), exit=float(x), sl=float(sl), tp=float(tp),
-                        avg_alpha=_f(agg.get("avg_alpha")),
-                        avg_total_return=_f(agg.get("avg_strategy_return")),
-                        overall_winrate=_f(agg.get("overall_winrate")),
-                        n_trades_total=n_trades_total,
-                    ))
+                        if k is not None:
+                            cfg_kwargs["trailing_tp_mode"] = "both"
+                            cfg_kwargs["trailing_tp_atr_multiplier"] = float(k)
+                        cfg = StrategyConfig(**cfg_kwargs)
+                        try:
+                            summaries = backtest_portfolio(db, sids, cfg, lookback_days=body.lookback_days)
+                        except Exception as ex:
+                            logger.debug(
+                                "grid combo skipped entry=%s exit=%s sl=%s tp=%s k=%s: %s",
+                                e, x, sl, tp, k, ex,
+                            )
+                            continue
+                        agg = portfolio_summary(summaries) or {}
+                        n_trades_total = int(summaries["n_trades"].sum()) if not summaries.empty else 0
+                        rows.append(GridSearchRow(
+                            entry=float(e), exit=float(x), sl=float(sl), tp=float(tp),
+                            trailing_tp_k=float(k) if k is not None else None,
+                            avg_alpha=_f(agg.get("avg_alpha")),
+                            avg_total_return=_f(agg.get("avg_strategy_return")),
+                            overall_winrate=_f(agg.get("overall_winrate")),
+                            n_trades_total=n_trades_total,
+                        ))
     rows.sort(key=lambda r: r.avg_alpha, reverse=True)
     best = rows[0] if rows else None
     return GridSearchResponse(

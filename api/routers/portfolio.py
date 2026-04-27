@@ -142,6 +142,7 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
             stock_name=_stock_name(db, h.stock_id),
             shares=h.shares,
             avg_cost=h.avg_cost,
+            entry_date=h.entry_date,
             price=close,
             prev_close=prev,
             today_pct=today_pct,

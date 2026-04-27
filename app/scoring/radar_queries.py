@@ -1,7 +1,7 @@
 """讀 signal_history 的小型查詢層。
 
 把 dashboard.radar_hits / radar.hits 兩個 router 共用的邏輯抽出來：
-最近一次 as_of、依策略 + 市場過濾、按 composite 降序、可截斷 top N。
+最近一次 as_of、依策略 + 市場過濾、按對應分數降序、可截斷 top N。
 
 注意：本模組屬於 app/ 層，不依賴 api/schemas，回傳純 dict。
 """
@@ -11,6 +11,17 @@ from typing import Any
 
 from app.data.db import Database
 from app.data.market_type import classify_market
+
+# 策略 → signal_history 欄位的排序對映。
+# 短/中/長三條線型策略各依自己的維度排（看「短期最強的前幾名」比看「綜合分最高」更直觀），
+# 其他（外資連買、回檔布局、營收爆發…）一律 composite — 那些指標在 signal_history 沒存欄位，
+# 也沒有跨指標的「自然偏序」，composite 是最不會誤導的預設。
+_STRATEGY_SORT_COLUMN: dict[str, str] = {
+    "短線強勢": "short",
+    "中期波段": "mid",
+    "長期價值": "long",
+}
+_ALLOWED_SORT_COLUMNS = {"short", "mid", "long", "composite"}
 
 
 def latest_as_of(db: Database) -> str | None:
@@ -40,6 +51,12 @@ def query_radar_hits(
     if not as_of:
         return []
 
+    # 依策略選排序欄位：短/中/長期策略各排自己的分數，其他 fallback composite
+    sort_col = _STRATEGY_SORT_COLUMN.get(strategy or "", "composite")
+    if sort_col not in _ALLOWED_SORT_COLUMNS:
+        # 防禦：未來新增 mapping 漏寫時不要崩，回退 composite
+        sort_col = "composite"
+
     unlimited = limit is None or limit <= 0
     sql = (
         "SELECT s.stock_id, s.stock_name, s.close, s.short, s.mid, s.long, "
@@ -53,7 +70,11 @@ def query_radar_hits(
     if strategy:
         sql += "  AND s.strategies LIKE ? "
         params.append(f"%{strategy}%")
-    sql += "ORDER BY s.composite IS NULL, s.composite DESC"
+    # 主排序：對應分數降序、NULL 推到最後；同分時用 composite 當 tie-breaker，避免不穩定排序
+    sql += (
+        f"ORDER BY s.{sort_col} IS NULL, s.{sort_col} DESC, "
+        f"         s.composite IS NULL, s.composite DESC"
+    )
     if not unlimited:
         # 多抓一些後再依 market 過濾，避免邊界不足
         sql += " LIMIT ?"
