@@ -4,6 +4,7 @@ import { ScoreBadge } from "./ScoreBadge";
 import { Th, Td } from "./Table";
 import { StockIdCell } from "./StockIdCell";
 import { TableContainer } from "./TableContainer";
+import { WatchlistStarButton } from "./WatchlistStarButton";
 import { cn } from "@/lib/utils";
 
 /** 停損距離 → 三段顏色：<3% 紅（已破或快破）、3-8% 黃（接近）、>8% 綠（安全） */
@@ -46,10 +47,10 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
   }
   return (
     <TableContainer>
-      <table className="w-full text-[15px] min-w-[1100px] table-fixed">
+      <table className="w-full text-[15px] min-w-[1140px] table-fixed">
         <thead className="bg-subtle">
           <tr>
-            <Th className="w-[170px]">代號 / 名稱</Th>
+            <Th className="w-[200px]">代號 / 名稱</Th>
             <Th align="right" className="w-[80px]">張數</Th>
             <Th align="right" className="w-[88px]">均價</Th>
             <Th align="right" className="w-[88px]">現價</Th>
@@ -70,7 +71,13 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
             return (
             <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
               <Td>
-                <StockIdCell stockId={r.stockId} stockName={r.stockName} />
+                <div className="flex items-center gap-1.5">
+                  <WatchlistStarButton
+                    stockId={r.stockId}
+                    initialInWatchlist={r.inWatchlist}
+                  />
+                  <StockIdCell stockId={r.stockId} stockName={r.stockName} />
+                </div>
               </Td>
               <Td align="right" numeric>{(r.shares / 1000).toFixed(1)}</Td>
               <Td align="right" numeric>{fmtPrice(r.avgCost)}</Td>

@@ -179,6 +179,7 @@ python -m scripts.backfill_financials_history --quarters 8
 單頁分區：KPI 總覽 / 持股明細 / 風險提醒 / 已實現損益 / 交易紀錄。
 - **新增交易**：表單填 日期 / 代號 / 買賣 / 張數 / 成交價 / 備註，手續費（0.1425%）與證交稅（賣方 0.3%）後端自動算
 - **刪除交易**：每列右側「刪除」鈕，二次確認後以 trade_log 重建該股 holdings
+- **加入/移除自選**：每列代號左側 ⭐，點一下即 toggle（樂觀更新 + router.refresh）
 - **已實現損益**：FIFO 配對
 
 ### 🎯 雷達掃描

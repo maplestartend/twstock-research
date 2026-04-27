@@ -153,6 +153,7 @@ export type HoldingRow = {
   atrDistancePct: number | null;   // (price - stop) / price，正值=安全、負值=已破停損
   atrKind: "trailing" | "fixed" | null;
   atrBelowStop: boolean;
+  inWatchlist: boolean;
 };
 
 export type AtrStopView = {

@@ -40,6 +40,7 @@ class HoldingRow(StockRef):
     atr_distance_pct: float | None = None  # (latest_close - stop) / latest_close，正值表示距停損還有空間
     atr_kind: str | None = None          # "trailing" | "fixed" | None
     atr_below_stop: bool = False         # latest_close < stop → UI 應顯示紅色警示
+    in_watchlist: bool = False           # 該檔是否已在 watchlist.yaml
 
 
 class RiskAlert(CamelModel):
