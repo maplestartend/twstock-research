@@ -35,7 +35,7 @@ class LoggingConfig:
 @dataclass
 class BrokerConfig:
     fee_discount: float = 1.0   # 手續費折扣（0.28 = 28 折）
-    fee_min: float = 20         # 單筆最低手續費（元）
+    fee_min: float = 0          # 單筆最低手續費（元）；無低銷設 0
 
 
 @dataclass
