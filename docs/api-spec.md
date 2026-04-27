@@ -39,7 +39,8 @@
 | GET | /api/watchlist/overview | [watchlist.py:186](../api/routers/watchlist.py#L186) | 自選股總覽（分數 + 漲跌） |
 | GET | /api/stocks/{stock_id}/meta | [stocks.py:27](../api/routers/stocks.py#L27) | 個股 meta（名稱 / 產業） |
 | GET | /api/stocks/{stock_id}/price | [stocks.py:51](../api/routers/stocks.py#L51) | 個股 K 線 + 技術指標 |
-| GET | /api/stocks/{stock_id}/score | [stocks.py:85](../api/routers/stocks.py#L85) | 個股短/中/長期評分 |
+| GET | /api/stocks/{stock_id}/score | [stocks.py:85](../api/routers/stocks.py#L85) | 個股短/中/長期評分（支援 `?live=1` / `?override_price=X` 重算） |
+| GET | /api/stocks/{stock_id}/intraday | [stocks.py](../api/routers/stocks.py) | **🆕** 盤中即時報價（mis.twse.com.tw，30s cache） |
 | GET | /api/stocks/{stock_id}/score-history | [stocks.py:135](../api/routers/stocks.py#L135) | 個股分數歷史曲線 |
 | GET | /api/dashboard/radar-hits | [dashboard.py:19](../api/routers/dashboard.py#L19) | 戰情室雷達命中（預設個股） |
 | GET | /api/dashboard/ex-dividend | [dashboard.py:30](../api/routers/dashboard.py#L30) | 自選+持股近 N 日除權息 |
@@ -191,9 +192,23 @@
 
 #### GET /api/stocks/{stock_id}/score
 - **用途**：完整三維評分結果（含子項、推薦、進出場提示、警告）
-- **Response model**：`StockScoreView`
+- **Query params**（皆 optional）：
+  - `live` (int, 0/1)：1 = 抓 mis 盤中即時價當作最新一筆 close 重算技術面分數；mis 失敗會自動 fallback 到收盤分數（不報錯）
+  - `override_price` (float)：what-if 假設成交價，會覆寫最新一筆 close 重算；同時帶 `live=1` 時以 `override_price` 為準
+  - 兩者都帶 → response 多出 `livePriceUsed=true` 與 `livePrice=<X>`，前端用來標示「盤中估算」徽章
+  - **不影響長期分數**（吃 ROE/EPS/股利等財報指標，盤中價無關）
+- **Response model**：`StockScoreView`（新增 `livePriceUsed: bool`、`livePrice: float | null`）
 - **錯誤**：404 = 完全無資料；422 = 資料不足 60 個交易日無法評分
-- **依賴**：`score_stock()`（[app/scoring/engine.py:286](../app/scoring/engine.py#L286)）
+- **依賴**：`score_stock()`（[app/scoring/engine.py](../app/scoring/engine.py)）；mis client [app/data/intraday.py](../app/data/intraday.py)
+- **注意**：本 endpoint 走「即時 compute」**不寫入 signal_history**，避免污染回測來源
+
+#### GET /api/stocks/{stock_id}/intraday
+- **用途**：盤中即時報價（TWSE mis.twse.com.tw）；給前端「即時模式」按鈕用
+- **Response model**：`IntradayQuoteView` { stockId, price, prevClose, open, high, low, volumeLots, quoteTime, isLive, changePct }
+  - `isLive=false`：mis 回 `z='-'`（盤前/休市），price 用昨收 fallback
+- **錯誤**：422 = 興櫃 / mis 無回應 / 該股不在 mis（前端應隱藏「即時」按鈕並 fallback 收盤分數）
+- **快取**：30 秒記憶體快取，避免 hammer 上游
+- **依賴**：[app/data/intraday.py](../app/data/intraday.py)
 
 #### GET /api/stocks/{stock_id}/score-history
 - **用途**：個股分數歷史曲線（讀 signal_history）
@@ -519,6 +534,12 @@
 - `max_hold_days: int = 60`、`slippage_bps: float = 5.0`
 - `fee_rate: float | None`（None = 用 config.yaml 折扣）、`tax_rate: float = 0.003`
 - `lookback_days: int = 500`、`use_adj: bool = True`
+- ATR 動態停利（Chandelier-style，預設 off 維持向後相容）
+  - `trailing_tp_mode: "off" | "both" | "only" = "off"`
+  - `trailing_tp_atr_multiplier: float = 3.0`（K，停損用 2.0；停利給趨勢更多呼吸空間）
+  - `trailing_tp_arm_pnl: float = 0.08`（浮盈 ≥ 8% 才啟動）
+  - `trailing_tp_arm_days: int = 5`（持有 ≥ 5 日才啟動）
+  - `trailing_tp_atr_period: int = 14`
 
 #### BacktestRequest
 - `stock_id: str`、`config: BacktestConfig | None`
@@ -526,7 +547,8 @@
 #### BacktestTrade
 - `entry_date, exit_date: str`、`hold_days: int`
 - `entry_price, exit_price, gross_return, net_return: float`
-- `exit_reason: str`（"stop_loss" / "take_profit" / "score_exit" / "max_hold"）
+- `exit_reason: str`（"stop_loss" / "trailing_take_profit" / "take_profit" / "score_exit" / "max_hold"）
+  - 優先序（先觸發先出）：`stop_loss` > `trailing_take_profit` > `take_profit` > `score_exit` > `max_hold`
 
 #### BacktestDailyPoint
 - `date: str`、`close, short_score: float | None`
@@ -678,8 +700,9 @@
 | Function | 狀態 | 對應 endpoint |
 |---|---|---|
 | `compute_atr(price_df)` | — | 內部 helper |
-| `atr_stop_loss(...)` | ⚠️ | 未接 — 未獨立成 endpoint；可考慮 `/api/stocks/{id}/atr-stop` 給個股建議停損價 |
-| `trailing_atr_stop(...)` | ⚠️ | 未接 — 同上，移動停損 |
+| `atr_stop_loss(...)` | ✅ | GET /api/stocks/{id}/atr-stop（fixed 段） |
+| `trailing_atr_stop(...)` | ✅ | GET /api/stocks/{id}/atr-stop（trailing 段） |
+| `trailing_atr_take_profit(...)` | ✅ | GET /api/stocks/{id}/atr-stop（take_profit 段，Chandelier-style）；enhanced_risk_signals 內部使用 |
 | `suggest_position_size(...)` | ⚠️ | 未接 — 「該買幾張」建議；買股前的 sizing helper，未透過 API 暴露 |
 | `concentration_warnings(db, mv_dict)` | ✅ | GET /api/portfolio/risk-alerts 內部使用 |
 | `enhanced_risk_signals(db, sid, ...)` | ✅ | GET /api/portfolio/holdings 內部使用 |
@@ -747,7 +770,7 @@
 |---|---|---|---|
 | 1 | `GET /api/system/snapshot-status` | ✅ | 在 [routers/system.py](../api/routers/system.py) |
 | 2 | `POST /api/system/refresh-snapshot` | ✅ | 同上（路徑改在 `/system/`） |
-| 3 | `GET /api/stocks/{id}/atr-stop` | ✅ | 含 fixed + trailing 兩段，[routers/stocks.py](../api/routers/stocks.py) |
+| 3 | `GET /api/stocks/{id}/atr-stop` | ✅ | 含 fixed / trailing / take_profit 三段（停損 + Chandelier 動態停利），[routers/stocks.py](../api/routers/stocks.py) |
 | 4 | `POST /api/portfolio/position-suggest` | ✅ | [routers/portfolio.py](../api/routers/portfolio.py) |
 | 5 | `GET /api/portfolio/realized-pnl?stock_id=...` | ✅ | 既有 endpoint 加 query param |
 | 6 | `GET /api/portfolio/trades?stock_id=...` | ✅ | 既有 endpoint 加 query param |

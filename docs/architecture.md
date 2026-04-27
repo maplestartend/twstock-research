@@ -168,3 +168,11 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - 詳情頁仍即時跑 `score_stock`
    - [snapshot_freshness.ensure_fresh()](../app/scoring/snapshot_freshness.py) 在列表 API 開頭比對 snapshot.as_of vs daily_price.MAX(date)，落後就阻塞補跑（with lock，併發只跑一次）
    - 歷史追蹤頁與分數走勢折線圖讀「歷史快照」（回測用途，不受影響）
+
+5. **盤中即時 / what-if 重算**
+   - 詳情頁 `StockScorePanel` 提供「收盤 / 即時 / 假設」三模式切換（[web/app/stocks/\[stockId\]/StockScorePanel.tsx](../web/app/stocks/[stockId]/StockScorePanel.tsx)）
+   - 即時：抓 mis.twse.com.tw 盤中報價 → `score_stock(live_price=...)` 覆寫最新一筆 close 重算技術面
+   - 假設：使用者輸入價位（±10% 滑桿）→ 同樣走 `live_price` 路徑
+   - 短/中分數會跟著動，**長期分數固定不動**（吃 ROE/EPS/股利等財報指標，盤中價無關）
+   - **不寫入 `signal_history`** — 重算只服務 UI 互動，回測來源仍是收盤後 snapshot（避免 look-ahead bias）
+   - mis client：[app/data/intraday.py](../app/data/intraday.py)，30 秒記憶體快取避免 hammer；興櫃 / 休市 / mis 異常 → 422，前端隱藏「即時」按鈕

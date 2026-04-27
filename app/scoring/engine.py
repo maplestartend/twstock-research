@@ -392,14 +392,54 @@ def _load_stock_bundle(conn, stock_id: str) -> dict[str, pd.DataFrame]:
     }
 
 
-def score_stock(db: Database, stock_id: str, stock_name: str = "") -> StockScore | None:
+def _override_last_close(price: pd.DataFrame, live_price: float) -> pd.DataFrame:
+    """把最後一筆的 close 換成 live_price，high/low 同步擴張包住新 close。
+
+    用途：盤中即時報價 / what-if 假設價位重算分數。tech.enrich 必須在覆寫**之後**呼叫，
+    這樣 MA / RSI / KD / Bollinger 才會反映新 close（覆寫之前 enrich 算出的指標
+    是基於舊 close 的，無意義）。
+
+    high/low 為什麼要擴張：KD 用 (close-low9)/(high9-low9)，若 close 跑出 [low, high]
+    區間，RSV 會 > 100 或 < 0。把當日 high/low 擴張包住 live_price 是最直觀的修法
+    （概念上等於：盤中觸及 live_price 那一刻就刷新當日高/低）。
+    """
+    df = price.copy()
+    last_idx = df.index[-1]
+    old_high = df.at[last_idx, "high"]
+    old_low = df.at[last_idx, "low"]
+    df.at[last_idx, "close"] = live_price
+    if pd.notna(old_high):
+        df.at[last_idx, "high"] = max(float(old_high), live_price)
+    else:
+        df.at[last_idx, "high"] = live_price
+    if pd.notna(old_low):
+        df.at[last_idx, "low"] = min(float(old_low), live_price)
+    else:
+        df.at[last_idx, "low"] = live_price
+    return df
+
+
+def score_stock(
+    db: Database,
+    stock_id: str,
+    stock_name: str = "",
+    *,
+    live_price: float | None = None,
+) -> StockScore | None:
     """從 DB 讀資料、計算指標、產出評分。
-    技術指標用「還原價」計算，避免除權息或分割造成 MA / KD 等指標失真。"""
+    技術指標用「還原價」計算，避免除權息或分割造成 MA / KD 等指標失真。
+
+    live_price: 若給定（盤中即時報價或 what-if 假設值），覆寫最後一筆 close 後再算技術指標。
+    短期 / 中期分數會反映新 close；長期分數（ROE/EPS/股利）不受影響。回傳的 close 欄位
+    為覆寫後的數值，signals 內會多塞 `live_price_used=True` 讓 UI 顯示「盤中估算」標記。
+    """
     price = load_adjusted_price(db, stock_id)
     if price.empty or len(price) < 60:
         return None
 
     price = _swap_to_adjusted(price)
+    if live_price is not None and live_price > 0:
+        price = _override_last_close(price, float(live_price))
     price = tech.enrich(price)
     inst = db.load_institutional(stock_id)
 
@@ -443,6 +483,9 @@ def score_stock(db: Database, stock_id: str, stock_name: str = "") -> StockScore
     signals["is_stale"] = is_stale
     signals["is_pending"] = is_pending
     signals["stale_days"] = (taipei_today() - date.fromisoformat(as_of)).days if is_stale else 0
+    if live_price is not None and live_price > 0:
+        signals["live_price_used"] = True
+        signals["live_price"] = float(live_price)
 
     return StockScore(
         stock_id=stock_id,

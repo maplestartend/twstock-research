@@ -88,9 +88,11 @@ export default async function GridSearchPage({
   const exits = parseList(sp.exits, DEFAULTS.exits);
   const sls = parseList(sp.sls, DEFAULTS.sls);
   const tps = parseList(sp.tps, DEFAULTS.tps);
+  // 動態停利 K 候選（Chandelier ATR 倍數）。空 = 不開動態停利、走原本 4D 網格
+  const tpKs = parseList(sp.tpKs, []);
   const lookback = num(sp.lookback, DEFAULTS.lookback);
   const maxHold = num(sp.maxHold, DEFAULTS.maxHold);
-  const combos = entries.length * exits.length * sls.length * tps.length;
+  const combos = entries.length * exits.length * sls.length * tps.length * (tpKs.length || 1);
 
   let wl: WatchlistEntry[];
   try {
@@ -125,6 +127,7 @@ export default async function GridSearchPage({
         gridResult = await apiPost<GridSearchResponse>("/api/backtest/grid-search", {
           stock_ids: stockIds,
           entry_list: entries, exit_list: exits, sl_list: sls, tp_list: tps,
+          trailing_tp_k_list: tpKs,
           max_hold_days: maxHold, lookback_days: lookback,
         });
       }
@@ -231,6 +234,12 @@ export default async function GridSearchPage({
           <Field label={`停利候選（共 ${tps.length} 個）`} term="take_profit" hint="小數格式，0.20 代表 +20%">
             <input name="tps" defaultValue={tps.join(",")} placeholder="0.15,0.20" className={inputCls} />
           </Field>
+          <Field
+            label={`動態停利 K（共 ${tpKs.length} 個，留空 = 關閉）`}
+            hint="Chandelier ATR 倍數；2.5–3.5 為實證最佳區間。非空時 mode=both，會跟固定停利併存「先觸發先出」"
+          >
+            <input name="tpKs" defaultValue={tpKs.join(",")} placeholder="2.5,3.0,3.5" className={inputCls} />
+          </Field>
           <Field label={`最長持有：${maxHold} 天`} term="max_hold">
             <input name="maxHold" type="range" min={10} max={120} step={5} defaultValue={maxHold} className={rangeCls} />
           </Field>
@@ -336,6 +345,8 @@ export default async function GridSearchPage({
 }
 
 function GridResultBlock({ result }: { result: GridSearchResponse }) {
+  // 任一組有開動態停利就秀 K 欄；全部沒開就隱藏避免畫面噪音
+  const hasK = result.rows.some((r) => r.trailingTpK != null);
   return (
     <>
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -352,6 +363,7 @@ function GridResultBlock({ result }: { result: GridSearchResponse }) {
           </div>
           <div className="numeric mt-1">
             entry={result.best.entry}、exit={result.best.exit}、sl={(result.best.sl*100).toFixed(1)}%、tp={(result.best.tp*100).toFixed(1)}%
+            {result.best.trailingTpK != null && <>、trailing K={result.best.trailingTpK.toFixed(1)}</>}
           </div>
         </div>
       )}
@@ -359,10 +371,11 @@ function GridResultBlock({ result }: { result: GridSearchResponse }) {
       <section className="flex flex-col gap-3">
         <h2 className="text-base font-semibold">所有組合（依 平均 Alpha 降序）</h2>
         <TableContainer>
-          <table className="w-full text-[15px] min-w-[700px]">
+          <table className="w-full text-[15px] min-w-[760px]">
             <thead className="bg-subtle">
               <tr>
                 <Th align="right">Entry</Th><Th align="right">Exit</Th><Th align="right">SL</Th><Th align="right">TP</Th>
+                {hasK && <Th align="right">Trailing K</Th>}
                 <Th align="right">平均 Alpha</Th><Th align="right">平均報酬</Th><Th align="right">勝率</Th><Th align="right">交易總數</Th>
               </tr>
             </thead>
@@ -373,6 +386,13 @@ function GridResultBlock({ result }: { result: GridSearchResponse }) {
                   <Td align="right" numeric>{r.exit}</Td>
                   <Td align="right" numeric>{(r.sl*100).toFixed(1)}%</Td>
                   <Td align="right" numeric>{(r.tp*100).toFixed(1)}%</Td>
+                  {hasK && (
+                    <Td align="right" numeric>
+                      {r.trailingTpK != null
+                        ? r.trailingTpK.toFixed(1)
+                        : <span className="text-[var(--text-tertiary)]">—</span>}
+                    </Td>
+                  )}
                   <Td align="right" numeric><span className={cn("font-semibold", tc(r.avgAlpha))}>{fmtPct(r.avgAlpha, 2)}</span></Td>
                   <Td align="right" numeric><span className={tc(r.avgTotalReturn)}>{fmtPct(r.avgTotalReturn, 2)}</span></Td>
                   <Td align="right" numeric>{fmtPct(r.overallWinrate, 1)}</Td>

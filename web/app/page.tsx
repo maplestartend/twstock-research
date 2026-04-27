@@ -36,7 +36,7 @@ export default async function DashboardPage() {
     [summary, holdings, radarHits, exDiv, freshness, moversUp, moversDown, risks, delta] = await Promise.all([
       apiGet<PortfolioSummary>("/api/portfolio/summary"),
       apiGet<HoldingRow[]>("/api/portfolio/holdings"),
-      apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=8"),
+      apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=6"),
       apiGet<ExDividendEvent[]>("/api/dashboard/ex-dividend?days_ahead=7"),
       apiGet<DataFreshness[]>("/api/dashboard/data-freshness"),
       apiGetOptional<WatchlistMover[]>("/api/watchlist/movers?top=5&direction=up").then((v) => v ?? []),
@@ -107,6 +107,12 @@ export default async function DashboardPage() {
           <SectionTitle icon="account_balance_wallet">持股快照</SectionTitle>
           <HoldingsTable rows={holdings} />
           <RiskAlertList alerts={risks} />
+          {delta && (
+            <>
+              <SectionTitle icon="compare_arrows">今日 vs 昨日</SectionTitle>
+              <SnapshotDeltaPanel delta={delta} />
+            </>
+          )}
         </div>
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
@@ -137,14 +143,6 @@ export default async function DashboardPage() {
           )}
         </div>
       </section>
-
-      {/* Today vs yesterday delta — 每日 loop 真正在乎的是「變化」 */}
-      {delta && (
-        <section className="flex flex-col gap-3">
-          <SectionTitle icon="compare_arrows">今日 vs 昨日</SectionTitle>
-          <SnapshotDeltaPanel delta={delta} />
-        </section>
-      )}
 
       {/* 3-column bottom */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">

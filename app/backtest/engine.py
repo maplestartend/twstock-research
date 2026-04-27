@@ -41,11 +41,20 @@ class StrategyConfig:
     entry_threshold: float = 65.0       # 短期分數 >= 這個值才進場
     exit_threshold: float = 40.0        # 短期分數 <= 這個值時出場
     stop_loss_pct: float = 0.08         # 固定停損 %
-    take_profit_pct: float = 0.20       # 固定停利 %
+    take_profit_pct: float = 0.20       # 固定停利 %（保底；趨勢沒回撤就衝過 20% 由它接手）
     max_hold_days: int = 60             # 最長持有天數（保險）
     fee_rate: float = None              # 手續費（單邊），None = 套用 config 折扣
     tax_rate: float = 0.003             # 證交稅（僅賣方）
     slippage_bps: float = 5.0           # 滑價（basis points，5 bps = 0.05%）；買時漲、賣時跌
+    # ATR 動態停利（Chandelier-style，與 trailing_atr_take_profit() 對齊）
+    # mode: "off"  = 只用固定停利 take_profit_pct
+    #       "both" = 動態與固定並存，誰先觸發先出（推薦）
+    #       "only" = 只用動態停利，忽略 take_profit_pct
+    trailing_tp_mode: str = "off"
+    trailing_tp_atr_multiplier: float = 3.0   # K，停損用 2.0；停利給趨勢更多呼吸空間
+    trailing_tp_arm_pnl: float = 0.08         # 浮盈門檻，避免進場初期被洗
+    trailing_tp_arm_days: int = 5             # 持有日門檻
+    trailing_tp_atr_period: int = 14
 
     def __post_init__(self):
         if self.fee_rate is None:
@@ -297,6 +306,9 @@ def _vectorized_short_scores(price: pd.DataFrame, inst: pd.DataFrame, margin: pd
         "date": price["date"].values,
         "close": price["close"].values,
         "open": price["open"].values,
+        # high/low 留給 ATR-based 動態停利等指標用；缺值（早期資料）退回 close
+        "high": price["high"].values if "high" in price.columns else price["close"].values,
+        "low": price["low"].values if "low" in price.columns else price["close"].values,
         "short_score": scores,
     })
 
@@ -350,6 +362,34 @@ def backtest_stock(db: Database, stock_id: str, cfg: StrategyConfig | None = Non
     )
 
 
+def _trailing_tp_triggered(
+    series: pd.DataFrame,
+    i: int,
+    entry_idx: int,
+    entry_price: float,
+    hold_days: int,
+    atr_series: pd.Series,
+    cfg: StrategyConfig,
+) -> bool:
+    """Chandelier 動態停利觸發判斷（搭配 _run_strategy_loop 用）。
+
+    armed = (浮盈 ≥ trailing_tp_arm_pnl) AND (持有 ≥ trailing_tp_arm_days)
+    triggered = armed AND (close ≤ peak_high_since_entry − K×ATR)
+    """
+    if atr_series is None:
+        return False
+    last_atr = atr_series.iloc[i]
+    if pd.isna(last_atr) or last_atr <= 0:
+        return False
+    close = float(series.iloc[i]["close"])
+    pnl_pct = (close - entry_price) / entry_price
+    if pnl_pct < cfg.trailing_tp_arm_pnl or hold_days < cfg.trailing_tp_arm_days:
+        return False
+    peak = float(series.iloc[entry_idx : i + 1]["high"].max())
+    tp_line = peak - cfg.trailing_tp_atr_multiplier * float(last_atr)
+    return close <= tp_line
+
+
 def _run_strategy_loop(series: pd.DataFrame, cfg: StrategyConfig) -> list[Trade]:
     """純函式版策略迴圈：series 已含 open/close/short_score/date，回傳成交清單。
 
@@ -364,6 +404,13 @@ def _run_strategy_loop(series: pd.DataFrame, cfg: StrategyConfig) -> list[Trade]
     # 可能因價格更低而錯失原本的 stop_loss/score_exit 訊號（金融分析師審查 #7）。
     pending_exit_reason: str | None = None
     trades: list[Trade] = []
+
+    # 動態停利所需的 ATR 序列：mode != "off" 才預算，避免吃掉預設情境的效能
+    use_trailing_tp = cfg.trailing_tp_mode != "off" and "high" in series.columns and "low" in series.columns
+    atr_series = None
+    if use_trailing_tp:
+        from app.risk import compute_atr  # 局部 import 避開循環依賴
+        atr_series = compute_atr(series[["high", "low", "close"]], cfg.trailing_tp_atr_period)
 
     for i in range(1, len(series) - 1):  # -1 因為要用次日開盤價成交
         row = series.iloc[i]
@@ -395,9 +442,19 @@ def _run_strategy_loop(series: pd.DataFrame, cfg: StrategyConfig) -> list[Trade]
             exit_reason: str | None = pending_exit_reason
 
             if exit_reason is None:
+                # exit 優先序（金融分析師建議）：
+                #   1. stop_loss          — 保命第一
+                #   2. trailing_take_profit — 鎖獲利（armed 後才生效）
+                #   3. take_profit        — 固定 % 保底
+                #   4. score_exit         — rubric 跌破
+                #   5. max_hold           — 兜底
                 if change <= -cfg.stop_loss_pct:
                     exit_reason = "stop_loss"
-                elif change >= cfg.take_profit_pct:
+                elif use_trailing_tp and _trailing_tp_triggered(
+                    series, i, entry_idx, entry_price, hold_days, atr_series, cfg,
+                ):
+                    exit_reason = "trailing_take_profit"
+                elif cfg.trailing_tp_mode != "only" and change >= cfg.take_profit_pct:
                     exit_reason = "take_profit"
                 elif score <= cfg.exit_threshold:
                     exit_reason = "score_exit"

@@ -20,6 +20,7 @@ class PortfolioSummary(CamelModel):
 class HoldingRow(StockRef):
     shares: float
     avg_cost: float
+    entry_date: str | None = None        # 持有期間的最早買入日（trade_log 起算）；給前端拉動態停利用
     price: float | None = None
     prev_close: float | None = None
     today_pct: float | None = None

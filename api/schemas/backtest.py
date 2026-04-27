@@ -15,6 +15,12 @@ class BacktestConfig(CamelModel):
     tax_rate: float = 0.003
     lookback_days: int = 500
     use_adj: bool = True
+    # ATR 動態停利（Chandelier-style）。預設 off 維持回測既有行為。
+    trailing_tp_mode: str = "off"             # "off" | "both" | "only"
+    trailing_tp_atr_multiplier: float = 3.0
+    trailing_tp_arm_pnl: float = 0.08
+    trailing_tp_arm_days: int = 5
+    trailing_tp_atr_period: int = 14
 
 
 class BacktestRequest(CamelModel):
@@ -30,7 +36,7 @@ class BacktestTrade(CamelModel):
     exit_price: float
     gross_return: float
     net_return: float
-    exit_reason: str        # "stop_loss" | "take_profit" | "score_exit" | "max_hold"
+    exit_reason: str        # "stop_loss" | "trailing_take_profit" | "take_profit" | "score_exit" | "max_hold"
 
 
 class BacktestDailyPoint(CamelModel):
@@ -110,6 +116,9 @@ class GridSearchRequest(CamelModel):
     max_hold_days: int = 60
     slippage_bps: float = 5.0
     lookback_days: int = 500
+    # 動態停利 K（ATR multiplier）。空陣列 = 走原本「只有固定停利」的網格；
+    # 非空時每組額外加進這個維度，trailing_tp_mode 自動切到 "both"
+    trailing_tp_k_list: list[float] = []
 
 
 class GridSearchRow(CamelModel):
@@ -117,6 +126,7 @@ class GridSearchRow(CamelModel):
     exit: float
     sl: float
     tp: float
+    trailing_tp_k: float | None = None       # None = 該組沒開動態停利
     avg_alpha: float = 0.0
     avg_total_return: float = 0.0
     overall_winrate: float = 0.0

@@ -140,6 +140,7 @@ export type PortfolioSummary = {
 export type HoldingRow = {
   stockId: string; stockName: string;
   shares: number; avgCost: number;
+  entryDate: string | null;        // trade_log 起算的最早買入日；個股詳情拉動態停利時帶上
   price: number | null; prevClose: number | null; todayPct: number | null;
   marketValue: number | null;
   unrealizedPnl: number | null; unrealizedPnlPct: number | null;
@@ -170,6 +171,20 @@ export type AtrStopView = {
     peakSinceEntry: number;
     latestClose: number;
     belowStop: boolean;
+  } | null;
+  // Chandelier-style 動態停利。需 entry_date + entry_price 才有值
+  takeProfit: {
+    takeProfitPrice: number;
+    atr: number;
+    peakSinceEntry: number;
+    latestClose: number;
+    daysHeld: number;
+    unrealizedPnlPct: number;
+    armed: boolean;             // 浮盈 ≥ arm_pnl AND 持有 ≥ arm_days
+    triggered: boolean;         // armed AND latest_close ≤ take_profit_price
+    multiplier: number;
+    armPnlThreshold: number;
+    armDaysThreshold: number;
   } | null;
 };
 
@@ -296,6 +311,12 @@ export type BacktestConfig = {
   maxHoldDays: number; slippageBps: number;
   feeRate: number | null; taxRate: number;
   lookbackDays: number; useAdj: boolean;
+  // ATR 動態停利（Chandelier）：預設 off 維持原行為
+  trailingTpMode?: "off" | "both" | "only";
+  trailingTpAtrMultiplier?: number;
+  trailingTpArmPnl?: number;
+  trailingTpArmDays?: number;
+  trailingTpAtrPeriod?: number;
 };
 
 export type BacktestTrade = {
@@ -355,6 +376,7 @@ export type PortfolioBacktestResponse = {
 // ===== Grid search =====
 export type GridSearchRow = {
   entry: number; exit: number; sl: number; tp: number;
+  trailingTpK: number | null;       // null = 該組沒開動態停利；非 null 表示 mode="both" + K 倍數
   avgAlpha: number; avgTotalReturn: number;
   overallWinrate: number; nTradesTotal: number;
 };
@@ -511,8 +533,33 @@ export type StockScoreView = {
   isStale: boolean;
   staleDays: number;
   isPending: boolean;        // as_of=今日且當下 < 14:00 → 資料盤中尚未確認
+  // 盤中即時 / what-if 重算痕跡：是否使用了 live/override price 重算
+  livePriceUsed: boolean;
+  livePrice: number | null;
   recommendation: string;
   entry: string[]; stopLoss: string[]; takeProfit: string[]; warnings: string[];
+};
+
+export type IntradayQuoteView = {
+  stockId: string;
+  price: number;
+  prevClose: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  bid1: number | null;
+  ask1: number | null;
+  volumeLots: number | null;
+  quoteTime: string | null;     // "HH:MM:SS"
+  isLive: boolean;              // false = 走 prevClose fallback（盤前/休市/三項都缺）
+  // price 取得來源（5 秒撮合制 + 漲跌停鎖死的 fallback 鏈）：
+  //   match → prev_match → limit_up/limit_down → midpoint → ask_only/bid_only → prev_close
+  quoteSource:
+    | "match" | "prev_match"
+    | "limit_up" | "limit_down"
+    | "midpoint" | "ask_only" | "bid_only"
+    | "prev_close";
+  changePct: number | null;     // (price - prevClose) / prevClose
 };
 
 export type ScoreHistoryPoint = {

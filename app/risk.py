@@ -87,6 +87,81 @@ def trailing_atr_stop(
     }
 
 
+def trailing_atr_take_profit(
+    price_df: pd.DataFrame,
+    entry_date: str,
+    entry_price: float,
+    *,
+    multiplier: float = 3.0,
+    period: int = 14,
+    arm_pnl: float = 0.08,
+    arm_days: int = 5,
+) -> dict | None:
+    """Chandelier-style 動態停利：自進場日以來最高價 - K×ATR。
+
+    與 `trailing_atr_stop` 不同處：
+    - 用 `high` 而非 `close` 取 peak（LeBeau 原始 Chandelier Exit 用 highest-high；
+      停利的本質是鎖住「曾經實現過的紙上獲利」，影線高點也算數）
+    - 多了 armed gate：避免進場初期被隨機波動洗掉
+        * 浮盈 ≥ arm_pnl（預設 8%）
+        * 持有 ≥ arm_days（預設 5 日）
+    - multiplier 預設 3.0（停損 2.0），給趨勢更多呼吸空間（LeBeau 1992 原始建議）
+
+    Args:
+        price_df: 含 date/high/close 欄位的日 K
+        entry_date: 進場日 'YYYY-MM-DD'
+        entry_price: 進場成本（armed gate 算浮盈用）
+        multiplier: ATR 倍數，預設 3.0
+        period: ATR 週期，預設 14
+        arm_pnl: 啟動門檻浮盈，預設 0.08
+        arm_days: 啟動門檻持有日，預設 5
+
+    Returns:
+        None: 資料不足 / entry_date 無對應價、entry_price <= 0
+        dict: {
+            'take_profit_price': peak_high - K×ATR,
+            'atr', 'peak_since_entry', 'latest_close',
+            'days_held', 'unrealized_pnl_pct',
+            'armed': 是否已啟動 trailing,
+            'triggered': armed AND latest_close <= take_profit_price,
+            'multiplier', 'arm_pnl_threshold', 'arm_days_threshold',
+        }
+    """
+    if price_df is None or len(price_df) < period + 1 or not entry_date or entry_price <= 0:
+        return None
+    df = price_df.copy()
+    df["date"] = pd.to_datetime(df["date"]) if "date" in df.columns else df.index
+    entry_ts = pd.to_datetime(entry_date)
+    since = df[df["date"] >= entry_ts] if "date" in df.columns else df.loc[entry_ts:]
+    if since.empty:
+        return None
+    atr = compute_atr(df, period)
+    last_atr = float(atr.iloc[-1]) if not atr.empty and not pd.isna(atr.iloc[-1]) else None
+    if last_atr is None or last_atr <= 0:
+        return None
+    # Chandelier 原始用 high；若資料只有 close 就退回 close（保守）
+    peak_col = "high" if "high" in since.columns else "close"
+    peak = float(since[peak_col].max())
+    tp_price = peak - multiplier * last_atr
+    latest = float(df["close"].iloc[-1])
+    days_held = int(len(since))
+    pnl_pct = (latest - entry_price) / entry_price
+    armed = (pnl_pct >= arm_pnl) and (days_held >= arm_days)
+    return {
+        "take_profit_price": round(tp_price, 2),
+        "atr": round(last_atr, 3),
+        "peak_since_entry": round(peak, 2),
+        "latest_close": round(latest, 2),
+        "days_held": days_held,
+        "unrealized_pnl_pct": round(pnl_pct, 4),
+        "armed": bool(armed),
+        "triggered": bool(armed and latest <= tp_price),
+        "multiplier": multiplier,
+        "arm_pnl_threshold": arm_pnl,
+        "arm_days_threshold": arm_days,
+    }
+
+
 # ======================================================================
 # 部位配置（Fixed Risk / Kelly-lite）
 # ======================================================================
@@ -229,6 +304,13 @@ def enhanced_risk_signals(
                 signals.append(
                     f"🚨 跌破 ATR 追蹤停損：現價 {trail['latest_close']:.2f} < 停損 {trail['stop_price']:.2f}"
                     f"（進場後高點 {trail['peak_since_entry']:.2f}）"
+                )
+            # ATR 動態停利（Chandelier）：armed 後若回落到 peak − 3×ATR 即觸發
+            tp = trailing_atr_take_profit(price_df, entry_date, entry_price=avg_cost, multiplier=3.0)
+            if tp and tp["triggered"]:
+                signals.append(
+                    f"🎯 觸發 ATR 動態停利：現價 {tp['latest_close']:.2f} ≤ 停利線 {tp['take_profit_price']:.2f}"
+                    f"（進場後高點 {tp['peak_since_entry']:.2f}，浮盈 {tp['unrealized_pnl_pct']*100:.1f}%）"
                 )
         else:
             static = atr_stop_loss(price_df, entry_price=avg_cost, multiplier=2.0)
