@@ -79,6 +79,14 @@ class TestTrailingATRStop:
         info = trailing_atr_stop(synthetic_price_df, entry)
         assert isinstance(info["below_stop"], bool)
 
+    def test_future_entry_clamps_to_latest_data(self, synthetic_price_df):
+        """資料源延遲時不該回 None（避免 UI 整個區塊消失）。"""
+        latest = synthetic_price_df["date"].max()
+        future = (latest + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
+        info = trailing_atr_stop(synthetic_price_df, future)
+        assert info is not None
+        assert info["latest_close"] == round(float(synthetic_price_df["close"].iloc[-1]), 2)
+
 
 class TestTrailingATRTakeProfit:
     """Chandelier 動態停利 — 公式 peak_high - K×ATR + armed gate。"""
@@ -171,10 +179,23 @@ class TestTrailingATRTakeProfit:
         })
         assert trailing_atr_take_profit(tiny, "2025-01-01", entry_price=9.0) is None
 
-    def test_entry_date_after_data_end_returns_none(self, synthetic_price_df):
-        assert trailing_atr_take_profit(
-            synthetic_price_df, "2099-01-01", entry_price=100.0,
-        ) is None
+    def test_entry_date_one_day_after_data_clamps_to_latest(self, synthetic_price_df):
+        """資料源延遲一兩天時（TPEX 常見）clamp 到最新日，仍能算 trailing TP。
+        否則 UI 整個區塊會消失，體驗差。"""
+        latest = synthetic_price_df["date"].max()
+        future = (latest + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        info = trailing_atr_take_profit(synthetic_price_df, future, entry_price=1.0)
+        assert info is not None
+        assert info["days_held"] == 1   # 只有最新一根 K
+        assert info["latest_close"] == round(float(synthetic_price_df["close"].iloc[-1]), 2)
+
+    def test_entry_date_far_in_future_still_returns_via_clamp(self, synthetic_price_df):
+        info = trailing_atr_take_profit(
+            synthetic_price_df, "2099-01-01", entry_price=1.0,
+        )
+        # clamp 到最新日 → 仍可計算（不再回 None）
+        assert info is not None
+        assert info["days_held"] == 1
 
 
 class TestSuggestPositionSize:
