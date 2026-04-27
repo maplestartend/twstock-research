@@ -20,20 +20,13 @@
 Recharts 的 squarify 在 Taiwan 產業熱力圖那種「最大磚 vs 最小磚比 1000:1」的資料上會 layout 崩掉。其他線圖 / 面積圖 / scatter 仍用 Recharts。
 
 ### 3. UI 改動必須用 Playwright 拍圖驗收
-type-check 過 + build 過不代表畫面對。三支常駐 regression 腳本：
-- [web/scripts/screenshot.mjs](web/scripts/screenshot.mjs) — sectors heatmap layout 驗收（含 hover popup + d3 tile aspect-ratio assertion）
-- [web/scripts/screenshot-all.mjs](web/scripts/screenshot-all.mjs) — 全頁 light / dark 覆蓋
-- [web/scripts/screenshot-mobile.mjs](web/scripts/screenshot-mobile.mjs) — 手機 drawer / responsive padding
-
-新功能驗收要不就接到上面三支裡，要不就臨時寫一支拍完刪掉——不要再留 `screenshot-s2-*` / `screenshot-validation` 這種 Sprint-tag 一次性腳本累積成垃圾。
+type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`、`web/lib/`、`web/styles/` 後必跑 [`web/scripts/screenshot*.mjs`](web/scripts/) 三支之一。完整 SOP（哪支對應哪種改動 + 「不要再產 `screenshot-s2-*` 一次性腳本」規則）：[`.claude/skills/ui-screenshot-verify/`](.claude/skills/ui-screenshot-verify/SKILL.md)。
 
 ### 4. 改功能要同步更新 [USAGE.md](USAGE.md) / requirements / .bat
 別只動程式碼忘了改文件。新增 endpoint 也要更新 [docs/api-spec.md](docs/api-spec.md)。
 
-### 5. 改 `app/scoring/*` 後跑 `restart.bat`
-`signal_history` 表是「上次 market_update 跑 score_all 寫進去的快照」。`ensure_fresh()` 只在 `as_of < daily_price.MAX(date)` 時才重跑——engine 程式改了但日期沒變的話**不會自動重算**。雷達/自選讀的還是舊邏輯算的快照、個股詳情即時呼叫新 engine，於是兩邊分數對不上。`restart.bat` 會 stop → 強制 `snapshot_today()` → relaunch。
-
-注意：`score_stock`（個股詳情）跟 `score_all`（雷達/自選快照）必須吃同一個 `fund_snap`。`score_all` 在 [radar.py](app/scoring/radar.py) 注入 `dividend_yield_z`（同產業殖利率 z-score），`score_stock` 在 [engine.py](app/scoring/engine.py) 也呼叫 `industry_yield_z_for_stock` 注入。改 rubric 時若新增「批次預載」的欄位，兩邊都要補。
+### 5. 改 `app/scoring/*` / `app/backtest/*` / `app/risk.py` / `app/portfolio.py` 後跑 `restart.bat`
+`signal_history` 是上次 `score_all` 寫進去的快照；engine 改了但 `as_of` 日期沒變 → 雷達/自選讀舊快照、個股詳情即時呼叫新 engine，兩邊分數會分歧。`restart.bat` 會 stop → 強制 `snapshot_today()` → relaunch。完整 SOP（含 `score_stock` 與 `score_all` 必須吃同一份 `fund_snap` 的同步規則）：[`.claude/skills/scoring-restart/`](.claude/skills/scoring-restart/SKILL.md)。
 
 ### 6. .bat 工具
 公開（雙擊）：`launch` / `stop` / `restart` / `status` / `daily-update` / `install-schedule` / `uninstall-schedule`。私有（被 call）：`_launch-servers` / `_kill-servers`。改 stop / restart 共用的殺 process 邏輯時改 `_kill-servers.bat`，兩邊都會吃到。
