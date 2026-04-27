@@ -1,0 +1,5 @@
+# Windows .bat / .cmd 必須用 CRLF，否則 cmd.exe 無法正確 parse REM 註解和 () 括號
+# （多機同步時若 core.autocrlf=input 會把 CRLF 偷偷轉成 LF → 整支批次檔報廢）
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
