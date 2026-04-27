@@ -68,6 +68,12 @@ def trailing_atr_stop(
     df = price_df.copy()
     df["date"] = pd.to_datetime(df["date"]) if "date" in df.columns else df.index
     entry_ts = pd.to_datetime(entry_date)
+    # 防呆：若 entry_date 比資料最新日還新（資料源延遲、TPEX 沒更新等），
+    # clamp 到資料最新日當 anchor，避免 since 為空、整個 trailing 區塊在 UI 消失。
+    if "date" in df.columns:
+        latest_date = df["date"].max()
+        if pd.notna(latest_date) and entry_ts > latest_date:
+            entry_ts = latest_date
     since = df[df["date"] >= entry_ts] if "date" in df.columns else df.loc[entry_ts:]
     if since.empty:
         return None
@@ -132,6 +138,11 @@ def trailing_atr_take_profit(
     df = price_df.copy()
     df["date"] = pd.to_datetime(df["date"]) if "date" in df.columns else df.index
     entry_ts = pd.to_datetime(entry_date)
+    # 防呆：entry_date 比資料最新日還新（資料源延遲）→ clamp 到最新日，避免 since 為空。
+    if "date" in df.columns:
+        latest_date = df["date"].max()
+        if pd.notna(latest_date) and entry_ts > latest_date:
+            entry_ts = latest_date
     since = df[df["date"] >= entry_ts] if "date" in df.columns else df.loc[entry_ts:]
     if since.empty:
         return None
