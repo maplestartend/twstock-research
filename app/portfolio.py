@@ -26,16 +26,29 @@ ETF_TAX_RATE = 0.001           # 股票型 ETF 證交稅（千分之一）
 BOND_ETF_TAX_RATE = 0.0        # 債券 ETF 免證交稅
 
 
-def tax_rate_for(stock_id: str | None) -> float:
-    """依代號回傳賣方證交稅率：00xxx 股票型 ETF=0.1%，00xxxB 債券 ETF=0%，其他 0.3%。
+def tax_rate_for(
+    stock_id: str | None,
+    *,
+    industry_category: str | None = None,
+) -> float:
+    """依代號回傳賣方證交稅率：股票型 ETF=0.1%，債券 ETF=0%，其他 0.3%。
 
-    ETF 識別與專案 CLAUDE.md 慣例一致：代號以 "00" 開頭且長度 ≥ 4。
-    債券 ETF 結尾 B（如 00679B 元大美債20年）。
+    判斷規則（依優先序）：
+    1. 若 caller 傳入 industry_category（從 stock_info join 出來），且字串包含 "ETF" → 視為 ETF。
+       這是最可靠的來源（TWSE / TPEX 官方分類），避免代號正則漏判（如新發行 ETF 代號改成 010xxx 系列）。
+    2. fallback 代號規則：以 "00" 開頭、長度 ≥ 4 → ETF。對所有現存上市/上櫃 ETF (00xx, 006xxx, 00xxxL/R, 00xxxB)
+       都正確；CLAUDE.md 慣例。
+    3. 在 ETF 內部，代號結尾 B（00679B、00772B、00937B 等）→ 債券 ETF 0%，其他股票型 ETF 0.1%。
     """
     if not stock_id:
         return DEFAULT_TAX_RATE
     sid = str(stock_id).strip().upper()
-    if sid.startswith("00") and len(sid) >= 4:
+
+    is_etf_by_category = bool(industry_category and "ETF" in industry_category.upper())
+    is_etf_by_code = sid.startswith("00") and len(sid) >= 4
+    is_etf = is_etf_by_category or is_etf_by_code
+
+    if is_etf:
         return BOND_ETF_TAX_RATE if sid.endswith("B") else ETF_TAX_RATE
     return DEFAULT_TAX_RATE
 

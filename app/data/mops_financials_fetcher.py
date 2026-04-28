@@ -27,7 +27,12 @@ from typing import Iterable
 import pandas as pd
 import requests
 
+from app.data.http_client import make_session
+
 logger = logging.getLogger(__name__)
+
+# 共用 retry session：MOPS / OpenAPI 偶發 502 / 連線重置自動重試
+_session = make_session()
 
 # 產業分類後綴（TWSE/TPEX OpenAPI 共用）
 _INDUSTRIES: tuple[str, ...] = (
@@ -89,6 +94,24 @@ def _quarter_end(year: int, quarter: int) -> str:
     return f"{ce_year}-{q_end}"
 
 
+def _publish_date(year_roc: int, quarter: int) -> str:
+    """季財報法定公告下限：Q1=05-15、Q2=08-14、Q3=11-14、Q4=次年 03-31。
+
+    避免 backtest / radar 在公告前就「看到」當季資料。SQL 過濾用 `publish_date <= as_of`。
+    這是法定下限（部分公司更早公告，但保守取下限避免 look-ahead）。
+    """
+    ce_year = year_roc + 1911
+    if quarter == 1:
+        return f"{ce_year}-05-15"
+    if quarter == 2:
+        return f"{ce_year}-08-14"
+    if quarter == 3:
+        return f"{ce_year}-11-14"
+    if quarter == 4:
+        return f"{ce_year + 1}-03-31"
+    raise ValueError(f"invalid quarter: {quarter}")
+
+
 def _to_float(v) -> float | None:
     if v is None or v == "" or v == "-":
         return None
@@ -101,7 +124,7 @@ def _to_float(v) -> float | None:
 
 
 def _fetch_one(url: str, timeout: int = 30) -> list[dict]:
-    r = requests.get(url, timeout=timeout, headers=_HEADERS)
+    r = _session.get(url, timeout=timeout, headers=_HEADERS)
     r.raise_for_status()
     data = r.json()
     if not isinstance(data, list):
@@ -131,6 +154,7 @@ def _to_long(
         except (TypeError, ValueError):
             continue
         d = _quarter_end(year, quarter)
+        pd_str = _publish_date(year, quarter)  # 法定公告下限，後續 SQL 用此過濾避免 look-ahead
         for zh, en in field_map.items():
             if zh not in rec:
                 continue
@@ -149,6 +173,7 @@ def _to_long(
                 "year": year + 1911,
                 "quarter": quarter,
                 "origin_name": zh,
+                "publish_date": pd_str,
             })
     return rows
 
@@ -169,7 +194,7 @@ def fetch_latest_income_statement(delay: float = 0.3, timeout: int = 30) -> pd.D
             logger.debug("income %s %s: %d 筆 records", market, ind, len(records))
             time.sleep(delay)
     if not all_rows:
-        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name"])
+        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name", "publish_date"])
     df = pd.DataFrame(all_rows)
     df = df.drop_duplicates(subset=["stock_id", "date", "type"], keep="first")
     return df.sort_values(["stock_id", "date", "type"]).reset_index(drop=True)
@@ -191,7 +216,7 @@ def fetch_latest_balance_sheet(delay: float = 0.3, timeout: int = 30) -> pd.Data
             logger.debug("balance %s %s: %d 筆 records", market, ind, len(records))
             time.sleep(delay)
     if not all_rows:
-        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name"])
+        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name", "publish_date"])
     df = pd.DataFrame(all_rows)
     df = df.drop_duplicates(subset=["stock_id", "date", "type"], keep="first")
     return df.sort_values(["stock_id", "date", "type"]).reset_index(drop=True)
@@ -202,7 +227,7 @@ def fetch_latest_all(delay: float = 0.3, timeout: int = 30) -> pd.DataFrame:
     inc = fetch_latest_income_statement(delay=delay, timeout=timeout)
     bal = fetch_latest_balance_sheet(delay=delay, timeout=timeout)
     if inc.empty and bal.empty:
-        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name"])
+        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name", "publish_date"])
     df = pd.concat([inc, bal], ignore_index=True)
     df = df.drop_duplicates(subset=["stock_id", "date", "type"], keep="first")
     return df.sort_values(["stock_id", "date", "type"]).reset_index(drop=True)
@@ -233,7 +258,7 @@ def _fetch_history_html(market: str, roc_year: int, season: int, *, timeout: int
         f"&TYPEK={market}&year={roc_year}&season={season:02d}"
     )
     try:
-        r = requests.post(_MOPS_HISTORY_URL, data=body, headers=_MOPS_HISTORY_HEADERS, timeout=timeout)
+        r = _session.post(_MOPS_HISTORY_URL, data=body, headers=_MOPS_HISTORY_HEADERS, timeout=timeout)
     except Exception as e:
         logger.warning("MOPS history %s %d/Q%d 連線失敗: %s", market, roc_year, season, e)
         return None
@@ -263,6 +288,7 @@ def _parse_history_html(
         return []
 
     d = _quarter_end(year_ce - 1911, quarter)
+    pd_str = _publish_date(year_ce - 1911, quarter)
     rows: list[dict] = []
     for tbl in tables:
         if tbl.shape[0] < 1 or tbl.shape[1] < 5:
@@ -300,6 +326,7 @@ def _parse_history_html(
                     "year": year_ce,
                     "quarter": quarter,
                     "origin_name": zh,
+                    "publish_date": pd_str,
                 })
     return rows
 
@@ -327,7 +354,7 @@ def fetch_history_income_statement(
             )
         time.sleep(delay)
     if not all_rows:
-        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name"])
+        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name", "publish_date"])
     df = pd.DataFrame(all_rows)
     df = df.drop_duplicates(subset=["stock_id", "date", "type"], keep="first")
     return df.sort_values(["stock_id", "date", "type"]).reset_index(drop=True)
@@ -347,7 +374,7 @@ def fetch_history_quarters(
         if not df.empty:
             dfs.append(df)
     if not dfs:
-        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name"])
+        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name", "publish_date"])
     out = pd.concat(dfs, ignore_index=True)
     out = out.drop_duplicates(subset=["stock_id", "date", "type"], keep="first")
     return out.sort_values(["stock_id", "date", "type"]).reset_index(drop=True)
@@ -424,6 +451,7 @@ def derive_quarterly_from_cumulative(db) -> int:
                 "value": float(single),
                 "year": int(y),
                 "quarter": q,
+                "publish_date": _publish_date(y - 1911, q),
             })
 
     if not rows:

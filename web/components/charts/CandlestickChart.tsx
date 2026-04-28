@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -22,8 +22,23 @@ function toTime(date: string): UTCTimestamp {
   return (Math.floor(new Date(date).getTime() / 1000)) as UTCTimestamp;
 }
 
+function readTheme(): string {
+  if (typeof document === "undefined") return "light";
+  return document.documentElement.dataset.theme ?? "light";
+}
+
 export function CandlestickChart({ ohlcv, indicators = [], height = 360 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  // lightweight-charts 是 imperative API，不像 Recharts 走 CSS var；
+  // 主題切換時必須整個 chart re-create 才會吃到新的 token 顏色。
+  const [theme, setTheme] = useState<string>("light");
+
+  useEffect(() => {
+    setTheme(readTheme());
+    const mo = new MutationObserver(() => setTheme(readTheme()));
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => mo.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -120,7 +135,7 @@ export function CandlestickChart({ ohlcv, indicators = [], height = 360 }: Props
       window.removeEventListener("resize", onResize);
       chart.remove();
     };
-  }, [ohlcv, indicators, height]);
+  }, [ohlcv, indicators, height, theme]);
 
   return <div ref={hostRef} className="w-full" style={{ height }} />;
 }

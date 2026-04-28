@@ -36,15 +36,50 @@ def _latest_snapshot_date(db: Database) -> str | None:
     return row["m"] if row and row["m"] else None
 
 
+# snapshot 計分時實際讀的核心 dataset。任一張比 daily_price 落後 → 早盤跑 snapshot 會
+# 用「昨日 OHLCV + 前日法人/融資」算出誤導性的籌碼分數。daily_price 只代表盤後第一波
+# 抓到，要等四張表同步才算 stable。
+_SCORING_DATASETS: tuple[str, ...] = (
+    "daily_price",
+    "daily_institutional",
+    "daily_margin",
+    "per_pbr",
+)
+
+
+def latest_dataset_dates(db: Database) -> dict[str, str | None]:
+    """每張 scoring 用 dataset 的最新一筆日期，給 UI dq 頁與診斷用。"""
+    out: dict[str, str | None] = {}
+    with db.connect() as conn:
+        for table in _SCORING_DATASETS:
+            row = conn.execute(f"SELECT MAX(date) AS m FROM {table}").fetchone()
+            out[table] = row["m"] if row and row["m"] else None
+    return out
+
+
+def all_datasets_synced(db: Database) -> bool:
+    """四張 scoring dataset 是否同步到同一個交易日。給 dq / freshness 頁顯示用。
+    缺其中一張（例：per_pbr 還沒抓）視為「沒同步」。"""
+    dates = list(latest_dataset_dates(db).values())
+    if any(d is None for d in dates):
+        return False
+    return max(dates) == min(dates)  # type: ignore[type-var]
+
+
 def is_stale(db: Database) -> bool:
-    """snapshot 落後 daily_price → True；snapshot 不存在但有價格 → True。"""
+    """snapshot 落後 daily_price → True，且僅在四張核心表同步時才會觸發重算。
+
+    早盤盤後資料分批進 DB（OHLCV 先到、法人/融資/per_pbr 後到）。若只看 daily_price 就重算 snapshot，
+    會用「今日 OHLCV + 昨日法人」混雜算分；改成「四張同步」才允許重算，未同步時暫時用舊 snapshot。
+    """
     price = _latest_price_date(db)
     if not price:
         return False
     snap = _latest_snapshot_date(db)
-    if not snap:
-        return True
-    return snap < price
+    if snap and snap >= price:
+        return False
+    # 落後了，但只有四張表都同步才能放心重算（否則重算結果反而錯）
+    return all_datasets_synced(db)
 
 
 def ensure_fresh(db: Database) -> bool:

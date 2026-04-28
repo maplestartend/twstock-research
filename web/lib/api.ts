@@ -43,6 +43,28 @@ export type FetchOptions = {
   tags?: string[];
 };
 
+/**
+ * fetch 失敗時 throw 的錯誤型別。
+ * 帶 status 是為了讓上層判斷「真的沒資料 (404)」vs「後端壞了 (5xx)」vs「網路斷 (status=0)」，
+ * 否則只能 regex match Error.message，邏輯易錯。
+ */
+export class ApiError extends Error {
+  status: number;          // HTTP 狀態；網路錯為 0
+  path: string;
+  detail?: string;         // FastAPI 回傳的 detail 欄位（若有）
+  constructor(path: string, status: number, message: string, detail?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.path = path;
+    this.detail = detail;
+  }
+  isNotFound() { return this.status === 404; }
+  isClientError() { return this.status >= 400 && this.status < 500; }
+  isServerError() { return this.status >= 500; }
+  isNetworkError() { return this.status === 0; }
+}
+
 export async function apiGet<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const url = path.startsWith("http") ? path : `${BASE}${path}`;
   const init: RequestInit & { next?: { revalidate?: number; tags?: string[] } } = {};
@@ -58,25 +80,51 @@ export async function apiGet<T>(path: string, opts: FetchOptions = {}): Promise<
   // 一次 retry：FastAPI 偶發 sqlite busy / 短暫 thread pool 飽和會回 5xx 或 connection reset。
   // 對 GET 是 idempotent，250ms 後重試一次足以掩蓋大多數 transient 失敗。
   // 4xx 不 retry（client 錯誤、404 等）— 直接 throw 讓 SectionError 顯示。
-  let lastError: unknown;
+  let lastError: ApiError | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, init);
       if (res.ok) return (await res.json()) as T;
-      if (res.status >= 400 && res.status < 500) {
-        throw new Error(`GET ${path} → ${res.status} ${res.statusText}`);
-      }
-      lastError = new Error(`GET ${path} → ${res.status} ${res.statusText}`);
+      let detail: string | undefined;
+      try {
+        const body = await res.clone().json() as { detail?: string };
+        detail = body?.detail;
+      } catch {}
+      const apiErr = new ApiError(
+        path,
+        res.status,
+        `GET ${path} → ${res.status} ${res.statusText}${detail ? ` (${detail})` : ""}`,
+        detail,
+      );
+      if (apiErr.isClientError()) throw apiErr;
+      lastError = apiErr;
     } catch (e) {
-      lastError = e;
+      if (e instanceof ApiError) {
+        if (e.isClientError()) throw e;
+        lastError = e;
+      } else {
+        lastError = new ApiError(path, 0, e instanceof Error ? e.message : String(e));
+      }
     }
     if (attempt === 0) await new Promise((r) => setTimeout(r, 250));
   }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  throw lastError ?? new ApiError(path, 0, "unknown error");
 }
 
-// 單獨處理會回 422/404 的 endpoint：回傳 null 而非 throw
-export async function apiGetOptional<T>(path: string, opts: FetchOptions = {}): Promise<T | null> {
+/**
+ * 任何錯誤都吞掉、回 null。給「資料缺值不該炸頁」的場景用，例如 Topbar 的市場快照
+ * （盤後資料還沒進 DB → 404 → null → Topbar 渲染空白即可，不必整頁 error boundary）。
+ *
+ * 真的需要分流「404 = 沒資料」vs「5xx = 後端壞了」的場景，請改用 apiGet 並 catch ApiError：
+ *   try { await apiGet(...) } catch (e) {
+ *     if (e instanceof ApiError && e.isNotFound()) return <EmptyState />;
+ *     throw e;  // 5xx 讓 error.tsx 接
+ *   }
+ */
+export async function apiGetOptional<T>(
+  path: string,
+  opts: FetchOptions = {},
+): Promise<T | null> {
   try {
     return await apiGet<T>(path, opts);
   } catch {

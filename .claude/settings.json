@@ -3,5 +3,52 @@
     "playwright@claude-plugins-official": true,
     "chrome-devtools-mcp@claude-plugins-official": true,
     "context7@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest*)",
+      "Bash(.venv/Scripts/python.exe -m pytest*)",
+      "Bash(.venv/Scripts/python.exe -c *)",
+      "Bash(.venv/Scripts/python.exe -m *)",
+      "Bash(npx tsc*)",
+      "Bash(npx tsc --noEmit*)",
+      "Bash(cd web && npx tsc*)",
+      "Bash(cd web && npm run dev*)",
+      "Bash(cd web && npm run lint*)",
+      "Bash(netstat -ano*)",
+      "Bash(taskkill *)",
+      "Bash(schtasks /run*)",
+      "Bash(schtasks /query*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(git checkout*)",
+      "Bash(node web/scripts/screenshot*)",
+      "Bash(launch.bat*)",
+      "Bash(stop.bat*)",
+      "Bash(restart.bat*)",
+      "Bash(status.bat*)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(rm -rf /*)",
+      "Bash(git reset --hard*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/dev-build-guard.sh"
+          }
+        ]
+      }
+    ]
   }
 }

@@ -10,8 +10,19 @@ export function fmtNum(v: number | null | undefined, digits = 0): string {
   }).format(v);
 }
 
-/** 股價：最多兩位小數，去尾零。2330.00 → 2,330；8.234 → 8.23。 */
+/** 股價：固定兩位小數，給表格用（tabular-nums 才能 column 齊邊）。
+ *  2330 → "2,330.00"；8.234 → "8.23"。
+ *  需要去尾零（KPI 大字、loose layout）請改用 fmtPriceCompact。 */
 export function fmtPrice(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return new Intl.NumberFormat("zh-TW", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(v);
+}
+
+/** 股價（去尾零）：給 KPIStat / Topbar 等寬鬆排版場合用。2330 → "2,330"；8.234 → "8.23"。 */
+export function fmtPriceCompact(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   let s = new Intl.NumberFormat("zh-TW", {
     minimumFractionDigits: 2,

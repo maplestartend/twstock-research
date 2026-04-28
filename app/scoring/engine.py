@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any, Optional
 
 import statistics
+import threading
 
 import pandas as pd
 
@@ -339,7 +340,14 @@ def industry_yield_z_for_stock(
 # 同產業殖利率 z-score 的小型快取：key=(industry, per_pbr 最新日期)。
 # per_pbr 每日 market_update 後最新日會推進，自動失效；同一日同產業只算一次。
 # 內容是 (yields_by_sid: dict, mean, std) — 個股 z 直接用 sid 查 yield 後算。
+#
+# 限制 cache key 數量避免長期 process（FastAPI）下 dict 緩慢累積：每次 cache_key 變動
+# （新交易日進來），舊交易日的 entry 全清掉，因為 per_pbr 已往前推進、舊 z 不再有意義。
+# 並用 lock 保證並發 score_stock / score_all 不會 race（CPython dict 的 __setitem__ 看似
+# atomic 但 cleanup 段需要排他）。
 _yield_z_cache: dict[tuple[str, str | None], tuple[dict[str, float], float, float] | None] = {}
+_yield_z_cache_lock = threading.Lock()
+_YIELD_Z_CACHE_MAX_KEYS = 64  # 一個交易日 ~30 個產業 → 兩天份就 64 夠用
 
 
 def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
@@ -354,8 +362,10 @@ def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
     mx_row = conn.execute("SELECT MAX(date) AS mx FROM per_pbr").fetchone()
     cache_key = (industry, mx_row["mx"] if mx_row else None)
 
-    cached = _yield_z_cache.get(cache_key)
-    if cached is None and cache_key not in _yield_z_cache:
+    with _yield_z_cache_lock:
+        cached = _yield_z_cache.get(cache_key)
+        cache_present = cache_key in _yield_z_cache
+    if cached is None and not cache_present:
         rows = conn.execute(
             """
             SELECT p.stock_id, p.dividend_yield FROM per_pbr p
@@ -368,21 +378,25 @@ def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
             (industry,),
         ).fetchall()
         yields_by_sid = {r["stock_id"]: float(r["dividend_yield"]) for r in rows}
+        new_value: tuple[dict[str, float], float, float] | None
         if len(yields_by_sid) < 4:
-            _yield_z_cache[cache_key] = None
-            return None
-        ys = list(yields_by_sid.values())
-        mean = statistics.mean(ys)
-        try:
-            std = statistics.stdev(ys)
-        except statistics.StatisticsError:
-            _yield_z_cache[cache_key] = None
-            return None
-        if std <= 1e-9:
-            _yield_z_cache[cache_key] = None
-            return None
-        cached = (yields_by_sid, mean, std)
-        _yield_z_cache[cache_key] = cached
+            new_value = None
+        else:
+            ys = list(yields_by_sid.values())
+            mean = statistics.mean(ys)
+            try:
+                std = statistics.stdev(ys)
+            except statistics.StatisticsError:
+                new_value = None
+            else:
+                new_value = (yields_by_sid, mean, std) if std > 1e-9 else None
+        with _yield_z_cache_lock:
+            # FIFO 清理：當 cache_key (industry, latest_per_pbr_date) 改變、且 dict 滿了，
+            # 就把舊日期的 entry 一併清掉，避免長期 process 下記憶體累積
+            if len(_yield_z_cache) >= _YIELD_Z_CACHE_MAX_KEYS:
+                _yield_z_cache.clear()
+            _yield_z_cache[cache_key] = new_value
+        cached = new_value
     if cached is None:
         return None
     yields_by_sid, mean, std = cached

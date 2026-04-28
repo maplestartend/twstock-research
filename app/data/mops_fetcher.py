@@ -18,7 +18,12 @@ from datetime import date
 import pandas as pd
 import requests
 
+from app.data.http_client import make_session
+
 logger = logging.getLogger(__name__)
+
+# 共用 retry session：MOPS / OpenAPI 都會偶發 502 / 連線重置，自動重試 3 次
+_session = make_session()
 
 TWSE_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"   # 上市
 TPEX_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"  # 上櫃
@@ -74,7 +79,7 @@ def _to_float(v, scale: float = 1.0) -> float | None:
 
 
 def _fetch_one(url: str, timeout: int) -> list[dict]:
-    r = requests.get(url, timeout=timeout, headers=_HEADERS)
+    r = _session.get(url, timeout=timeout, headers=_HEADERS)
     r.raise_for_status()
     data = r.json()
     if not isinstance(data, list):
@@ -187,7 +192,7 @@ def fetch_monthly_revenue_by_ym(
     for tmpl, market in [(MOPS_SII_URL, "sii"), (MOPS_OTC_URL, "otc")]:
         url = tmpl.format(roc_year=roc, month=month)
         try:
-            r = requests.get(url, headers=_MOPS_HEADERS, timeout=timeout)
+            r = _session.get(url, headers=_MOPS_HEADERS, timeout=timeout)
             if r.status_code != 200:
                 logger.warning("MOPS %s %d/%d: HTTP %d", market, year, month, r.status_code)
                 continue

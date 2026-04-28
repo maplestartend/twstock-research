@@ -86,11 +86,14 @@ SCHEMA = [
         year INTEGER,
         quarter INTEGER,
         origin_name TEXT,
+        publish_date TEXT,
         PRIMARY KEY (stock_id, date, type)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_fin_cum_date ON financials_cumulative(date)",
     "CREATE INDEX IF NOT EXISTS idx_fin_cum_stock ON financials_cumulative(stock_id)",
+    # idx_fin_cum_publish 移到 migration（_migrate_financials_cumulative_publish_date）裡建，
+    # 因為舊 DB 還沒 ALTER TABLE 加 publish_date 欄位，CREATE INDEX 會 OperationalError。
     # 累計值差分後的「單季值」，供 fundamentals 算 TTM / YoY。
     # 由 financials_cumulative 在 derive_quarterly_from_cumulative() 自動產生，不直接抓。
     """
@@ -101,11 +104,13 @@ SCHEMA = [
         value REAL,
         year INTEGER,
         quarter INTEGER,
+        publish_date TEXT,
         PRIMARY KEY (stock_id, date, type)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_fin_qd_date ON financials_quarterly_derived(date)",
     "CREATE INDEX IF NOT EXISTS idx_fin_qd_stock ON financials_quarterly_derived(stock_id)",
+    # idx_fin_qd_publish 同樣移到 migration 裡建。
     # 歷史殘留：本表目前 0 rows、無 writer。
     # 除權息資料現在統一走 `adj_event`（含 before/after price + factor），event_driven.py
     # 與 calendar API 都讀那邊。保留 schema 是為了 backward compat（舊備份還原時不會
@@ -289,6 +294,7 @@ class Database:
             self._migrate_add_columns(conn)
             self._migrate_monthly_revenue_publish_date(conn)
             self._migrate_stock_info_is_tradable(conn)
+            self._migrate_financials_cumulative_publish_date(conn)
             conn.commit()
 
     @staticmethod
@@ -299,6 +305,8 @@ class Database:
             # (table, column_name, ddl_fragment)
             ("signal_history", "data_completeness", "REAL"),
             ("signal_history", "is_stale", "INTEGER DEFAULT 0"),
+            ("financials_cumulative", "publish_date", "TEXT"),
+            ("financials_quarterly_derived", "publish_date", "TEXT"),
         ]
         for table, col, ddl in migrations:
             cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -350,6 +358,49 @@ class Database:
                 logger.info("stock_info: backfilled is_tradable for %d rows", len(updates))
         except sqlite3.Error as e:
             logger.warning("stock_info.is_tradable migration skipped: %s", e)
+
+    @staticmethod
+    def _migrate_financials_cumulative_publish_date(conn: sqlite3.Connection) -> None:
+        """回填 financials_cumulative / financials_quarterly_derived 的 publish_date。
+
+        對舊版而言，row.date = 季末日（Q1=03-31、Q2=06-30、Q3=09-30、Q4=12-31）。實際公告下限：
+            Q1 → 該年 05-15
+            Q2 → 該年 08-14
+            Q3 → 該年 11-14
+            Q4 → 次年 03-31
+        舊版 SQL `WHERE date BETWEEN ? AND ?` 用 quarter-end 過濾，會讓 backtest 在公告日前 6 週
+        就「看到」當季財報 → look-ahead bias。新版 reading 路徑改用 publish_date <= as_of。
+
+        idempotent：本 migration 只填 publish_date IS NULL 的列；後續寫入 fetcher 會直接帶 publish_date。
+        """
+        for table in ("financials_cumulative", "financials_quarterly_derived"):
+            try:
+                tables = {row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,),
+                ).fetchall()}
+                if table not in tables:
+                    continue
+                cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if "publish_date" not in cols:
+                    continue  # _migrate_add_columns 還沒跑或 schema 異常
+                # SQLite CASE expression：依 quarter 推算 publish_date
+                cur = conn.execute(f"""
+                    UPDATE {table}
+                    SET publish_date = CASE quarter
+                        WHEN 1 THEN year || '-05-15'
+                        WHEN 2 THEN year || '-08-14'
+                        WHEN 3 THEN year || '-11-14'
+                        WHEN 4 THEN (CAST(year AS INTEGER) + 1) || '-03-31'
+                    END
+                    WHERE publish_date IS NULL AND quarter IN (1,2,3,4) AND year IS NOT NULL
+                """)
+                if cur.rowcount > 0:
+                    logger.info("%s: backfilled publish_date for %d rows", table, cur.rowcount)
+                # 欄位確定存在後才能建 index（在 SCHEMA 階段建會撞舊 DB 的 OperationalError）
+                idx_name = "idx_fin_cum_publish" if table == "financials_cumulative" else "idx_fin_qd_publish"
+                conn.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table}(publish_date)")
+            except sqlite3.Error as e:
+                logger.warning("%s.publish_date migration skipped: %s", table, e)
 
     @staticmethod
     def _migrate_monthly_revenue_publish_date(conn: sqlite3.Connection) -> None:

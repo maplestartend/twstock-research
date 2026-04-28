@@ -13,6 +13,7 @@ export function SearchTrigger() {
   return (
     <button
       type="button"
+      name="open-search"
       onClick={handleClick}
       className="inline-flex items-center gap-2 h-9 px-3 rounded-md border border-[var(--border-default)] bg-subtle hover:bg-[var(--bg-hover)] text-sm text-[var(--text-tertiary)] transition-colors"
       aria-label="開啟全域搜尋（Ctrl+K）"
