@@ -20,10 +20,21 @@ from app.scoring.history import snapshot_today
 
 
 def _seed_minimal(db: Database, stock_id: str = "2330") -> None:
-    """種一個最小可跑的 fixture：120 個交易日的合成價量 + 法人/融資/per_pbr。"""
+    """種一個最小可跑的 fixture：~150 個交易日的合成價量 + 法人/融資/per_pbr。
+
+    注意：日期一定要結束在「今天之前」。score_all 會用 as_of=today 過濾 daily_price，
+    score_stock 不會 → 若 fixture 結尾跨到未來日，兩條 path 看到的 row 數量不同
+    （score_stock 多看 N 天）就會出現假分歧。production 不會發生因為 TWSE 從不公告
+    未來日，但 test fixture 必須避開這個 trap。
+    """
     rng = np.random.default_rng(7)
-    n = 180
-    dates = pd.date_range("2025-10-01", periods=n, freq="B")
+    n = 150
+    # 結尾固定在 today - 1 day（取台北時區），起點往回算 150 個 business day
+    dates = pd.date_range(
+        end=(pd.Timestamp.now(tz="Asia/Taipei").normalize() - pd.Timedelta(days=1)).tz_localize(None),
+        periods=n,
+        freq="B",
+    )
     base = 580 + np.cumsum(rng.normal(0.5, 4.0, n))  # 趨勢價
     close = base + rng.normal(0, 1.5, n)
     open_ = close - rng.uniform(-3, 3, n)
@@ -79,15 +90,6 @@ def _seed_minimal(db: Database, stock_id: str = "2330") -> None:
 
 
 class TestScoreConsistency:
-    @pytest.mark.xfail(
-        reason=(
-            "Known divergence between score_stock (live) and score_all (snapshot) — "
-            "audit 2026-04 verified mid-term score can differ by ~10 pts due to "
-            "different fundamentals filtering / live-close override. Fix requires "
-            "unifying fund_snap loading between the two paths. CLAUDE.md #5 sync rule."
-        ),
-        strict=False,  # 修好後 test 會 unexpectedly pass，提醒開發者把 xfail 拿掉
-    )
     def test_score_stock_matches_score_all_snapshot(self, tmp_path):
         """同一檔股票、同一份輸入：score_all 的快照 == score_stock 即時計算（容忍 1e-6）。"""
         db = Database(tmp_path / "consistency.db")

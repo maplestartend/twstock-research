@@ -34,9 +34,8 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 ## 跑測試
 
 ```bash
-python -m pytest tests/ -q     # 323 passed + 1 xfailed
-                                # 新增覆蓋：backtest router 5 endpoint、score_stock vs score_all invariant
-                                # xfail = 兩條 scoring path 已知分歧，xfail 會在修好後 unexpected pass 提醒拿掉標記
+python -m pytest tests/ -q     # 324 passed
+                                # 新增覆蓋：backtest router 5 endpoint + score_stock vs score_all invariant
 cd web && npx tsc --noEmit     # frontend type check
 ```
 

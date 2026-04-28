@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from math import isfinite
+
+from app.data.clock import taipei_now
 from typing import Any, Iterable
 
 from app.data.db import Database
@@ -105,7 +107,7 @@ def upsert_preset(
         raise ValueError(f"'{name}' 為內建 preset 名稱，請換一個")
     clean = _validate_weights(weights)
     payload = json.dumps(clean, ensure_ascii=False, separators=(",", ":"))
-    now = datetime.now().isoformat(timespec="seconds")
+    now = taipei_now().replace(tzinfo=None).isoformat(timespec="seconds")
     with db.connect() as conn:
         conn.execute(
             """

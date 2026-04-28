@@ -130,9 +130,8 @@ set "CLOUD_DIR=%USERPROFILE%\OneDrive - ACME\台股備份"
 第一次建議跑一下 `python -m pytest tests/ -q` 驗證 DB 沒被同步壞掉（應該 323 passed + 1 xfailed）。
 
 > 命名澄清：`sync-from-cloud.bat` 名字像「雙向同步」其實是「**單向 pull**」（把 OneDrive
-> 的最新 DB 蓋到本機 `data\stock.db`）。從未把本機 DB 推回雲端，所以副機改 `data/`
-> 不會影響主機。要把名字改得更精確可以複製為 `pull-latest-db.bat`，但保留原檔名
-> 是因為使用者既有雙擊習慣。
+> 的最新 DB 蓋到本機 `data\stock.db`）。新增 `pull-latest-db.bat` 為更精確的別名，
+> 兩者效果完全相同；舊雙擊習慣不受影響。
 
 ### 副機**不要**做的事
 

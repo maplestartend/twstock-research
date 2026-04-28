@@ -13,6 +13,8 @@ import logging
 import os
 import shutil
 from datetime import date, timedelta
+
+from app.data.clock import taipei_today
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ def make_backup(db_path: Path, backup_dir: Path, today: date | None = None) -> P
     若有任何錯誤訊息（例如 page corruption）就刪除壞檔並回傳 None，避免讓
     apply_retention 把舊的好備份輪掉、留下一個壞備份當日用。
     """
-    today = today or date.today()
+    today = today or taipei_today()
     backup_dir.mkdir(parents=True, exist_ok=True)
     target = backup_dir / f"stock_{today:%Y%m%d}.db"
     # VACUUM INTO 不能寫到已存在的檔，先刪
@@ -101,7 +103,7 @@ def apply_retention(
     - 檔名日期是週一，且在最近 `keep_weeks` 週內
     - 檔名日期是每月 1 號，且在最近 `keep_months` 個月內
     """
-    today = today or date.today()
+    today = today or taipei_today()
     cutoff_days = today - timedelta(days=keep_days)
     cutoff_weeks = today - timedelta(days=keep_weeks * 7)
     cutoff_months = today - timedelta(days=keep_months * 31)

@@ -9,6 +9,7 @@ import pandas as pd
 
 from app import portfolio as pf
 from app import watchlist as wl_mod
+from app.data.clock import taipei_today
 from app.data.db import Database
 from app.notifier import notify
 from app.risk import enhanced_risk_signals
@@ -136,7 +137,7 @@ def build_report(db: Database, as_of: str | None = None) -> str:
 def save_report(content: str, out_dir: Path | None = None) -> Path:
     out_dir = out_dir or REPORT_DIR_DEFAULT
     out_dir.mkdir(parents=True, exist_ok=True)
-    today = date.today().isoformat()
+    today = taipei_today().isoformat()
     path = out_dir / f"{today}.md"
     path.write_text(content, encoding="utf-8")
     # 也寫一份 latest.md 方便固定路徑存取

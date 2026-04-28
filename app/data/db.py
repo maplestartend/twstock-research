@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -20,6 +19,7 @@ SCHEMA = [
         industry_category TEXT,
         type TEXT,
         is_tradable INTEGER DEFAULT 1,
+        last_seen_date TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -295,6 +295,7 @@ class Database:
             self._migrate_monthly_revenue_publish_date(conn)
             self._migrate_stock_info_is_tradable(conn)
             self._migrate_financials_cumulative_publish_date(conn)
+            self._migrate_stock_info_last_seen_date(conn)
             conn.commit()
 
     @staticmethod
@@ -307,6 +308,9 @@ class Database:
             ("signal_history", "is_stale", "INTEGER DEFAULT 0"),
             ("financials_cumulative", "publish_date", "TEXT"),
             ("financials_quarterly_derived", "publish_date", "TEXT"),
+            # last_seen_date：每次 daily_price 抓到該 sid 就更新；
+            # 用於 backtest survivorship 防呆（之前 universe 是固定 yaml，回測不會排除已下市股票）
+            ("stock_info", "last_seen_date", "TEXT"),
         ]
         for table, col, ddl in migrations:
             cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -358,6 +362,38 @@ class Database:
                 logger.info("stock_info: backfilled is_tradable for %d rows", len(updates))
         except sqlite3.Error as e:
             logger.warning("stock_info.is_tradable migration skipped: %s", e)
+
+    @staticmethod
+    def _migrate_stock_info_last_seen_date(conn: sqlite3.Connection) -> None:
+        """從 daily_price 回填 stock_info.last_seen_date（每檔最後一筆 OHLCV 的日期）。
+
+        idempotent：只更新 last_seen_date 比現有 daily_price MAX(date) 舊的 row。
+        新插入會由 market_updater 的 UPSERT 自動帶 last_seen_date，這個 migration 主要
+        給「現有 DB 第一次升級到帶此欄位的版本」用。
+        """
+        try:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('stock_info','daily_price')"
+            ).fetchall()}
+            if "stock_info" not in tables or "daily_price" not in tables:
+                return
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(stock_info)").fetchall()}
+            if "last_seen_date" not in cols:
+                return  # ALTER TABLE 還沒跑
+            cur = conn.execute("""
+                UPDATE stock_info
+                SET last_seen_date = (
+                    SELECT MAX(date) FROM daily_price WHERE daily_price.stock_id = stock_info.stock_id
+                )
+                WHERE last_seen_date IS NULL
+                   OR last_seen_date < (
+                       SELECT MAX(date) FROM daily_price WHERE daily_price.stock_id = stock_info.stock_id
+                   )
+            """)
+            if cur.rowcount > 0:
+                logger.info("stock_info: backfilled last_seen_date for %d rows", cur.rowcount)
+        except sqlite3.Error as e:
+            logger.warning("stock_info.last_seen_date migration skipped: %s", e)
 
     @staticmethod
     def _migrate_financials_cumulative_publish_date(conn: sqlite3.Connection) -> None:
@@ -447,42 +483,36 @@ class Database:
 
     # ---------- 通用 upsert ----------
     def upsert_df(self, df: pd.DataFrame, table: str) -> int:
-        """Bulk INSERT OR REPLACE。
+        """Bulk INSERT OR REPLACE via executemany — 直接寫進目標表，不繞 tmp 表。
 
-        舊版用固定名 `_tmp_upsert` 暫存表，多 writer 並發時（FastAPI thread + market_update script）
-        會互相覆蓋對方的暫存資料，且 to_sql 隱式 commit 把整個操作切成 3 段：
-          1. CREATE/REPLACE _tmp_upsert（commit 1）
-          2. INSERT OR REPLACE FROM _tmp_upsert（commit 2）
-          3. DROP TABLE _tmp_upsert（commit 3）
-        中間任一段失敗會留下殘表干擾下一個呼叫者。
-        新版改用 uuid 後綴的 tmp 表 + try/finally 清理，並把整段包進 `with conn:` 確保
-        unhandled exception 自動 rollback（不留殘表）。
+        舊版（保留作 fallback 給特殊情境）：to_sql 寫 tmp 表 → SELECT 灌進目標 → DROP tmp。
+        三段 SQL 中間有 commit 隱式發生、tmp 表的 schema 推斷可能跟目標表不一致（pandas
+        把 INTEGER 推成 REAL 之類），且每次都要 CREATE/DROP tmp 表，幾千列以下 round-trip
+        成本大於實際資料寫入。
+
+        新版用 `executemany("INSERT OR REPLACE ...", rows)`：
+        - 一次連線、一個 transaction（with conn 自動 commit / rollback）
+        - 沒 tmp 表 → 沒 schema 推斷 → 沒 DROP TABLE 副作用
+        - executemany 內部會用 prepared statement，~3000 列 < 50ms。
         """
         if df.empty:
             return 0
         df = df.copy()
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-        # 8 hex 字符夠唯一，且 SQLite identifier 字元限制不踩雷
-        tmp_table = f"_tmp_upsert_{uuid.uuid4().hex[:8]}"
+        cols = list(df.columns)
+        col_list = ", ".join(cols)
+        placeholders = ", ".join(["?"] * len(cols))
+        sql = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES ({placeholders})"
+        # 把 NaN/NaT 換成 None（SQLite 拒絕 NaN，且 NaT 是 datetime 的 NaT，必須 None）
+        rows = [
+            tuple(None if (v is pd.NaT or (isinstance(v, float) and v != v)) else v
+                  for v in row)
+            for row in df.itertuples(index=False, name=None)
+        ]
         with self.connect() as conn:
-            try:
-                df.to_sql(tmp_table, conn, if_exists="replace", index=False)
-                cols = list(df.columns)
-                col_list = ", ".join(cols)
-                # `with conn:` 會在離開 block 時 commit / 失敗則 rollback
-                with conn:
-                    conn.execute(
-                        f"INSERT OR REPLACE INTO {table} ({col_list}) "
-                        f"SELECT {col_list} FROM {tmp_table}"
-                    )
-            finally:
-                # 清理 tmp 表（即使 INSERT 失敗也要清，避免留殘表）
-                try:
-                    conn.execute(f"DROP TABLE IF EXISTS {tmp_table}")
-                    conn.commit()
-                except Exception:
-                    pass
+            with conn:  # context manager 自動 commit / 失敗 rollback
+                conn.executemany(sql, rows)
         return len(df)
 
     # ---------- fetch log ----------

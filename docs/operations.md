@@ -73,7 +73,7 @@ python -m scripts.run_stats --show-errors  # 只看錯誤
 ```bash
 pip install pytest
 python -m pytest tests/ -q
-# 323 passed, 1 xfailed in ~11s
+# 324 passed in ~11s
 ```
 
 覆蓋：
