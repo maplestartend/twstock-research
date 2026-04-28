@@ -1,20 +1,16 @@
 import type { Metadata } from "next";
-import { Noto_Sans_TC, JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 import "../styles/globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { SidebarProvider } from "@/components/layout/SidebarProvider";
 import { Topbar } from "@/components/layout/Topbar";
-import { CommandPalette } from "@/components/primitives/CommandPalette";
+import { CommandPaletteLoader } from "@/components/primitives/CommandPaletteLoader";
 
-const notoTC = Noto_Sans_TC({
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-  variable: "--font-sans-runtime",
-  display: "swap",
-});
+// 中文字不用 next/font：Noto Sans TC 的 latin subset 對中文字無效，徒增多餘 woff2。
+// 系統字 PingFang TC（Mac）/ Microsoft JhengHei（Windows）視覺上不差，已寫在 globals.css 的 --font-sans 字串。
 const jetbrains = JetBrains_Mono({
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
+  weight: ["400", "700"],
   variable: "--font-mono-runtime",
   display: "swap",
 });
@@ -42,13 +38,14 @@ const preThemeScript = `
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-TW" suppressHydrationWarning className={`${notoTC.variable} ${jetbrains.variable}`}>
+    <html lang="zh-TW" suppressHydrationWarning className={jetbrains.variable}>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* display=swap 而非 block：未載入時先用 fallback 顯示文字，最多省 3s render-blocking。 */}
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-25..200&display=block"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-25..200&display=swap"
         />
         <script dangerouslySetInnerHTML={{ __html: preThemeScript }} />
       </head>
@@ -63,7 +60,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </main>
             </div>
           </div>
-          <CommandPalette />
+          <CommandPaletteLoader />
         </SidebarProvider>
       </body>
     </html>

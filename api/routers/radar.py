@@ -15,25 +15,35 @@ router = APIRouter(prefix="/api/radar", tags=["radar"])
 
 @router.get("/strategies", response_model=list[RadarStrategy])
 def strategies(db: Database = Depends(get_db)) -> list[RadarStrategy]:
-    """列出所有策略 + 當日命中數（以 signal_history.strategies 的子字串比對）。"""
+    """列出所有策略 + 當日命中數。
+
+    舊版對每個策略各跑一次 `LIKE '%name%'` 全表掃描（N 次 query），改成單一 query 撈當日
+    所有非空 strategies 字串後在 Python 端 split + count。STRATEGIES 約 7~10 條時整體
+    從 N×掃表降到 1 次。
+    """
     ensure_fresh(db)
     as_of = latest_as_of(db)
-    out: list[RadarStrategy] = []
-    with db.connect() as conn:
-        for name, strat in STRATEGIES.items():
-            count = 0
-            if as_of:
-                row = conn.execute(
-                    "SELECT COUNT(*) AS n FROM signal_history "
-                    "WHERE as_of=? AND strategies LIKE ?",
-                    (as_of, f"%{name}%"),
-                ).fetchone()
-                count = int(row["n"]) if row else 0
-            out.append(RadarStrategy(
-                name=name, description=strat.description, hit_count=count,
-                stocks_only=strat.stocks_only,
-            ))
-    return out
+    counts: dict[str, int] = {}
+    if as_of:
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT strategies FROM signal_history WHERE as_of=? AND strategies != ''",
+                (as_of,),
+            ).fetchall()
+        for r in rows:
+            for token in (r["strategies"] or "").split(","):
+                token = token.strip()
+                if token:
+                    counts[token] = counts.get(token, 0) + 1
+    return [
+        RadarStrategy(
+            name=name,
+            description=strat.description,
+            hit_count=counts.get(name, 0),
+            stocks_only=strat.stocks_only,
+        )
+        for name, strat in STRATEGIES.items()
+    ]
 
 
 @router.get("/hits", response_model=list[RadarHit])

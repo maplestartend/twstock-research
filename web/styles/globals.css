@@ -111,4 +111,18 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   user-select: none;
+  /* font-display:swap 期間圖示字未到位前避免顯示「dashboard」這類字面 fallback */
+  overflow: hidden;
+}
+
+/* =========================================================================
+   大型表格 row virtualization（純 CSS 版）
+   雷達 top=all 可達數百列 / 自選股總覽 100+ 列：viewport 外的 row 加上
+     content-visibility: auto + contain-intrinsic-size 後瀏覽器跳過 layout/paint，
+   首屏 hydrate 加快、scroll 不卡頓。比 react-window 零 JS 成本、API 不變。
+   contain-intrinsic-size 給 row 一個高度估值（避免初始 scrollbar 跳）。
+   ========================================================================= */
+.tv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 56px;
 }

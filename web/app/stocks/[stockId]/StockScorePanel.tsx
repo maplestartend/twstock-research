@@ -27,7 +27,27 @@ import { cn } from "@/lib/utils";
 type Mode = "close" | "live" | "whatif";
 
 const LIVE_REFRESH_MS = 30_000;
+const LIVE_REFRESH_MS_OFFHOURS = 120_000; // 非交易時段拉長到 2 分鐘（盤前 / 盤後 / 週末）
 const WHATIF_DEBOUNCE_MS = 350;
+
+/** 台北時區判斷現在是否為交易時段（週一~週五 9:00–13:30）。
+ *  非交易時段時降頻輪詢（mis 此時只回昨收，重複打沒意義）。 */
+function isTradingHoursTaipei(): boolean {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Taipei",
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(new Date());
+  const wd = parts.find((p) => p.type === "weekday")?.value ?? "";
+  const hh = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const mm = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  if (wd === "Sat" || wd === "Sun") return false;
+  const minutes = hh * 60 + mm;
+  return minutes >= 9 * 60 && minutes <= 13 * 60 + 30;
+}
 
 export function StockScorePanel({
   stockId,
@@ -69,6 +89,8 @@ export function StockScorePanel({
   );
 
   // 即時 mode：先抓 intraday → 再用 ?live=1 算一次 score；之後每 30 秒重抓
+  // - 切到背景 tab 時 (document.hidden) 暫停輪詢，回前景時立即補抓
+  // - 非交易時段（週末 / 盤前盤後）退到 2 分鐘輪詢一次（mis 此時只回昨收，無變化）
   useEffect(() => {
     if (mode !== "live") return;
     let cancelled = false;
@@ -91,7 +113,6 @@ export function StockScorePanel({
         if (next) setScore(next);
       } catch (e) {
         if (cancelled || ctrl.signal.aborted) return;
-        // intraday 失敗（興櫃 / 休市 / mis 異常）→ 顯示警告，分數退回收盤
         setIntraday(null);
         setScore(initialScore);
         setError(e instanceof Error ? e.message : "即時報價無法取得");
@@ -100,11 +121,36 @@ export function StockScorePanel({
       }
     };
 
+    let handle: number | null = null;
+    const start = () => {
+      if (handle != null) return;
+      const interval = isTradingHoursTaipei() ? LIVE_REFRESH_MS : LIVE_REFRESH_MS_OFFHOURS;
+      handle = window.setInterval(tick, interval);
+    };
+    const stop = () => {
+      if (handle != null) {
+        window.clearInterval(handle);
+        handle = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        // 回前景：立即補抓一次（避免顯示舊資料），再重啟 interval
+        tick();
+        start();
+      }
+    };
+
     tick();
-    const handle = window.setInterval(tick, LIVE_REFRESH_MS);
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       cancelled = true;
-      window.clearInterval(handle);
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
       ctrl.abort();
     };
   }, [mode, stockId, fetchScore, initialScore]);

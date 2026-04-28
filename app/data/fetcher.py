@@ -36,7 +36,11 @@ class FinMindFetcher:
             params["end_date"] = end
 
         url = f"{self.config.base_url}/data"
-        resp = self.session.get(url, params=params, timeout=30)
+        try:
+            resp = self.session.get(url, params=params, timeout=10)
+        except requests.RequestException as e:
+            # Timeout / ConnectionError 等都包成 FinMindError，讓 caller 統一用一個 except 接。
+            raise FinMindError(f"{dataset}/{data_id}: {type(e).__name__}: {e}") from e
         time.sleep(self.request_delay)
 
         if resp.status_code != 200:

@@ -38,23 +38,41 @@ export function humanizeApiError(raw: string | unknown): string {
 export type FetchOptions = {
   revalidate?: number;   // 秒；Next.js RSC ISR
   noCache?: boolean;
+  /** Next.js fetch cache tags — 之後 revalidateTag(tag) 可精準清除這支 endpoint 的快取
+   *  而不必 revalidatePath('/', 'layout') 把整層 Data Cache 連帶清掉。 */
+  tags?: string[];
 };
 
 export async function apiGet<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const url = path.startsWith("http") ? path : `${BASE}${path}`;
-  const init: RequestInit & { next?: { revalidate?: number } } = {};
+  const init: RequestInit & { next?: { revalidate?: number; tags?: string[] } } = {};
   if (opts.noCache) {
     init.cache = "no-store";
-  } else if (opts.revalidate != null) {
-    init.next = { revalidate: opts.revalidate };
   } else {
-    init.next = { revalidate: 60 };
+    const next: { revalidate?: number; tags?: string[] } = {};
+    next.revalidate = opts.revalidate ?? 60;
+    if (opts.tags && opts.tags.length) next.tags = opts.tags;
+    init.next = next;
   }
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    throw new Error(`GET ${path} → ${res.status} ${res.statusText}`);
+
+  // 一次 retry：FastAPI 偶發 sqlite busy / 短暫 thread pool 飽和會回 5xx 或 connection reset。
+  // 對 GET 是 idempotent，250ms 後重試一次足以掩蓋大多數 transient 失敗。
+  // 4xx 不 retry（client 錯誤、404 等）— 直接 throw 讓 SectionError 顯示。
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.ok) return (await res.json()) as T;
+      if (res.status >= 400 && res.status < 500) {
+        throw new Error(`GET ${path} → ${res.status} ${res.statusText}`);
+      }
+      lastError = new Error(`GET ${path} → ${res.status} ${res.statusText}`);
+    } catch (e) {
+      lastError = e;
+    }
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 250));
   }
-  return (await res.json()) as T;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 // 單獨處理會回 422/404 的 endpoint：回傳 null 而非 throw

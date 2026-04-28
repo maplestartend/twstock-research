@@ -55,26 +55,31 @@ def meta(stock_id: str, db: Database = Depends(get_db)) -> StockMeta:
 
 @router.get("/{stock_id}/price", response_model=StockPriceBundle)
 def price(stock_id: str, days: int = 180, db: Database = Depends(get_db)) -> StockPriceBundle:
-    df = db.load_daily_price(stock_id)
+    # 多載 90 天讓 ma60/bb 等指標的 lookback 不受裁切影響，最終只回傳 days 筆。
+    from app.data.clock import taipei_today
+    start = (taipei_today() - timedelta(days=days + 90)).isoformat()
+    df = db.load_daily_price(stock_id, start=start)
     if df.empty:
         raise HTTPException(status_code=404, detail="no data")
     df = tech.enrich(df)
     df = df.tail(days).reset_index(drop=True)
 
-    ohlcv: list[OHLCV] = []
-    indicators: list[IndicatorPoint] = []
-    for _, row in df.iterrows():
-        d = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
-        ohlcv.append(OHLCV(
-            date=d,
+    # 向量化序列化：避免 N 次 row-by-row 建立 dict / Pydantic instance
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    ohlcv = [
+        OHLCV(
+            date=row["date"],
             open=_safe_float(row.get("open")) or 0.0,
             high=_safe_float(row.get("high")) or 0.0,
             low=_safe_float(row.get("low")) or 0.0,
             close=_safe_float(row.get("close")) or 0.0,
             volume=_safe_float(row.get("volume")),
-        ))
-        indicators.append(IndicatorPoint(
-            date=d,
+        )
+        for row in df.to_dict("records")
+    ]
+    indicators = [
+        IndicatorPoint(
+            date=row["date"],
             ma5=_safe_float(row.get("ma5")),
             ma20=_safe_float(row.get("ma20")),
             ma60=_safe_float(row.get("ma60")),
@@ -83,7 +88,9 @@ def price(stock_id: str, days: int = 180, db: Database = Depends(get_db)) -> Sto
             rsi14=_safe_float(row.get("rsi14")),
             bb_upper=_safe_float(row.get("bb_upper")),
             bb_lower=_safe_float(row.get("bb_lower")),
-        ))
+        )
+        for row in df.to_dict("records")
+    ]
     return StockPriceBundle(stock_id=stock_id, ohlcv=ohlcv, indicators=indicators)
 
 
