@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from datetime import date, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -129,6 +130,7 @@ def main() -> int:
                 if wl:
                     log.info("更新自選股還原價 (%d 檔)…", len(wl))
                     fetcher = FinMindFetcher(cfg.finmind, request_delay=cfg.fetch.request_delay)
+                    t_adj = time.time()
                     for sid in wl:
                         try:
                             update_stock_adjusted(db, fetcher, sid)
@@ -136,6 +138,7 @@ def main() -> int:
                             log.warning("  %s adj 失敗: %s", sid, e)
                         except Exception as e:
                             log.warning("  %s adj 例外: %s", sid, e)
+                    log.info("自選股還原價完成 (%.1fs)", time.time() - t_adj)
 
             # 季財報（MOPS bulk）：每次跑都抓一下最新季 + 跑差分。
             # OpenAPI 只回最新一季（10 秒），idempotent upsert 無副作用；
@@ -161,7 +164,10 @@ def main() -> int:
             # 資料更新完成後，自動拍一張當日訊號快照（除非 --no-snapshot）
             if not args.no_snapshot:
                 try:
+                    log.info("計算訊號快照 (~40s)…")
+                    t_snap = time.time()
                     snapshot_today(db, include_fundamentals=args.snapshot_with_fundamentals)
+                    log.info("訊號快照完成 (%.1fs)", time.time() - t_snap)
                 except Exception as e:
                     log.warning("訊號快照失敗: %s", e)
 

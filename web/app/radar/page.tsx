@@ -13,6 +13,7 @@ import { TableContainer } from "@/components/primitives/TableContainer";
 import { Pagination } from "@/components/primitives/Pagination";
 import { DownloadCsvButton } from "@/components/primitives/DownloadCsvButton";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
+import { PrefetchLink } from "@/components/primitives/PrefetchLink";
 import { fmtNum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -139,7 +140,7 @@ export default async function RadarPage({
           {strategies.map((s) => {
             const active = s.name === activeStrategy;
             return (
-              <Link
+              <PrefetchLink
                 key={s.name}
                 href={`/radar?${buildQuery({ strategy: s.name, market: marketsPicked, top: topChoice, type: typeTab })}`}
                 scroll={false}
@@ -169,7 +170,7 @@ export default async function RadarPage({
                 )}>
                   {fmtNum(s.hitCount)}
                 </span>
-              </Link>
+              </PrefetchLink>
             );
           })}
         </div>
@@ -275,7 +276,7 @@ export default async function RadarPage({
               </thead>
               <tbody>
                 {pagedHits.map((h) => (
-                  <tr key={h.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
+                  <tr key={h.stockId} className="tv-row border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                     <Td>
                       <StockIdCell stockId={h.stockId} stockName={h.stockName} />
                     </Td>

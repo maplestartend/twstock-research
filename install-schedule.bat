@@ -1,7 +1,8 @@
 ﻿@echo off
 REM ============================================================
 REM TW Stock - Install Windows Task Scheduler entry
-REM One-click setup: registers a daily task that runs market_update at 15:30
+REM One-click setup: registers a daily task that runs market_update at 16:45
+REM   — TWSE/TPEx OpenAPI final data ready ~16:30, wait 15 min for safety.
 REM Features: wake computer, run even if missed, retry on failure
 REM
 REM Re-run to update; to remove run: uninstall-schedule.bat
@@ -11,7 +12,7 @@ setlocal
 cd /d "%~dp0"
 set TASK_NAME=TWStockDailyUpdate
 set TASK_SCRIPT=%~dp0daily-update.bat
-set TASK_TIME=15:30
+set TASK_TIME=16:45
 
 echo.
 echo =========================================================

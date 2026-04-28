@@ -336,6 +336,12 @@ def industry_yield_z_for_stock(
     return _industry_yield_z_with_conn(conn, stock_id)
 
 
+# 同產業殖利率 z-score 的小型快取：key=(industry, per_pbr 最新日期)。
+# per_pbr 每日 market_update 後最新日會推進，自動失效；同一日同產業只算一次。
+# 內容是 (yields_by_sid: dict, mean, std) — 個股 z 直接用 sid 查 yield 後算。
+_yield_z_cache: dict[tuple[str, str | None], tuple[dict[str, float], float, float] | None] = {}
+
+
 def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
     ind_row = conn.execute(
         "SELECT industry_category FROM stock_info WHERE stock_id=?", (stock_id,)
@@ -343,27 +349,45 @@ def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
     if not ind_row or not ind_row["industry_category"]:
         return None
     industry = ind_row["industry_category"]
-    rows = conn.execute(
-        """
-        SELECT p.stock_id, p.dividend_yield FROM per_pbr p
-        INNER JOIN (
-            SELECT stock_id, MAX(date) AS mx FROM per_pbr GROUP BY stock_id
-        ) m ON p.stock_id = m.stock_id AND p.date = m.mx
-        INNER JOIN stock_info i ON i.stock_id = p.stock_id
-        WHERE i.industry_category = ? AND p.dividend_yield IS NOT NULL
-        """,
-        (industry,),
-    ).fetchall()
-    yields = [float(r["dividend_yield"]) for r in rows]
-    target = next((float(r["dividend_yield"]) for r in rows if r["stock_id"] == stock_id), None)
-    if target is None or len(yields) < 4:
+
+    # cache key：用 per_pbr 最新一筆日期（cheap MAX 查詢，<1ms）
+    mx_row = conn.execute("SELECT MAX(date) AS mx FROM per_pbr").fetchone()
+    cache_key = (industry, mx_row["mx"] if mx_row else None)
+
+    cached = _yield_z_cache.get(cache_key)
+    if cached is None and cache_key not in _yield_z_cache:
+        rows = conn.execute(
+            """
+            SELECT p.stock_id, p.dividend_yield FROM per_pbr p
+            INNER JOIN (
+                SELECT stock_id, MAX(date) AS mx FROM per_pbr GROUP BY stock_id
+            ) m ON p.stock_id = m.stock_id AND p.date = m.mx
+            INNER JOIN stock_info i ON i.stock_id = p.stock_id
+            WHERE i.industry_category = ? AND p.dividend_yield IS NOT NULL
+            """,
+            (industry,),
+        ).fetchall()
+        yields_by_sid = {r["stock_id"]: float(r["dividend_yield"]) for r in rows}
+        if len(yields_by_sid) < 4:
+            _yield_z_cache[cache_key] = None
+            return None
+        ys = list(yields_by_sid.values())
+        mean = statistics.mean(ys)
+        try:
+            std = statistics.stdev(ys)
+        except statistics.StatisticsError:
+            _yield_z_cache[cache_key] = None
+            return None
+        if std <= 1e-9:
+            _yield_z_cache[cache_key] = None
+            return None
+        cached = (yields_by_sid, mean, std)
+        _yield_z_cache[cache_key] = cached
+    if cached is None:
         return None
-    mean = statistics.mean(yields)
-    try:
-        std = statistics.stdev(yields)
-    except statistics.StatisticsError:
-        return None
-    if std <= 1e-9:
+    yields_by_sid, mean, std = cached
+    target = yields_by_sid.get(stock_id)
+    if target is None:
         return None
     return (target - mean) / std
 

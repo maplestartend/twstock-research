@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -19,6 +20,9 @@ from app.data.db import Database
 from app.data.fetcher import FinMindError, FinMindFetcher
 
 logger = logging.getLogger(__name__)
+
+ADJ_FETCH_LOG_DATASET = "adj_event"
+ADJ_FETCH_TTL_DAYS = 7
 
 
 def fetch_events(fetcher: FinMindFetcher, stock_id: str, start: str = "2015-01-01") -> pd.DataFrame:
@@ -89,13 +93,48 @@ def compute_adj_series(daily_price: pd.DataFrame, events: pd.DataFrame) -> pd.Da
     return out
 
 
-def update_stock_adjusted(db: Database, fetcher: FinMindFetcher, stock_id: str) -> int:
-    """抓事件 → 計算 adj 序列 → 寫入 adj_event + daily_price_adj。回傳寫入筆數。"""
-    events = fetch_events(fetcher, stock_id)
-    if not events.empty:
-        ev_out = events.copy()
-        ev_out["date"] = pd.to_datetime(ev_out["date"]).dt.strftime("%Y-%m-%d")
-        db.upsert_df(ev_out, "adj_event")
+def _load_cached_events(db: Database, stock_id: str) -> pd.DataFrame:
+    with db.connect() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT date, stock_id, event_type, before_price, after_price, factor
+            FROM adj_event WHERE stock_id = ? ORDER BY date
+            """,
+            conn, params=[stock_id],
+        )
+
+
+def update_stock_adjusted(
+    db: Database,
+    fetcher: FinMindFetcher,
+    stock_id: str,
+    *,
+    force_refetch: bool = False,
+) -> int:
+    """抓事件 → 計算 adj 序列 → 寫入 adj_event + daily_price_adj。回傳寫入筆數。
+
+    為避免每日重抓 FinMind dividend/split (除權息一年才幾次)，使用 fetch_log 做 TTL：
+    若 7 天內已 refresh 過、改用 DB 快取重算 daily_price_adj。force_refetch=True 強制重抓。
+    """
+    today_iso = date.today().isoformat()
+    last_run = db.get_last_fetch_date(stock_id, ADJ_FETCH_LOG_DATASET)
+    fresh = (
+        not force_refetch
+        and last_run is not None
+        and (date.today() - date.fromisoformat(last_run)).days < ADJ_FETCH_TTL_DAYS
+    )
+
+    if fresh:
+        events = _load_cached_events(db, stock_id)
+        logger.debug("%s adj 用 7 天內快取 (last=%s)，跳過 FinMind", stock_id, last_run)
+    else:
+        events = fetch_events(fetcher, stock_id)
+        if not events.empty:
+            ev_out = events.copy()
+            ev_out["date"] = pd.to_datetime(ev_out["date"]).dt.strftime("%Y-%m-%d")
+            db.upsert_df(ev_out, "adj_event")
+        # 即使 events 為空也記 last_run, 避免空檔每天重打 FinMind
+        db.set_last_fetch_date(stock_id, ADJ_FETCH_LOG_DATASET, today_iso)
 
     price = db.load_daily_price(stock_id)
     if price.empty:

@@ -150,7 +150,7 @@ export default async function WatchlistOverviewPage({
                 </thead>
                 <tbody>
                   {rows.map((r) => (
-                    <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
+                    <tr key={r.stockId} className="tv-row border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                       <Td>
                         <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                       </Td>

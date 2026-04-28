@@ -1,12 +1,13 @@
 """/api/portfolio/* — 持股總覽 + 損益 + 風險。"""
 from __future__ import annotations
 
+import contextvars
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from api.common import get_stock_name as _stock_name, safe_float as _safe
+from api.common import get_stock_name as _stock_name, make_placeholders, safe_float as _safe
 from api.deps import get_db
 from api.schemas.portfolio import (
     HoldingRow,
@@ -63,14 +64,27 @@ class PositionSuggestResponse(BaseModel):
     risk_per_share: float
 
 
-def _latest_scores(db: Database, sid: str) -> dict | None:
-    with db.connect() as conn:
-        r = conn.execute(
-            "SELECT short, mid, long, composite FROM signal_history "
-            "WHERE stock_id=? ORDER BY as_of DESC LIMIT 1",
-            (sid,),
-        ).fetchone()
-    return dict(r) if r else None
+def _latest_scores_batch(conn, sids: list[str]) -> dict[str, dict]:
+    """批次撈每檔最新一筆 signal_history（取每檔的 MAX(as_of)）。
+
+    走 INNER JOIN + GROUP BY 子查詢比對「latest per stock_id」，比 N 次 ORDER BY ... LIMIT 1
+    少 N-1 次 round-trip 與每次連線的 PRAGMA 開銷。
+    """
+    if not sids:
+        return {}
+    ph = make_placeholders(len(sids))
+    rows = conn.execute(
+        f"""SELECT s.stock_id, s.short, s.mid, s.long, s.composite
+        FROM signal_history s
+        INNER JOIN (
+            SELECT stock_id, MAX(as_of) AS as_of
+            FROM signal_history
+            WHERE stock_id IN ({ph})
+            GROUP BY stock_id
+        ) latest ON s.stock_id = latest.stock_id AND s.as_of = latest.as_of""",
+        sids,
+    ).fetchall()
+    return {r["stock_id"]: dict(r) for r in rows}
 
 
 def _atr_for_holding(
@@ -106,14 +120,43 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
     `holdings()`、`summary()`、`risk_alerts()` 三個 endpoint 都需要同一份結果，
     透過 request-scoped cache（`db._req_holdings_cache`）避免單一請求內被重算多次。
     上層每個 router function 進入時呼叫 `_holdings_cached(db)` 並在出去前清掉。
+
+    效能：N 檔持股原本需要 ~3N 次 db.connect()（price + score + name 各一）。改為單一
+    連線內批次抓 score/name，price 仍逐檔讀但共用 connection 省 PRAGMA 開銷。
     """
     ensure_fresh(db)
     # 一次載 watchlist set（檔案 IO，避免每檔重讀 yaml）
     watchlist_ids = set(wl_mod.load().keys())
+    holdings_list = list(pf.list_holdings(db))
+    if not holdings_list:
+        return []
+
+    sids = [h.stock_id for h in holdings_list]
+
+    # 一個連線跑完所有 DB 讀取（score 批次、name 批次、price 逐檔但共用 conn）
+    with db.connect() as conn:
+        scores_by_sid = _latest_scores_batch(conn, sids)
+
+        ph = make_placeholders(len(sids))
+        name_rows = conn.execute(
+            f"SELECT stock_id, stock_name FROM stock_info WHERE stock_id IN ({ph})",
+            sids,
+        ).fetchall()
+        names_by_sid = {r["stock_id"]: (r["stock_name"] or r["stock_id"]) for r in name_rows}
+
+        price_dfs: dict[str, pd.DataFrame] = {}
+        for sid in sids:
+            df = pd.read_sql_query(
+                "SELECT * FROM daily_price WHERE stock_id = ? ORDER BY date",
+                conn, params=[sid],
+            )
+            if not df.empty:
+                df["date"] = pd.to_datetime(df["date"])
+            price_dfs[sid] = df
+
     out: list[HoldingRow] = []
-    for h in pf.list_holdings(db):
-        # 一次載入 price df，給 close/prev/ATR/enhanced_risk_signals 共用
-        price_df = db.load_daily_price(h.stock_id)
+    for h in holdings_list:
+        price_df = price_dfs.get(h.stock_id, pd.DataFrame())
         close: float | None = float(price_df["close"].iloc[-1]) if not price_df.empty else None
         prev: float | None = float(price_df["close"].iloc[-2]) if len(price_df) >= 2 else None
         today_pct = None
@@ -125,7 +168,7 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
         net_pnl = h.net_unrealized_pnl(close) if close is not None else None
         net_pnl_pct = h.net_unrealized_pnl_pct(close) if close is not None else None
         sell_costs = h.estimated_sell_costs(close) if close is not None else None
-        scores = _latest_scores(db, h.stock_id) or {}
+        scores = scores_by_sid.get(h.stock_id, {})
         short = scores.get("short")
         warnings: list[str] = []
         if close is not None:
@@ -142,7 +185,7 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
         )
         out.append(HoldingRow(
             stock_id=h.stock_id,
-            stock_name=_stock_name(db, h.stock_id),
+            stock_name=names_by_sid.get(h.stock_id, h.stock_id),
             shares=h.shares,
             avg_cost=h.avg_cost,
             entry_date=h.entry_date,
@@ -169,40 +212,33 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
     return out
 
 
+# Request-scoped cache via ContextVar：原本掛在 Database singleton 屬性上的版本是
+# process-global 的，FastAPI 多 thread 並發時會交叉污染（Stage 1 之後首頁 Suspense 會
+# 並行打 holdings/summary/risk-alerts，剛好踩到這個 race）。ContextVar 對每條 request
+# 都是獨立 token，跨 thread 不會互相看到。每個 endpoint handler 進入時用 `_holdings_cached`
+# 拿（命中或現算），handler 結束 ContextVar 自動失效（不需手動 clear）。
+_holdings_ctx: contextvars.ContextVar[list[HoldingRow] | None] = contextvars.ContextVar(
+    "_holdings_ctx", default=None,
+)
+
+
 def _holdings_cached(db: Database) -> list[HoldingRow]:
-    """Request-scoped cache：第一次計算後寄放在 `db._req_holdings_cache`，
-    同一個 request 內後續呼叫直接讀。endpoint 結束時呼叫 `_clear_holdings_cache`。
-    """
-    cached = getattr(db, "_req_holdings_cache", None)
+    cached = _holdings_ctx.get()
     if cached is not None:
         return cached
     rows = _compute_holdings(db)
-    db._req_holdings_cache = rows  # type: ignore[attr-defined]
+    _holdings_ctx.set(rows)
     return rows
-
-
-def _clear_holdings_cache(db: Database) -> None:
-    if hasattr(db, "_req_holdings_cache"):
-        try:
-            delattr(db, "_req_holdings_cache")
-        except AttributeError:
-            pass
 
 
 @router.get("/holdings", response_model=list[HoldingRow])
 def holdings(db: Database = Depends(get_db)) -> list[HoldingRow]:
-    try:
-        return _holdings_cached(db)
-    finally:
-        _clear_holdings_cache(db)
+    return _holdings_cached(db)
 
 
 @router.get("/summary", response_model=PortfolioSummary)
 def summary(db: Database = Depends(get_db)) -> PortfolioSummary:
-    try:
-        rows = _holdings_cached(db)
-    finally:
-        _clear_holdings_cache(db)
+    rows = _holdings_cached(db)
     total_mv = sum((r.market_value or 0.0) for r in rows)
     total_cost = sum(r.shares * r.avg_cost for r in rows)
     unrealized = total_mv - total_cost
@@ -232,10 +268,7 @@ def summary(db: Database = Depends(get_db)) -> PortfolioSummary:
 @router.get("/risk-alerts", response_model=list[RiskAlert])
 def risk_alerts(db: Database = Depends(get_db)) -> list[RiskAlert]:
     alerts: list[RiskAlert] = []
-    try:
-        rows = _holdings_cached(db)
-    finally:
-        _clear_holdings_cache(db)
+    rows = _holdings_cached(db)
     for r in rows:
         for msg in r.warnings:
             alerts.append(RiskAlert(

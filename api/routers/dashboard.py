@@ -221,37 +221,47 @@ def snapshot_delta(top: int = 10, db: Database = Depends(get_db)) -> SnapshotDel
 
 @router.get("/data-freshness", response_model=list[DataFreshness])
 def data_freshness(db: Database = Depends(get_db)) -> list[DataFreshness]:
+    """每張表最新一筆日期。舊版對 7 張表各跑一次 `MAX()` query → 7 次 round-trip
+    （SQLite 是同連線所以快但仍非最佳）。改成單一 SELECT ... UNION ALL ...，一次拿齊。
+    """
     today = taipei_today()
+    union_parts = [
+        f"SELECT '{table}' AS t, MAX({'as_of' if table == 'signal_history' else 'date'}) AS mx FROM {table}"
+        for table in _TABLE_LABELS
+    ]
+    sql = " UNION ALL ".join(union_parts)
+    mx_by_table: dict[str, str | None] = {t: None for t in _TABLE_LABELS}
+    try:
+        with db.connect() as conn:
+            for r in conn.execute(sql).fetchall():
+                mx_by_table[r["t"]] = r["mx"]
+    except Exception:
+        pass
+
+    from datetime import datetime
     out: list[DataFreshness] = []
-    with db.connect() as conn:
-        for table, label in _TABLE_LABELS.items():
-            col = "as_of" if table == "signal_history" else "date"
+    for table, label in _TABLE_LABELS.items():
+        mx = mx_by_table.get(table)
+        lag = None
+        tone = "error"
+        if mx:
             try:
-                row = conn.execute(f"SELECT MAX({col}) AS mx FROM {table}").fetchone()
-                mx = row["mx"] if row else None
+                d = datetime.fromisoformat(mx[:10]).date()
+                lag = (today - d).days
+                ok_thr, warn_thr = _expected_lag(table, today)
+                if lag <= ok_thr:
+                    tone = "ok"
+                elif lag <= warn_thr:
+                    tone = "warning"
+                else:
+                    tone = "error"
             except Exception:
-                mx = None
-            lag = None
-            tone = "error"
-            if mx:
-                try:
-                    from datetime import datetime
-                    d = datetime.fromisoformat(mx[:10]).date()
-                    lag = (today - d).days
-                    ok_thr, warn_thr = _expected_lag(table, today)
-                    if lag <= ok_thr:
-                        tone = "ok"
-                    elif lag <= warn_thr:
-                        tone = "warning"
-                    else:
-                        tone = "error"
-                except Exception:
-                    pass
-            out.append(DataFreshness(
-                table=table,
-                label=label,
-                latest_date=mx[:10] if mx else None,
-                lag_days=lag,
-                tone=tone,
-            ))
+                pass
+        out.append(DataFreshness(
+            table=table,
+            label=label,
+            latest_date=mx[:10] if mx else None,
+            lag_days=lag,
+            tone=tone,
+        ))
     return out

@@ -61,7 +61,7 @@ def main() -> int:
     ok, fail = 0, 0
     for i, sid in enumerate(targets, 1):
         try:
-            n = update_stock_adjusted(db, fetcher, sid)
+            n = update_stock_adjusted(db, fetcher, sid, force_refetch=True)
             log.info("[%d/%d] %s: adj %d 筆", i, len(targets), sid, n)
             ok += 1
         except FinMindError as e:

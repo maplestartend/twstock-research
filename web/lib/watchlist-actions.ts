@@ -1,15 +1,16 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateTag } from "next/cache";
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 /**
  * Toggle 一檔股票的自選狀態。
- * 為什麼要 server action：純 client-side fetch + router.refresh() 只動當前 route 的 RSC payload，
- * 不會 invalidate 其他頁面的 Next.js Data Cache（apiGet 預設 revalidate: 60）。
- * 這裡 add/remove 完呼叫 revalidatePath('/', 'layout') 把整層 fetch cache 清掉，
- * 之後切到 /watchlist、/、/dividend-calendar 都會重抓一次最新自選清單。
+ *
+ * 用 revalidateTag('watchlist') 而非舊版 revalidatePath('/', 'layout')：後者會把整層
+ * Next.js Data Cache 全部清掉（首頁 9 支、雷達、除權息、所有頁面下次 navigate 都重抓），
+ * 連按 5 個星號 = 5 次全站 refetch。改 tag 後只清打 watchlist + holdings 的 endpoint，
+ * 其餘 cache 留在原地。需要被清的頁面 fetch 必須帶 `tags: ['watchlist']`（見 apiGet 用法）。
  */
 export async function toggleWatchlistAction(
   stockId: string,
@@ -30,8 +31,8 @@ export async function toggleWatchlistAction(
       const detail = await res.text();
       return { ok: false, error: `HTTP ${res.status} ${detail || res.statusText}` };
     }
-    // 整個 layout 的 fetch cache 都失效，下次 navigate 會重新抓
-    revalidatePath("/", "layout");
+    // 只清打過 watchlist tag 的 endpoint 快取
+    revalidateTag("watchlist");
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
