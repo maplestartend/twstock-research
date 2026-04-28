@@ -31,6 +31,7 @@ web/.turbo/
 web/scripts/screenshots/
 web/scripts/screenshots-all/
 web/scripts/screenshots-mobile/
+scripts/screenshots-all/
 
 # 暫時除錯產物
 probe*.json

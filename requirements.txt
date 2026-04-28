@@ -11,6 +11,11 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.10
 
+# LLM 敘事（選用）
+# 沒設 ANTHROPIC_API_KEY 也能正常啟動；narrative 相關 endpoint 會回 503。
+# 若要啟用：(1) pip install anthropic  (2) export ANTHROPIC_API_KEY=...
+anthropic>=0.92
+
 # 測試（選用）
 pytest>=9.0
 httpx>=0.28              # FastAPI starlette.testclient 在執行時 import；缺 httpx 時整批 router 測試 collection 階段直接 error

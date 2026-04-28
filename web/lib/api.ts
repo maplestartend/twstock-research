@@ -84,6 +84,7 @@ export async function apiGetOptional<T>(path: string, opts: FetchOptions = {}): 
   }
 }
 
+
 /** Snapshot freshness：signal_history 最新日 vs daily_price 最新日。 */
 export type SnapshotStatus = {
   snapshotAsOf: string | null;
@@ -476,12 +477,13 @@ export type VisibleKeysResponse = {
   long: string[];
 };
 
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const url = path.startsWith("http") ? path : `${BASE}${path}`;
+  const hasBody = body !== undefined;
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify(body),
+    headers: hasBody ? { "Content-Type": "application/json; charset=utf-8" } : undefined,
+    body: hasBody ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });
   if (!res.ok) {
@@ -584,6 +586,23 @@ export type IntradayQuoteView = {
 export type ScoreHistoryPoint = {
   date: string;
   short: number | null; mid: number | null; long: number | null; composite: number | null;
+};
+
+/** LLM 對個股的中文敘事（POST /api/stocks/{id}/narrative）。
+ *  cached=true 表示從 narrative_cache 撈出，沒打 LLM；cached=false 是這次剛打完並存進快取。 */
+export type NarrativeView = {
+  stockId: string;
+  asOf: string;
+  kind: string;        // "stock_overview" 等；未來會多 "radar_hit" / "backtest_report"
+  narrative: string;
+  model: string;
+  cached: boolean;
+};
+
+/** GET /api/system/narrative-status — 前端用此控制 AI 按鈕是否可按。 */
+export type NarrativeStatus = {
+  available: boolean;
+  model: string | null;
 };
 
 

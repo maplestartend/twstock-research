@@ -97,6 +97,8 @@ export function CandlestickChart({ ohlcv, indicators = [], height = 360 }: Props
     }
 
     // 成交量 sub chart
+    // DB 存的是 TWSE/TPEX「成交股數」（股），但台股慣例以「張」報量（1 張 = 1000 股）。
+    // 直接顯示原始股數會讓 2330 之類的權值股出現 ~80M 的讀數，跟看盤軟體差 1000 倍 → /1000 轉張。
     const vol: ISeriesApi<"Histogram"> = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "",
@@ -105,7 +107,7 @@ export function CandlestickChart({ ohlcv, indicators = [], height = 360 }: Props
     vol.setData(
       ohlcv.map((p) => ({
         time: toTime(p.date),
-        value: p.volume ?? 0,
+        value: (p.volume ?? 0) / 1000,
         color: p.close >= p.open ? up : down,
       })),
     );

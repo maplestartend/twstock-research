@@ -159,6 +159,24 @@ def test_taipei_today_returns_date():
     assert hasattr(today, "year")
 
 
+def test_narrative_status_without_api_key(monkeypatch):
+    """沒設 ANTHROPIC_API_KEY → available=False，前端據此灰掉按鈕。"""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    r = client.get("/api/system/narrative-status")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["available"] is False
+    assert data["model"] is None
+
+
+def test_narrative_endpoint_returns_503_without_api_key(monkeypatch):
+    """缺 key 時 narrative endpoint 不應該打 LLM，直接 503。"""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    r = client.post("/api/stocks/2330/narrative")
+    assert r.status_code == 503
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
 def test_holding_net_pnl_subtracts_sell_costs():
     """淨損益應該比毛損益少 (因為扣了賣出手續費 + 0.3% 證交稅)。"""
     from app.portfolio import Holding
