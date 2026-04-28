@@ -19,6 +19,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from app.data.clock import taipei_today
 from app.data.db import Database
 from app.data.tpex_fetcher import TpexFetcher, TpexError
 from app.data.twse_fetcher import TwseFetcher, TwseError
@@ -73,18 +74,22 @@ class MarketUpdater:
 
         if info_frames:
             info_all = pd.concat(info_frames, ignore_index=True).drop_duplicates("stock_id")
-            # 用 UPSERT 只更新 stock_name 與 type；industry_category 改由 scripts/refresh_industry.py 單獨補
-            # is_tradable 寫入時就用 _STOCK_PATTERN 算好（避免新插入的權證 row 吃 DEFAULT 1 漏網）
+            # 用 UPSERT 更新 stock_name / type / is_tradable / last_seen_date
+            # last_seen_date 等於這天 OHLCV 抓到的日期（YYYY-MM-DD）；
+            # 已下市的股票不會再被 OHLCV 包含 → last_seen_date 不會推進 → 將來 backtest
+            # 可用 `WHERE COALESCE(last_seen_date, '9999') >= test_end` 排除 survivorship 偏誤。
             from app.scoring.radar import _STOCK_PATTERN  # 共用同一份正則
+            trading_date = f"{date_ymd[:4]}-{date_ymd[4:6]}-{date_ymd[6:8]}"
             with self.db.connect() as conn:
                 conn.executemany(
                     """
-                    INSERT INTO stock_info (stock_id, stock_name, type, is_tradable)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO stock_info (stock_id, stock_name, type, is_tradable, last_seen_date)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(stock_id) DO UPDATE SET
                         stock_name = excluded.stock_name,
                         type = excluded.type,
                         is_tradable = excluded.is_tradable,
+                        last_seen_date = MAX(COALESCE(stock_info.last_seen_date, '0000-00-00'), excluded.last_seen_date),
                         updated_at = CURRENT_TIMESTAMP
                     """,
                     [
@@ -93,6 +98,7 @@ class MarketUpdater:
                             r["stock_name"],
                             r["type"],
                             1 if _STOCK_PATTERN.match(str(r["stock_id"]) or "") else 0,
+                            trading_date,
                         )
                         for _, r in info_all.iterrows()
                     ],
@@ -164,7 +170,8 @@ class MarketUpdater:
     _TRACKED_TABLES = ("daily_price", "institutional", "margin", "per_pbr")
 
     def update_incremental(self, default_start: str, today: date | None = None) -> None:
-        today = today or date.today()
+        # 雲端 server 跑 UTC 時，凌晨會把昨天當前日 → fetch_log 寫錯，後續 incremental 起點落後一天
+        today = today or taipei_today()
 
         # 取各 dataset 的 last_date，以「最舊的那個」當整體進度指標。
         # 因為 upsert 是 idempotent（INSERT OR REPLACE），重抓已有的日期不會有副作用。

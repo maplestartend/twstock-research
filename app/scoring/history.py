@@ -36,6 +36,7 @@ def snapshot_today(db: Database, include_fundamentals: bool = True, *, as_of=Non
     if df.empty:
         return 0
 
+    # 策略命中（每檔可能命中多個 strategy）：用 dict 收，最後 vector 化 ',' join
     strategy_hits: dict[str, list[str]] = {sid: [] for sid in df["stock_id"]}
     for name, strat in radar.STRATEGIES.items():
         hit = strat.filter_fn(df)
@@ -43,24 +44,32 @@ def snapshot_today(db: Database, include_fundamentals: bool = True, *, as_of=Non
             strategy_hits[sid].append(name)
 
     as_of = df["as_of"].iloc[0]
-    rows = []
-    for _, r in df.iterrows():
-        sid = r["stock_id"]
-        rows.append({
-            "as_of": as_of,
-            "stock_id": sid,
-            "stock_name": r["stock_name"],
-            "close": _nullable_float(r["close"]),
-            "short": _nullable_float(r.get("short")),
-            "mid": _nullable_float(r.get("mid")),
-            "long": _nullable_float(r.get("long")),
-            "composite": _nullable_float(r.get("composite")),
-            "data_completeness": _nullable_float(r.get("data_completeness")),
-            "is_stale": 1 if bool(r.get("is_stale")) else 0,
-            "recommendation": r.get("recommendation") or "",
-            "strategies": ",".join(strategy_hits[sid]),
-        })
-    out = pd.DataFrame(rows)
+    # 向量化建構 — 改寫自過去 iterrows + dict append 版本（~2300 row × Python loop ≈ 1-2s）。
+    # numeric 欄位用 .where(notna, None) 把 NaN/None 統一成 SQL NULL（DB 端能區分「無資料」vs 50 中性分）。
+    out = pd.DataFrame({
+        "as_of": as_of,
+        "stock_id": df["stock_id"].values,
+        "stock_name": df["stock_name"].values,
+        "close": df["close"].astype(object).where(df["close"].notna(), None),
+        "short": df.get("short", pd.Series(dtype=object)).astype(object).where(
+            df.get("short", pd.Series(dtype=object)).notna(), None,
+        ) if "short" in df.columns else None,
+        "mid": df.get("mid", pd.Series(dtype=object)).astype(object).where(
+            df.get("mid", pd.Series(dtype=object)).notna(), None,
+        ) if "mid" in df.columns else None,
+        "long": df.get("long", pd.Series(dtype=object)).astype(object).where(
+            df.get("long", pd.Series(dtype=object)).notna(), None,
+        ) if "long" in df.columns else None,
+        "composite": df.get("composite", pd.Series(dtype=object)).astype(object).where(
+            df.get("composite", pd.Series(dtype=object)).notna(), None,
+        ) if "composite" in df.columns else None,
+        "data_completeness": df.get("data_completeness", pd.Series(dtype=object)).astype(object).where(
+            df.get("data_completeness", pd.Series(dtype=object)).notna(), None,
+        ) if "data_completeness" in df.columns else None,
+        "is_stale": df.get("is_stale", pd.Series([False] * len(df))).fillna(False).astype(int).values,
+        "recommendation": df.get("recommendation", pd.Series([""] * len(df))).fillna("").values,
+        "strategies": df["stock_id"].map(lambda sid: ",".join(strategy_hits[sid])).values,
+    })
     n = db.upsert_df(out, "signal_history")
     logger.info("signal_history: 寫入 %d 筆（as_of=%s）", n, as_of)
     return n

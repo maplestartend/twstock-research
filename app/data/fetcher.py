@@ -233,4 +233,6 @@ class FinMindFetcher:
 
 
 def today_str() -> str:
-    return date.today().isoformat()
+    # 走台北時區避免 UTC 凌晨誤判（雲端 UTC server 在台灣半夜跑時會比實際早一天）
+    from app.data.clock import taipei_today
+    return taipei_today().isoformat()

@@ -16,6 +16,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from app.data.clock import taipei_today
 from app.data.db import Database
 from app.data.fetcher import FinMindError, FinMindFetcher
 
@@ -120,12 +121,13 @@ def update_stock_adjusted(
     為避免每日重抓 FinMind dividend/split (除權息一年才幾次)，使用 fetch_log 做 TTL：
     若 7 天內已 refresh 過、改用 DB 快取重算 daily_price_adj。force_refetch=True 強制重抓。
     """
-    today_iso = date.today().isoformat()
+    today_dt = taipei_today()
+    today_iso = today_dt.isoformat()
     last_run = db.get_last_fetch_date(stock_id, ADJ_FETCH_LOG_DATASET)
     fresh = (
         not force_refetch
         and last_run is not None
-        and (date.today() - date.fromisoformat(last_run)).days < ADJ_FETCH_TTL_DAYS
+        and (today_dt - date.fromisoformat(last_run)).days < ADJ_FETCH_TTL_DAYS
     )
 
     if fresh:

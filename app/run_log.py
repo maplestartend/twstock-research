@@ -13,6 +13,8 @@ import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from app.data.clock import taipei_now
 from typing import Iterator
 
 from app.data.db import Database
@@ -34,7 +36,8 @@ class RunRecord:
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    # taipei_now() 帶 tzinfo，isoformat 會吐 "+08:00" 後綴；DB 顯示時間統一台北時間
+    return taipei_now().replace(tzinfo=None).isoformat(timespec="seconds")
 
 
 def start_run(db: Database, script: str, note: str | None = None) -> RunRecord:
