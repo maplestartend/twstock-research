@@ -72,13 +72,34 @@ export function CommandPalette() {
     };
   }, [open]);
 
-  // 開啟時自動 focus
+  // 開啟時自動 focus + 鎖背景：對 landmark (header / aside / main / nav / footer) 套 inert + aria-hidden，
+  // 鎖 body scroll；關閉後復原焦點到原本觸發開啟的元素。
+  // 鎖 landmarks 而非 body > *，是因為 dialog 自身渲染在 layout 內、會被 body > * 一併鎖到。
   useEffect(() => {
-    if (open) {
-      setQ("");
-      setActiveIdx(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+    if (!open) return;
+    setQ("");
+    setActiveIdx(0);
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    requestAnimationFrame(() => inputRef.current?.focus());
+
+    const inertTargets: HTMLElement[] = Array.from(
+      document.querySelectorAll<HTMLElement>("body header, body aside, body main, body nav, body footer"),
+    );
+    inertTargets.forEach((el) => {
+      el.setAttribute("inert", "");
+      el.setAttribute("aria-hidden", "true");
+    });
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      inertTargets.forEach((el) => {
+        el.removeAttribute("inert");
+        el.removeAttribute("aria-hidden");
+      });
+      document.body.style.overflow = prevOverflow;
+      previouslyFocused?.focus?.();
+    };
   }, [open]);
 
   // 搜尋（debounced + AbortController：快打字時 in-flight 請求要被取消）

@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 import requests
 
+from app.data.http_client import make_session
 from app.data.twse_fetcher import _num  # 共用數字解析
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,8 @@ def _ad_to_date_str(date_ymd: str) -> str:
 class TpexFetcher:
     def __init__(self, request_delay: float = 1.0):
         self.request_delay = request_delay
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
+        # 帶 Retry 的 session：TPEx 服務在收盤前後偶發 502，自動重試 3 次
+        self.session = make_session(headers=HEADERS)
 
     def _get_json(self, path: str, params: dict[str, Any]) -> dict | None:
         url = f"{BASE}{path}"

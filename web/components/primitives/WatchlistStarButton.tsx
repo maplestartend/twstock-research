@@ -54,7 +54,8 @@ export function WatchlistStarButton({
       aria-label={inWatchlist ? `從自選移除 ${stockId}` : `加入自選 ${stockId}`}
       aria-pressed={inWatchlist}
       className={cn(
-        "inline-flex items-center justify-center rounded p-1 transition-colors",
+        // 40x40 tap target（WCAG AAA / iOS HIG / Material Design 推薦）
+        "inline-flex items-center justify-center rounded min-w-[40px] min-h-[40px] -m-1 transition-colors",
         "hover:bg-subtle disabled:opacity-50 disabled:cursor-not-allowed",
         inWatchlist
           ? "text-[var(--warning-500)]"

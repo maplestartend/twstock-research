@@ -22,7 +22,11 @@ from app.data.fetcher import FinMindError, FinMindFetcher
 logger = logging.getLogger(__name__)
 
 ADJ_FETCH_LOG_DATASET = "adj_event"
-ADJ_FETCH_TTL_DAYS = 7
+# 1 天 TTL：除權息事件多在每年 6~9 月密集發生，7 天 TTL 會讓「6/15 跑過、6/22 該股除息」
+# 的情境在 6/22~6/22+7 天內漏掉新 factor → 還原價斷層、技術指標誤觸停損。
+# 縮短為 1 天，最差情況：每天 daily-update 多打 N 檔 FinMind dividend/split endpoint，
+# 但 FinMind 對這兩個免費 endpoint 沒嚴格 quota，且大多數股票當日無事件 → 回 0 row 很快。
+ADJ_FETCH_TTL_DAYS = 1
 
 
 def fetch_events(fetcher: FinMindFetcher, stock_id: str, start: str = "2015-01-01") -> pd.DataFrame:

@@ -144,15 +144,40 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
         ).fetchall()
         names_by_sid = {r["stock_id"]: (r["stock_name"] or r["stock_id"]) for r in name_rows}
 
-        price_dfs: dict[str, pd.DataFrame] = {}
-        for sid in sids:
-            df = pd.read_sql_query(
-                "SELECT * FROM daily_price WHERE stock_id = ? ORDER BY date",
-                conn, params=[sid],
+        # 一次撈完所有持股的 daily_price，避免每檔一次 read_sql_query 的 N+1。
+        # lookback 起點：min(最早進場日 − 30 天, MAX(date) − 90 天)。
+        #   - 新部位（短期持有）：拿到至少 90 天，足供 ATR-14、月線、布林等指標。
+        #   - 老部位（1+ 年）：拿到從進場前 30 天起，trailing_atr_stop 才能正確找出進場後高點；
+        #     不抓全歷史是因為長期持股拉 2000+ 列 × N 檔會把 holdings 頁速度拖累。
+        min_entry = min(
+            (h.entry_date for h in holdings_list if h.entry_date), default=None,
+        )
+        price_dfs: dict[str, pd.DataFrame] = {sid: pd.DataFrame() for sid in sids}
+        if min_entry:
+            bulk = pd.read_sql_query(
+                f"""SELECT stock_id, date, open, high, low, close, volume
+                FROM daily_price
+                WHERE stock_id IN ({ph})
+                  AND date >= MIN(
+                      date(?, '-30 days'),
+                      date((SELECT MAX(date) FROM daily_price), '-90 days')
+                  )
+                ORDER BY stock_id, date""",
+                conn, params=[*sids, min_entry],
             )
-            if not df.empty:
-                df["date"] = pd.to_datetime(df["date"])
-            price_dfs[sid] = df
+        else:
+            bulk = pd.read_sql_query(
+                f"""SELECT stock_id, date, open, high, low, close, volume
+                FROM daily_price
+                WHERE stock_id IN ({ph})
+                  AND date >= date((SELECT MAX(date) FROM daily_price), '-90 days')
+                ORDER BY stock_id, date""",
+                conn, params=sids,
+            )
+        if not bulk.empty:
+            bulk["date"] = pd.to_datetime(bulk["date"])
+            for sid, group in bulk.groupby("stock_id", sort=False):
+                price_dfs[str(sid)] = group.reset_index(drop=True)
 
     out: list[HoldingRow] = []
     for h in holdings_list:

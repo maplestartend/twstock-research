@@ -102,6 +102,7 @@ export function Sidebar() {
           <span className="font-bold text-[15px] text-[var(--text-primary)]">台股研究儀表板</span>
           <button
             type="button"
+            name="sidebar-close"
             onClick={() => setOpen(false)}
             className="ml-auto lg:hidden p-1.5 rounded-md hover:bg-subtle text-[var(--text-secondary)]"
             aria-label="關閉選單"

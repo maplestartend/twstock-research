@@ -31,6 +31,7 @@ web/.turbo/
 web/scripts/screenshots/
 web/scripts/screenshots-all/
 web/scripts/screenshots-mobile/
+web/screenshots/
 scripts/screenshots-all/
 
 # 暫時除錯產物

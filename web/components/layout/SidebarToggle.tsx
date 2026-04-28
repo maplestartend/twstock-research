@@ -9,6 +9,7 @@ export function SidebarToggle() {
   return (
     <button
       type="button"
+      name="sidebar-toggle"
       onClick={toggle}
       className="lg:hidden -ml-2 p-2 rounded-md hover:bg-subtle text-[var(--text-secondary)]"
       aria-label="開啟選單"

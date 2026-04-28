@@ -161,18 +161,22 @@ def run_event_backtest(
         before_p = float(ev["before_price"] or 0)
         after_p = float(ev["after_price"] or 0)
         factor = float(ev["factor"] or 0)
-        # 推估純現金股利成份：對 dividend 事件，把 (before-after) 拆成「現金 + 股利稀釋」兩塊。
-        #   pure_cash 假設：after_with_no_stock_div = before * factor_if_no_stock = before * 1 = before
-        #   配股稀釋 ratio: 1/factor - 1（factor 接近 1 → 沒配股；factor 越小 → 配股越多）
-        # 對 split 事件本身就是稀釋，cash_dividend 直接設 0。
+        # 推估純現金股利成份：把 (before, after, factor) 拆成「現金 + 股利稀釋」。
+        #   factor 是除權息調整因子（after 還原回 before 的乘數），split 不發現金 → 設 0。
+        #   factor < 0.95 視為「含配股 / 大幅稀釋」事件：要先反向修正稀釋再算 cash。
+        #     先把 after 還原成「假設無配股」的價格 = after / factor，再 before − 那個值才是 cash。
+        #   factor ≥ 0.95（常態純現金 dividend）：直接 before − after 即 cash 估算。
+        # FinMind 免費版不拆解 cash_div / stock_div，這個推估足以避免「summary.avg_dividend_yield 把
+        # 稀釋當成現金股利雙重計入」（金融分析師審查 Critical 等級）。
         if ev_type == "split":
             cash_div_per_share = 0.0
         elif before_p > 0 and after_p > 0 and factor > 0:
-            # 假設：純現金部分 = before * (1 - factor) → 等價 before - before*factor
-            # 實際 after = before*factor - cash_per_share，所以 cash_per_share = before*factor - after
-            # 然後因為配股稀釋會讓 after 比 before*factor 更低，cash_per_share = max(0, ...)
-            # 簡化版（足夠 modern TWSE，配股已不流行）：直接用 before-after 全當 cash
-            cash_div_per_share = max(0.0, before_p - after_p)
+            if factor < 0.95:
+                # 含配股 → 把配股稀釋先剝掉再算 cash
+                undiluted_after = after_p / factor if factor > 0 else after_p
+                cash_div_per_share = max(0.0, before_p - undiluted_after)
+            else:
+                cash_div_per_share = max(0.0, before_p - after_p)
         else:
             cash_div_per_share = max(0.0, before_p - after_p)
         # 配股比例近似（純參考用，未進入收益計算；adj price 已處理稀釋）

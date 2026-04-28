@@ -16,6 +16,8 @@ from typing import Any
 import pandas as pd
 import requests
 
+from app.data.http_client import make_session
+
 logger = logging.getLogger(__name__)
 
 BASE = "https://www.twse.com.tw"
@@ -59,8 +61,8 @@ def _sign(s: str) -> int:
 class TwseFetcher:
     def __init__(self, request_delay: float = 1.0):
         self.request_delay = request_delay
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
+        # 帶 Retry 的 session：TWSE Open Data 偶發 502 / 短暫 timeout 自動重試
+        self.session = make_session(headers=HEADERS)
 
     # ----------------------------------------------------------------------
     def _get_json(self, url: str, params: dict[str, Any]) -> dict | None:

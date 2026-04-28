@@ -72,6 +72,7 @@ export function ThemeToggle() {
           <button
             key={opt.value}
             type="button"
+            name={`theme-${opt.value}`}
             role="radio"
             aria-checked={active}
             aria-label={opt.label}

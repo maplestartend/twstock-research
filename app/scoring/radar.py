@@ -205,15 +205,21 @@ def score_all(
                 "SELECT * FROM financials WHERE date BETWEEN ? AND ?",
                 conn, params=[fin_since, as_of_str],
             )
-            # 全市場累計財報（TWSE/TPEX OpenAPI），用於 fundamentals 的 fallback
+            # 全市場累計財報（TWSE/TPEX OpenAPI），用於 fundamentals 的 fallback。
+            # 用 publish_date 過濾 → 避免 backtest（as_of 在過去時）看到尚未公告的當季財報。
+            # COALESCE 是給尚未 backfill / 舊版寫入的 row 兜底（NULL → 用 quarter-end，較保守）。
             fin_cum_all = pd.read_sql_query(
-                "SELECT * FROM financials_cumulative WHERE date BETWEEN ? AND ?",
-                conn, params=[fin_since, as_of_str],
+                "SELECT * FROM financials_cumulative "
+                "WHERE date BETWEEN ? AND ? "
+                "  AND COALESCE(publish_date, date) <= ?",
+                conn, params=[fin_since, as_of_str, as_of_str],
             )
-            # 累計差分後的單季值，用於 TTM / YoY / ROE 計算
+            # 累計差分後的單季值，用於 TTM / YoY / ROE 計算（同樣 publish_date 守則）
             fin_derived_all = pd.read_sql_query(
-                "SELECT * FROM financials_quarterly_derived WHERE date BETWEEN ? AND ?",
-                conn, params=[fin_since, as_of_str],
+                "SELECT * FROM financials_quarterly_derived "
+                "WHERE date BETWEEN ? AND ? "
+                "  AND COALESCE(publish_date, date) <= ?",
+                conn, params=[fin_since, as_of_str, as_of_str],
             )
         if not fin_all.empty:
             fin_all["date"] = pd.to_datetime(fin_all["date"])

@@ -34,7 +34,9 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 ## 跑測試
 
 ```bash
-python -m pytest tests/ -q     # 265 passed (含 ATR、漲跌停連板 pending exit、daily MTM MDD、ETF 稅率、月營收 publish-date migration、score_all as_of、event-backtest split/dividend、foreign_mid % of ADV、stock_info.is_tradable migration + warrant 兜底)
+python -m pytest tests/ -q     # 323 passed + 1 xfailed
+                                # 新增覆蓋：backtest router 5 endpoint、score_stock vs score_all invariant
+                                # xfail = 兩條 scoring path 已知分歧，xfail 會在修好後 unexpected pass 提醒拿掉標記
 cd web && npx tsc --noEmit     # frontend type check
 ```
 
@@ -45,7 +47,7 @@ cd web && npx tsc --noEmit     # frontend type check
 - 紅漲綠跌（與美股顏色相反）
 - 漲跌停 ±10%（以前一日收盤計算），開盤即漲跌停 = 流動性蒸發
 - 0050 是 ETF 代號 4 碼，大多數股票代號 4 碼（上市/上櫃）
-- 月營收**最遲次月 10 號公告**（系統 publish_date 也以 10 號 stamp，避免 look-ahead bias），季財報 5/14、8/14、11/14、3/31 公告
+- 月營收**最遲次月 10 號公告**（系統 publish_date 也以 10 號 stamp，避免 look-ahead bias）；季財報 Q1=05-15、Q2=08-14、Q3=11-14、Q4=次年 03-31 公告（`financials_cumulative.publish_date` 同樣按法定下限 stamp，SQL 一律 `WHERE COALESCE(publish_date, date) <= ?` 過濾）
 - 證交稅賣方依代號分流：**一般股 0.3% / 股票型 ETF 0.1% / 債券 ETF (00xxxB) 0%** — 統一走 `tax_rate_for(stock_id)` in [app/portfolio.py](app/portfolio.py)，回測引擎、持股估值、新增交易自動扣稅都吃這個 helper。手續費雙向 0.1425%（券商通常會折扣）。
 
 ## 資料源限制

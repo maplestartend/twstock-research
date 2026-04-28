@@ -8,6 +8,7 @@ import pandas as pd
 import requests
 
 from app.config import FinMindConfig
+from app.data.http_client import make_session
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,8 @@ class FinMindFetcher:
     def __init__(self, config: FinMindConfig, request_delay: float = 0.5):
         self.config = config
         self.request_delay = request_delay
-        self.session = requests.Session()
+        # 帶 Retry 的 session：FinMind 偶發 502 / quota 暫時逾時可自動重試
+        self.session = make_session()
 
     def _get(self, dataset: str, data_id: str | None, start: str, end: str | None = None) -> pd.DataFrame:
         params: dict[str, str] = {
