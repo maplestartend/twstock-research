@@ -98,6 +98,21 @@ class StockPriceBundle(CamelModel):
     indicators: list[IndicatorPoint]
 
 
+class NarrativeView(CamelModel):
+    """LLM 對個股的中文敘事。
+
+    cached=True：直接從 narrative_cache 撈出（同 stock_id+as_of 之前已生成過）。
+    cached=False：剛打完 LLM 並寫入快取。
+    model 欄位記錄是哪個模型生成，方便未來 audit / A/B。
+    """
+    stock_id: str
+    as_of: str
+    kind: str                         # "stock_overview" 等，未來會加 "radar_hit" / "backtest_report"
+    narrative: str
+    model: str
+    cached: bool
+
+
 class RadarHit(StockRef):
     close: float | None = None
     short: float | None = None

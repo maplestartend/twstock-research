@@ -13,6 +13,7 @@ from api.schemas.common import CamelModel
 from api.schemas.stock import (
     IndicatorPoint,
     IntradayQuoteView,
+    NarrativeView,
     OHLCV,
     ScoreHistoryPoint,
     ScoreParts,
@@ -24,6 +25,12 @@ from app import risk as risk_mod
 from app.data import intraday as intraday_mod
 from app.data.db import Database
 from app.indicators import technical as tech
+from app.narrative import (
+    NarrativeNotAvailable,
+    generate_stock_narrative,
+    is_available as narrative_is_available,
+)
+from app.narrative.stock_narrative import KIND_STOCK_OVERVIEW
 from app.scoring.engine import score_stock
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
@@ -168,6 +175,94 @@ def score(
         stop_loss=list(s.signals.get("stop_loss") or []),
         take_profit=list(s.signals.get("take_profit") or []),
         warnings=list(s.signals.get("warnings") or []),
+    )
+
+
+@router.post("/{stock_id}/narrative", response_model=NarrativeView)
+def narrative(
+    stock_id: str,
+    refresh: int = 0,
+    db: Database = Depends(get_db),
+) -> NarrativeView:
+    """LLM 解讀個股分數（中文 3 段，散戶導向）。
+
+    - 永久快取：同 stock_id + as_of (signal 快照日) 第二次呼叫直接讀 DB，不打 LLM。
+    - 缺 ANTHROPIC_API_KEY → 503，前端應先打 /api/system/narrative-status 灰掉按鈕。
+    - refresh=1：跳過快取強制重打 LLM（debug 用，會花錢）。
+    - 用 POST 而非 GET：行為偏「執行動作 + 可能扣費」，用 POST 更貼語意，也避免被各種
+      預先 fetch / link prefetch 意外觸發。
+    """
+    if not narrative_is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM 敘事功能未啟用：請設定 ANTHROPIC_API_KEY 環境變數並安裝 anthropic 套件",
+        )
+
+    # 先跑 score_stock，拿到當下的分數結構（與 /score endpoint 同一份邏輯）
+    with db.connect() as conn:
+        r = conn.execute(
+            "SELECT stock_name FROM stock_info WHERE stock_id=?", (stock_id,)
+        ).fetchone()
+    name = r["stock_name"] if r and r["stock_name"] else stock_id
+
+    s = score_stock(db, stock_id, name)
+    if s is None:
+        raise HTTPException(status_code=422, detail="資料不足無法評分（至少需 60 個交易日）")
+
+    # 把 StockScore dataclass 攤成 dict 餵給 prompts.build_user_prompt
+    score_view = {
+        "stock_id": s.stock_id,
+        "stock_name": s.stock_name,
+        "as_of": s.as_of,
+        "close": s.close,
+        "short": {
+            "total": _safe_float(s.short.total),
+            "completeness": s.short.completeness,
+            "parts": {k: _safe_float(v) for k, v in s.short.parts.items()},
+        },
+        "mid": {
+            "total": _safe_float(s.mid.total),
+            "completeness": s.mid.completeness,
+            "parts": {k: _safe_float(v) for k, v in s.mid.parts.items()},
+        },
+        "long": {
+            "total": _safe_float(s.long.total),
+            "completeness": s.long.completeness,
+            "parts": {k: _safe_float(v) for k, v in s.long.parts.items()},
+        },
+        "composite_score": _safe_float(s.signals.get("composite_score")),
+        "is_stale": bool(s.is_stale),
+        "is_pending": bool(s.is_pending),
+        "recommendation": str(s.signals.get("recommendation", "")),
+        "entry": list(s.signals.get("entry") or []),
+        "warnings": list(s.signals.get("warnings") or []),
+    }
+    chip_snap = s.signals.get("chip_snapshot") or {}
+    fund_snap = s.signals.get("fundamental_snapshot") or {}
+
+    try:
+        result = generate_stock_narrative(
+            db,
+            score_view,
+            chip_snap,
+            fund_snap,
+            force_refresh=bool(refresh),
+        )
+    except NarrativeNotAvailable as e:
+        # 理論上 narrative_is_available() 已過濾；保險起見再補一層
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        # anthropic.RateLimitError / APIConnectionError / APIStatusError 等
+        # 不暴露底層 stack，但給足夠訊息讓前端顯示
+        raise HTTPException(status_code=502, detail=f"LLM 敘事生成失敗：{type(e).__name__}: {e}")
+
+    return NarrativeView(
+        stock_id=s.stock_id,
+        as_of=s.as_of,
+        kind=KIND_STOCK_OVERVIEW,
+        narrative=result.narrative,
+        model=result.model,
+        cached=result.cached,
     )
 
 

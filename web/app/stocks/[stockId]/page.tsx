@@ -16,6 +16,7 @@ import { ScoreTimelineChart } from "@/components/charts/ScoreTimelineChartLazy";
 import { fmtPct, fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { StockScorePanel } from "./StockScorePanel";
+import { NarrativeSection } from "./NarrativeSection";
 
 export const revalidate = 60;
 
@@ -87,16 +88,20 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
       {/* Mode toggle + 5-KPI row + breakdown + signals（client：可切收盤/即時/假設） */}
       <StockScorePanel stockId={stockId} initialScore={score} />
 
+      {/* AI 解讀（client：on-demand fetch、後端永久快取，未設 API key 時自動隱藏） */}
+      <NarrativeSection stockId={stockId} />
+
       {/* K-line */}
       <section className="flex flex-col gap-3">
         <SectionTitle icon="candlestick_chart">K 線與技術指標（近 180 日）</SectionTitle>
         <div className="rounded-xl border border-[var(--border-default)] bg-surface p-3">
           <CandlestickChart ohlcv={price.ohlcv} indicators={price.indicators} height={380} />
-          <div className="flex gap-4 mt-2 px-2 text-xs text-[var(--text-tertiary)]">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-2 text-xs text-[var(--text-tertiary)]">
             <LegendDot color="var(--chart-ma20)" label="MA20" />
             <LegendDot color="var(--chart-ma60)" label="MA60" />
             <LegendDot color="var(--color-up)" label="陽線 (收 &gt; 開)" />
             <LegendDot color="var(--color-down)" label="陰線 (收 &lt; 開)" />
+            <span className="ml-auto">成交量單位：張 (1 張 = 1,000 股)</span>
           </div>
         </div>
       </section>

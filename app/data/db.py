@@ -252,6 +252,25 @@ SCHEMA = [
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    # LLM 敘事永久快取。
+    # PK=(stock_id, as_of, kind)：同一支股票同一交易日同一種敘事永遠不重算。
+    # `as_of` 來自 score_stock 的 signal_history.as_of（最新 daily_price 日期），
+    # 與評分快照同步 → 分數變了 (as_of 推進) 自然對應新一筆 narrative，舊的留作歷史。
+    # 模型 / token 用量記錄方便未來 audit 成本與比較模型效果。
+    """
+    CREATE TABLE IF NOT EXISTS narrative_cache (
+        stock_id TEXT NOT NULL,
+        as_of TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        narrative TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (stock_id, as_of, kind)
+    )
+    """,
 ]
 
 

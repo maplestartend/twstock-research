@@ -46,6 +46,23 @@ def snapshot_status(db: Database = Depends(get_db)) -> SnapshotStatus:
     )
 
 
+class NarrativeStatus(CamelModel):
+    available: bool
+    model: str | None = None       # 啟用時是哪個模型；未啟用 → None
+
+
+@router.get("/narrative-status", response_model=NarrativeStatus)
+def narrative_status() -> NarrativeStatus:
+    """LLM 敘事是否可用。前端用此控制「AI 解讀」按鈕灰掉與否。
+
+    available=False 的情況：ANTHROPIC_API_KEY 未設、或 anthropic 套件未安裝。
+    """
+    from app.narrative import is_available
+    from app.narrative.client import NARRATIVE_MODEL
+    avail = is_available()
+    return NarrativeStatus(available=avail, model=NARRATIVE_MODEL if avail else None)
+
+
 class RefreshSnapshotResponse(CamelModel):
     rows_written: int
     triggered: bool
