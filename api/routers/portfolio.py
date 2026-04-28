@@ -11,6 +11,8 @@ from api.common import get_stock_name as _stock_name, make_placeholders, safe_fl
 from api.deps import get_db
 from api.schemas.portfolio import (
     HoldingRow,
+    JournalStatRow,
+    JournalUpdateBody,
     PortfolioSummary,
     RealizedPnlRow,
     RealizedPnlSummary,
@@ -45,6 +47,8 @@ class TradeCreateBody(BaseModel):
     fee: float | None = Field(default=None, ge=0)
     tax: float | None = Field(default=None, ge=0)
     note: str | None = None
+    entry_reason: str | None = None
+    tags: str | None = None  # 逗號分隔，例 "短線強勢,法人連買"
 
 
 class PositionSuggestBody(BaseModel):
@@ -348,6 +352,8 @@ def trades(
             fee=float(t["fee"]) if t["fee"] is not None else None,
             tax=float(t["tax"]) if t["tax"] is not None else None,
             note=str(t["note"]) if t["note"] else None,
+            entry_reason=str(t["entry_reason"]) if t.get("entry_reason") else None,
+            tags=str(t["tags"]) if t.get("tags") else None,
         ))
     return out
 
@@ -367,6 +373,8 @@ def create_trade(body: TradeCreateBody, db: Database = Depends(get_db)) -> Trade
             fee=body.fee,
             tax=body.tax,
             note=body.note,
+            entry_reason=body.entry_reason,
+            tags=body.tags,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -396,6 +404,62 @@ def create_trade(body: TradeCreateBody, db: Database = Depends(get_db)) -> Trade
 def remove_trade(trade_id: int, db: Database = Depends(get_db)) -> None:
     """刪除指定交易並從 trade_log 重建該股 holdings。對不存在的 id 也回 204（idempotent）。"""
     pf.delete_trade(db, trade_id)
+
+
+@router.patch("/trades/{trade_id}/journal", response_model=TradeRow)
+def update_trade_journal(trade_id: int, body: JournalUpdateBody, db: Database = Depends(get_db)) -> TradeRow:
+    """retroactive 編輯單筆交易的 entry_reason / tags / note。
+
+    - 欄位傳 None = 不動；傳空字串 "" = 清空。
+    - 不會動 shares / price / fee / tax（那些有 audit trail 風險）。"""
+    found = pf.update_trade_journal(
+        db,
+        trade_id,
+        entry_reason=body.entry_reason,
+        tags=body.tags,
+        note=body.note,
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail=f"trade {trade_id} not found")
+    with db.connect() as conn:
+        r = conn.execute(
+            "SELECT id, trade_date, stock_id, action, shares, price, fee, tax, note, entry_reason, tags "
+            "FROM trade_log WHERE id=?",
+            (trade_id,),
+        ).fetchone()
+    name = _stock_name(db, str(r["stock_id"]))
+    return TradeRow(
+        id=int(r["id"]),
+        trade_date=str(r["trade_date"]),
+        stock_id=str(r["stock_id"]),
+        stock_name=name,
+        action=str(r["action"]),
+        shares=float(r["shares"]),
+        price=float(r["price"]),
+        fee=float(r["fee"]) if r["fee"] is not None else None,
+        tax=float(r["tax"]) if r["tax"] is not None else None,
+        note=str(r["note"]) if r["note"] else None,
+        entry_reason=str(r["entry_reason"]) if r["entry_reason"] else None,
+        tags=str(r["tags"]) if r["tags"] else None,
+    )
+
+
+@router.get("/journal-stats", response_model=list[JournalStatRow])
+def journal_stats(db: Database = Depends(get_db)) -> list[JournalStatRow]:
+    """依 tag 分組的勝率 / 平均報酬 / 累計損益，給 /journal 頁顯示「哪個策略 tag 真的賺到錢」。"""
+    df = pf.journal_stats(db)
+    if df.empty:
+        return []
+    return [
+        JournalStatRow(
+            tag=str(r["tag"]),
+            count=int(r["count"]),
+            win_rate=float(r["win_rate"]) if r["win_rate"] is not None else None,
+            avg_pnl_pct=float(r["avg_pnl_pct"]) if r["avg_pnl_pct"] is not None else None,
+            total_pnl=float(r["total_pnl"]),
+        )
+        for _, r in df.iterrows()
+    ]
 
 
 @router.post("/position-suggest", response_model=PositionSuggestResponse)

@@ -12,6 +12,7 @@ import {
   type WatchlistMover,
   type RiskAlert,
   type SnapshotDelta,
+  type ScoreChange,
 } from "@/lib/api";
 import { KPIStat } from "@/components/primitives/KPIStat";
 import { HoldingsTable } from "@/components/primitives/HoldingsTable";
@@ -66,6 +67,16 @@ export default function DashboardPage() {
             <RadarHitsSection />
           </Suspense>
         </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <SectionTitle icon="insights">我的關注 7 日分數變化</SectionTitle>
+          <span className="text-xs text-[var(--text-tertiary)]">綜合分變化最大的 8 檔（自選股 + 持股）</span>
+        </div>
+        <Suspense fallback={<ListSkeleton rows={4} />}>
+          <MyScoreChangesSection />
+        </Suspense>
       </section>
 
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -235,6 +246,75 @@ async function MoversSection({ direction }: { direction: "up" | "down" }) {
     { tags: ["watchlist"] },
   )) ?? [];
   return <MoversCard movers={movers} />;
+}
+
+async function MyScoreChangesSection() {
+  let changes: ScoreChange[];
+  try {
+    changes = await apiGet<ScoreChange[]>("/api/dashboard/my-score-changes?days=7");
+  } catch (e) {
+    return <SectionError error={e} />;
+  }
+  if (changes.length === 0) {
+    return (
+      <EmptyState size="sm">
+        snapshot 歷史不足 7 天、或自選+持股還沒命中。等資料累積後就會出現。
+      </EmptyState>
+    );
+  }
+  // 取絕對值 top 8
+  const top = changes.slice(0, 8);
+  return (
+    <div className="rounded-xl border border-[var(--border-default)] bg-surface overflow-hidden">
+      <ul className="divide-y divide-[var(--border-default)]">
+        {top.map((c) => {
+          const t = tone(c.delta);
+          return (
+            <li key={c.stockId} className="px-4 py-3 flex items-center gap-3 hover:bg-subtle">
+              <Link
+                href={`/stocks/${c.stockId}`}
+                className="flex-1 flex items-center gap-2 min-w-0"
+              >
+                <span className="numeric font-semibold w-16 shrink-0">{c.stockId}</span>
+                <span className="truncate text-[var(--text-secondary)]">{c.stockName}</span>
+                {c.inHoldings && (
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-[var(--info-bg)] text-[var(--info-fg)] shrink-0">
+                    持股
+                  </span>
+                )}
+                {c.inWatchlist && !c.inHoldings && (
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-subtle text-[var(--text-tertiary)] shrink-0">
+                    自選
+                  </span>
+                )}
+              </Link>
+              <div className="flex items-center gap-3 numeric text-sm shrink-0">
+                <span className="text-[var(--text-tertiary)]">
+                  {c.prevScore?.toFixed(0)} → {c.latestScore?.toFixed(0)}
+                </span>
+                <span
+                  className={
+                    "inline-flex items-center gap-0.5 font-semibold " +
+                    (t === "up"
+                      ? "text-[var(--color-up)]"
+                      : t === "down"
+                        ? "text-[var(--color-down)]"
+                        : "text-[var(--text-secondary)]")
+                  }
+                >
+                  <Icon
+                    name={t === "up" ? "arrow_drop_up" : t === "down" ? "arrow_drop_down" : "remove"}
+                    size={18}
+                  />
+                  {c.delta != null ? (c.delta > 0 ? "+" : "") + c.delta.toFixed(1) : "—"}
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 async function ExDividendSection() {

@@ -169,6 +169,19 @@ export type SnapshotDelta = {
   bigMovers: ScoreMover[];
 };
 
+/** 自選 / 持股 N 日綜合分數變化（widget on dashboard）。 */
+export type ScoreChange = {
+  stockId: string;
+  stockName: string;
+  inWatchlist: boolean;
+  inHoldings: boolean;
+  latestScore: number | null;
+  prevScore: number | null;
+  delta: number | null;
+  asOfLatest: string | null;
+  asOfPrev: string | null;
+};
+
 /* ===============================================================
    Response types — 手寫版（未來可換成 openapi-typescript 自動產生）
    欄位為 camelCase，因為 FastAPI 的 alias_generator = to_camel。
@@ -285,6 +298,16 @@ export type TradeRow = {
   shares: number; price: number;
   fee: number | null; tax: number | null;
   note: string | null;
+  entryReason: string | null;
+  tags: string | null;     // 逗號分隔："短線強勢,法人連買"
+};
+
+export type JournalStatRow = {
+  tag: string;
+  count: number;
+  winRate: number | null;
+  avgPnlPct: number | null;
+  totalPnl: number;
 };
 
 export type RealizedPnlRow = {
@@ -714,4 +737,33 @@ export type EventBacktestResponse = {
   byStock: StockEventStatsRow[];
   trades: EventTradeRow[];
   configEcho: EventBacktestRequest;
+};
+
+// ===== Alerts =====
+export type AlertRuleKind =
+  | "price_below"
+  | "price_above"
+  | "score_drop"
+  | "score_rise"
+  | "atr_breached";
+
+export type AlertRule = {
+  id: number;
+  stockId: string;
+  ruleKind: AlertRuleKind;
+  threshold: number | null;
+  note: string | null;
+  active: boolean;
+  lastTriggeredAt: string | null;
+  createdAt: string;
+};
+
+export type AlertHit = {
+  ruleId: number;
+  stockId: string;
+  stockName: string;
+  ruleKind: AlertRuleKind;
+  threshold: number | null;
+  actualValue: number | null;
+  message: string;
 };

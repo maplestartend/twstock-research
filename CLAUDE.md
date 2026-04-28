@@ -5,7 +5,8 @@
 ## 文件入口
 - 使用方式 / 頁面用法：[USAGE.md](USAGE.md)
 - 架構與限制：[docs/architecture.md](docs/architecture.md)
-- API 規格：[docs/api-spec.md](docs/api-spec.md)
+- API 規格（手寫 narrative）：[docs/api-spec.md](docs/api-spec.md)
+- API 規格（FastAPI 自動產出，single source of truth）：[docs/api-spec.json](docs/api-spec.json) — 跑 `python -m scripts.dump_openapi` 同步；CI 用 `--check` 偵測 drift
 - 前端規格：[docs/frontend-spec.md](docs/frontend-spec.md)
 - 維運手冊（含 dev/build 地雷）：[docs/operations.md](docs/operations.md)
 

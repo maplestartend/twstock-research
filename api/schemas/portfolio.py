@@ -59,6 +59,24 @@ class TradeRow(StockRefOptional):
     fee: float | None = None
     tax: float | None = None
     note: str | None = None
+    entry_reason: str | None = None
+    tags: str | None = None    # 逗號分隔
+
+
+class JournalStatRow(CamelModel):
+    """每個 tag 的勝率彙總（基於 FIFO realized 配對）。"""
+    tag: str
+    count: int
+    win_rate: float | None = None
+    avg_pnl_pct: float | None = None
+    total_pnl: float = 0.0
+
+
+class JournalUpdateBody(CamelModel):
+    """retroactive 更新單筆 trade journal。任一欄位 None 代表「不動」、空字串代表「清空」。"""
+    entry_reason: str | None = None
+    tags: str | None = None
+    note: str | None = None
 
 
 class RealizedPnlRow(StockRefOptional):

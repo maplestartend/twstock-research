@@ -179,6 +179,16 @@ def main() -> int:
                 except Exception as e:
                     log.warning("早報失敗: %s", e)
 
+            # 預警評估：snapshot 完成後資料齊備才檢查；--push 才真的推 Discord
+            try:
+                from app.alerts import check_alerts
+                hits = check_alerts(db, push=args.push)
+                if hits:
+                    log.info("預警觸發 %d 條（已記錄 last_triggered_at；push=%s）",
+                             len(hits), args.push)
+            except Exception as e:
+                log.warning("預警評估失敗: %s", e)
+
             # 每日備份（需 config.yaml 的 backup.enabled=true 才會跑）
             backup_cfg = cfg.backup or {}
             if backup_cfg.get("enabled"):

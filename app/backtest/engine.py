@@ -238,8 +238,27 @@ class BacktestResult:
 # ======================================================================
 # 歷史短期評分（向量化/逐列）
 # ======================================================================
+def _streak_series(series: pd.Series, sign: int) -> pd.Series:
+    """向量化計算「截至每一列為止的同方向連續天數」(sign=1 連續正、sign=-1 連續負)。
+
+    取代 chip_ind.consecutive_days 的 reverse-loop 用法。每根 K 棒做一次 tail(30) +
+    reverse loop 是 O(N×30)，這個版本是 O(N)：用 cumsum 找 reset 點 → groupby cumcount 一次到位。
+    """
+    if series.empty:
+        return pd.Series(dtype=float, index=series.index)
+    is_match = (series > 0) if sign > 0 else (series < 0)
+    # 每次 is_match 變 False 就重設一個新 group；cumcount 在 group 內遞增 = 連續天數
+    reset_groups = (~is_match).cumsum()
+    streak = is_match.astype(int).groupby(reset_groups).cumsum()
+    return streak
+
+
 def _vectorized_short_scores(price: pd.DataFrame, inst: pd.DataFrame, margin: pd.DataFrame) -> pd.DataFrame:
-    """對整段價格序列逐日計算短期分數，回傳 DataFrame(date, short_score)。"""
+    """對整段價格序列逐日計算短期分數，回傳 DataFrame(date, short_score)。
+
+    chip 部分已 vectorize（連續天數用 groupby cumcount，cum20 用 enrich_institutional 預算），
+    技術指標 rubric 仍逐列呼叫（rewrite 為向量化要動 rubric.py 與多個 test，不在此 PR 範圍內）。
+    """
     if price.empty:
         return pd.DataFrame(columns=["date", "short_score"])
     price = tech.enrich(price)
@@ -247,6 +266,12 @@ def _vectorized_short_scores(price: pd.DataFrame, inst: pd.DataFrame, margin: pd
     # 預先把 chip 時間序列算好
     if not inst.empty:
         inst = chip_ind.enrich_institutional(inst)
+        # 連續天數一次算到底（取代過去逐日 tail(30) + reverse-loop 的 O(N²)）
+        inst = inst.copy()
+        inst["_foreign_streak_buy"] = _streak_series(inst["foreign_net"], 1)
+        inst["_foreign_streak_sell"] = _streak_series(inst["foreign_net"], -1)
+        inst["_trust_streak_buy"] = _streak_series(inst["investment_trust_net"], 1)
+        inst["_trust_streak_sell"] = _streak_series(inst["investment_trust_net"], -1)
     if not margin.empty:
         margin = chip_ind.enrich_margin(margin)
 
@@ -259,16 +284,14 @@ def _vectorized_short_scores(price: pd.DataFrame, inst: pd.DataFrame, margin: pd
         prev = pd.Series(price.iloc[i - 1].to_dict()) if i > 0 else None
         d = last["date"]
 
-        # 建立當日 chip snapshot
+        # chip snapshot：所有欄位都已 vectorize 預算，這裡只是 dict lookup
         chip_snap: dict = {}
         if not inst_by_date.empty and d in inst_by_date.index:
-            # 外資連買天數：取歷史至今 30 天
-            inst_hist = inst[inst["date"] <= d].tail(30)
-            chip_snap["foreign_streak_buy"] = chip_ind.consecutive_days(inst_hist["foreign_net"], 1)
-            chip_snap["foreign_streak_sell"] = chip_ind.consecutive_days(inst_hist["foreign_net"], -1)
-            chip_snap["trust_streak_buy"] = chip_ind.consecutive_days(inst_hist["investment_trust_net"], 1)
-            chip_snap["trust_streak_sell"] = chip_ind.consecutive_days(inst_hist["investment_trust_net"], -1)
             row_d = inst_by_date.loc[d]
+            chip_snap["foreign_streak_buy"] = int(row_d.get("_foreign_streak_buy", 0) or 0)
+            chip_snap["foreign_streak_sell"] = int(row_d.get("_foreign_streak_sell", 0) or 0)
+            chip_snap["trust_streak_buy"] = int(row_d.get("_trust_streak_buy", 0) or 0)
+            chip_snap["trust_streak_sell"] = int(row_d.get("_trust_streak_sell", 0) or 0)
             chip_snap["foreign_cum20"] = float(row_d.get("foreign_cum20", 0) or 0)
             chip_snap["trust_cum20"] = float(row_d.get("trust_cum20", 0) or 0)
         if not margin_by_date.empty and d in margin_by_date.index:

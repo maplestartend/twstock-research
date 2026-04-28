@@ -125,6 +125,92 @@ class SnapshotDelta(CamelModel):
     big_movers: list[ScoreMover] = []      # 綜合分數變化 ≥ 5
 
 
+class ScoreChange(StockRef):
+    """單檔股票在 7 日窗口內的分數變化。給戰情室「我的關注本週分數變化」widget 用。"""
+    in_watchlist: bool = False
+    in_holdings: bool = False
+    latest_score: float | None = None
+    prev_score: float | None = None
+    delta: float | None = None
+    as_of_latest: str | None = None
+    as_of_prev: str | None = None
+
+
+@router.get("/my-score-changes", response_model=list[ScoreChange])
+def my_score_changes(
+    days: int = Query(default=7, ge=1, le=30, description="回看天數"),
+    db: Database = Depends(get_db),
+) -> list[ScoreChange]:
+    """自選股 + 持股近 N 日綜合分數變化，依絕對值排序。
+
+    為什麼不直接給「全市場 mover top 10」（snapshot-delta 已有）：
+    - 使用者真正在意的只有自己關注的標的；全市場 mover 多半是不持有的
+    - 結合 watchlist.yaml + holdings 來過濾，UI 可分流標示
+    """
+    watchlist_ids = set(wl_mod.load().keys())
+    with db.connect() as conn:
+        holdings = {
+            r["stock_id"]
+            for r in conn.execute("SELECT stock_id FROM holdings WHERE shares > 0").fetchall()
+        }
+    targets = sorted(watchlist_ids | holdings)
+    if not targets:
+        return []
+
+    with db.connect() as conn:
+        # 取目前最新 as_of
+        latest_row = conn.execute("SELECT MAX(as_of) AS m FROM signal_history").fetchone()
+        if not latest_row or not latest_row["m"]:
+            return []
+        latest = latest_row["m"]
+        # 找回看 N 日前的 as_of：嚴格 ≤ (latest - N 天) 中最新的一筆
+        cutoff = (date.fromisoformat(latest) - timedelta(days=days)).isoformat()
+        prev_row = conn.execute(
+            "SELECT MAX(as_of) AS m FROM signal_history WHERE as_of <= ?",
+            (cutoff,),
+        ).fetchone()
+        if not prev_row or not prev_row["m"]:
+            return []
+        prev = prev_row["m"]
+
+        ph = make_placeholders(len(targets))
+        latest_rows = conn.execute(
+            f"SELECT stock_id, stock_name, composite FROM signal_history "
+            f"WHERE as_of=? AND stock_id IN ({ph})",
+            (latest, *targets),
+        ).fetchall()
+        prev_rows = conn.execute(
+            f"SELECT stock_id, composite FROM signal_history "
+            f"WHERE as_of=? AND stock_id IN ({ph})",
+            (prev, *targets),
+        ).fetchall()
+
+    prev_score_by_sid = {r["stock_id"]: r["composite"] for r in prev_rows}
+    out: list[ScoreChange] = []
+    for r in latest_rows:
+        sid = r["stock_id"]
+        latest_c = r["composite"]
+        prev_c = prev_score_by_sid.get(sid)
+        if latest_c is None or prev_c is None:
+            continue
+        delta = float(latest_c) - float(prev_c)
+        out.append(
+            ScoreChange(
+                stock_id=sid,
+                stock_name=r["stock_name"] or sid,
+                in_watchlist=sid in watchlist_ids,
+                in_holdings=sid in holdings,
+                latest_score=float(latest_c),
+                prev_score=float(prev_c),
+                delta=round(delta, 2),
+                as_of_latest=latest,
+                as_of_prev=prev,
+            )
+        )
+    out.sort(key=lambda c: abs(c.delta or 0), reverse=True)
+    return out
+
+
 @router.get("/snapshot-delta", response_model=SnapshotDelta)
 def snapshot_delta(top: int = 10, db: Database = Depends(get_db)) -> SnapshotDelta:
     """戰情室「今日 vs 昨日」delta（PM 審查 P0-6）。

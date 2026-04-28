@@ -14,6 +14,7 @@ import { Pagination } from "@/components/primitives/Pagination";
 import { DownloadCsvButton } from "@/components/primitives/DownloadCsvButton";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { PrefetchLink } from "@/components/primitives/PrefetchLink";
+import { FilterChip } from "@/components/primitives/FilterChip";
 import { fmtNum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -110,20 +111,15 @@ export default async function RadarPage({
         {(Object.keys(TYPE_TABS) as TypeTab[]).map((t) => {
           const active = t === typeTab;
           return (
-            <Link
+            <FilterChip
               key={t}
               href={`/radar?${buildQuery({ strategy: activeStrategy, top: topChoice, type: t })}`}
               scroll={false}
-              className={cn(
-                "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border",
-                active
-                  ? "bg-[var(--brand-500)] text-white border-[var(--brand-500)]"
-                  : "bg-surface text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--brand-300)]",
-              )}
+              active={active}
+              icon={t === "etf" ? "currency_exchange" : "monitoring"}
             >
-              <Icon name={t === "etf" ? "currency_exchange" : "monitoring"} size={16} filled={active} />
               {TYPE_TABS[t].label}
-            </Link>
+            </FilterChip>
           );
         })}
         <span className="text-[11px] text-[var(--text-tertiary)] ml-2">
@@ -191,20 +187,16 @@ export default async function RadarPage({
               const picked = marketsPicked.includes(m);
               const nextMarkets = picked ? marketsPicked.filter((x) => x !== m) : [...marketsPicked, m];
               return (
-                <Link
+                <FilterChip
                   key={m}
                   href={`/radar?${buildQuery({ strategy: activeStrategy, market: nextMarkets.length ? nextMarkets : ["上市", "上櫃"], top: topChoice, type: typeTab })}`}
                   scroll={false}
-                  className={cn(
-                    "inline-flex items-center gap-1 px-2.5 py-1 rounded border text-xs transition-colors",
-                    picked
-                      ? "bg-[var(--brand-500)] text-white border-[var(--brand-500)]"
-                      : "bg-surface text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--brand-300)]",
-                  )}
+                  active={picked}
+                  size="sm"
+                  icon={picked ? "check" : "add"}
                 >
-                  <Icon name={picked ? "check" : "add"} size={14} />
                   {m}
-                </Link>
+                </FilterChip>
               );
             })}
           </div>
@@ -215,19 +207,16 @@ export default async function RadarPage({
             const active = n === topChoice;
             const label = n === "all" ? "全部" : `前 ${n} 名`;
             return (
-              <Link
+              <FilterChip
                 key={String(n)}
                 href={`/radar?${buildQuery({ strategy: activeStrategy, market: marketsPicked, top: n, type: typeTab })}`}
                 scroll={false}
-                className={cn(
-                  "numeric px-2.5 py-1 rounded border text-xs transition-colors",
-                  active
-                    ? "bg-[var(--brand-500)] text-white border-[var(--brand-500)]"
-                    : "bg-surface text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--brand-300)]",
-                )}
+                active={active}
+                size="sm"
+                className="numeric"
               >
                 {label}
-              </Link>
+              </FilterChip>
             );
           })}
         </div>
@@ -263,7 +252,7 @@ export default async function RadarPage({
             <table className="w-full text-[15px] min-w-[1060px] table-fixed">
               <thead className="bg-subtle">
                 <tr>
-                  <Th className="w-[170px]">代號 / 名稱</Th>
+                  <Th sticky className="w-[170px]">代號 / 名稱</Th>
                   <Th align="center" className="w-[80px]">市場</Th>
                   <Th align="right" className="w-[100px]">收盤</Th>
                   <Th align="center" className="w-[88px]">短期</Th>
@@ -276,8 +265,8 @@ export default async function RadarPage({
               </thead>
               <tbody>
                 {pagedHits.map((h) => (
-                  <tr key={h.stockId} className="tv-row border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
-                    <Td>
+                  <tr key={h.stockId} className="tv-row group border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
+                    <Td sticky>
                       <StockIdCell stockId={h.stockId} stockName={h.stockName} />
                     </Td>
                     <Td align="center">

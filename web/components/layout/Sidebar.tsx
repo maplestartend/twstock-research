@@ -27,6 +27,7 @@ const SECTIONS: NavSection[] = [
       { href: "/holdings",  icon: "account_balance_wallet", label: "我的持股" },
       // 自選股 → 含 /watchlist-manage、/dividend-calendar 兩個子頁，靠 matchPrefixes 高亮父項
       { href: "/watchlist", icon: "dataset", label: "自選股", matchPrefixes: ["/watchlist", "/watchlist-manage", "/dividend-calendar"] },
+      { href: "/journal",   icon: "edit_note", label: "交易日誌" },
     ],
   },
   {
@@ -34,6 +35,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/radar",   icon: "radar",   label: "雷達掃描" },
       { href: "/history", icon: "history", label: "歷史追蹤" },
+      { href: "/alerts",  icon: "notifications_active", label: "預警" },
     ],
   },
   {

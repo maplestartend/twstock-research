@@ -151,8 +151,15 @@ def record_trade(
     fee: float | None = None,
     tax: float | None = None,
     note: str | None = None,
+    *,
+    entry_reason: str | None = None,
+    tags: str | None = None,
 ) -> int:
-    """寫入一筆交易，並更新 holdings 的 shares / avg_cost。"""
+    """寫入一筆交易，並更新 holdings 的 shares / avg_cost。
+
+    entry_reason / tags 給 trade journal 用：retroactive 填寫「當初為什麼買」+ 標籤
+    （例：tags="短線強勢,法人連買"），後續 journal-stats 可算每個標籤的勝率與平均報酬。
+    """
     action = action.upper()
     if action not in (BUY, SELL):
         raise ValueError(f"action must be BUY or SELL, got {action}")
@@ -169,10 +176,10 @@ def record_trade(
     with db.connect() as conn:
         cur = conn.execute(
             """
-            INSERT INTO trade_log (trade_date, stock_id, action, shares, price, fee, tax, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trade_log (trade_date, stock_id, action, shares, price, fee, tax, note, entry_reason, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (td, stock_id, action, float(shares), float(price), float(fee), float(tax), note),
+            (td, stock_id, action, float(shares), float(price), float(fee), float(tax), note, entry_reason, tags),
         )
         trade_id = cur.lastrowid
 
@@ -215,6 +222,84 @@ def record_trade(
                 )
         conn.commit()
     return trade_id
+
+
+def update_trade_journal(
+    db: Database,
+    trade_id: int,
+    *,
+    entry_reason: str | None = None,
+    tags: str | None = None,
+    note: str | None = None,
+) -> bool:
+    """retroactive 更新單筆交易的 journal 欄位（不改 shares/price/fee/tax）。
+
+    傳 None 代表「不動該欄位」；傳空字串 "" 代表「清空該欄位」。
+    回傳 True/False 表示找到並更新成功與否（未找到 → False）。
+    """
+    sets: list[str] = []
+    params: list = []
+    if entry_reason is not None:
+        sets.append("entry_reason = ?")
+        params.append(entry_reason or None)  # 空字串轉 NULL
+    if tags is not None:
+        sets.append("tags = ?")
+        params.append(tags or None)
+    if note is not None:
+        sets.append("note = ?")
+        params.append(note or None)
+    if not sets:
+        return True
+    params.append(trade_id)
+    with db.connect() as conn:
+        cur = conn.execute(f"UPDATE trade_log SET {', '.join(sets)} WHERE id = ?", params)
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def journal_stats(db: Database) -> pd.DataFrame:
+    """依 tag 分組計算「已實現損益」勝率 / 平均報酬 / Sharpe-ish。
+
+    僅看「已賣出 = 配對到一筆 SELL 的 BUY」這部分（用 realized_pnl FIFO 配對，把 buy 的 tag
+    沿用到該筆配對結果上）。未實現的 BUY 不算進去（避免被當下價格 noise 拉偏）。
+
+    回傳欄位：tag / count（配對筆數）/ win_rate / avg_pnl_pct / total_pnl。
+    """
+    pairs = realized_pnl(db)
+    if pairs.empty:
+        return pd.DataFrame(columns=["tag", "count", "win_rate", "avg_pnl_pct", "total_pnl"])
+
+    # 抓所有 BUY 的 tags，依 (stock_id, buy_date) 配回 pairs
+    with db.connect() as conn:
+        buys = pd.read_sql_query(
+            "SELECT stock_id, trade_date AS buy_date, tags FROM trade_log "
+            "WHERE action='BUY' AND tags IS NOT NULL AND tags != ''",
+            conn,
+        )
+    if buys.empty:
+        return pd.DataFrame(columns=["tag", "count", "win_rate", "avg_pnl_pct", "total_pnl"])
+
+    merged = pairs.merge(buys, on=["stock_id", "buy_date"], how="inner")
+    if merged.empty:
+        return pd.DataFrame(columns=["tag", "count", "win_rate", "avg_pnl_pct", "total_pnl"])
+
+    # 一筆 trade 可能有多個 tag（逗號分隔）→ explode 後 groupby
+    merged = merged.assign(tag=merged["tags"].str.split(",")).explode("tag")
+    merged["tag"] = merged["tag"].str.strip()
+    merged = merged[merged["tag"].astype(bool)]
+    if merged.empty:
+        return pd.DataFrame(columns=["tag", "count", "win_rate", "avg_pnl_pct", "total_pnl"])
+
+    out = merged.groupby("tag").agg(
+        count=("pnl", "size"),
+        win_count=("pnl", lambda s: int((s > 0).sum())),
+        avg_pnl_pct=("pnl_pct", "mean"),
+        total_pnl=("pnl", "sum"),
+    ).reset_index()
+    out["win_rate"] = out["win_count"] / out["count"]
+    return out[["tag", "count", "win_rate", "avg_pnl_pct", "total_pnl"]].sort_values(
+        "total_pnl", ascending=False,
+    ).reset_index(drop=True)
 
 
 def delete_trade(db: Database, trade_id: int) -> None:

@@ -276,6 +276,27 @@ SCHEMA = [
         PRIMARY KEY (stock_id, as_of, kind)
     )
     """,
+    # 預警規則：使用者設定「條件成立 → 推播一次」。
+    # rule_kind 列舉: price_below / price_above / score_drop / score_rise / atr_breached
+    # threshold 解釋:
+    #   price_below / price_above → 絕對價格
+    #   score_drop / score_rise   → 分數差分閾值（例如 score_drop=10 = 短期分數 7 天內掉 10 分）
+    #   atr_breached              → 0/1 旗標，無 threshold（表示「跌破 trailing-ATR 停損」）
+    # last_triggered_at IS NULL = 從未觸發；非 NULL = 已推播過一次（避免每天重複推）。
+    """
+    CREATE TABLE IF NOT EXISTS alert_rule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        stock_id TEXT NOT NULL,
+        rule_kind TEXT NOT NULL,
+        threshold REAL,
+        note TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
+        last_triggered_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_alert_stock ON alert_rule(stock_id)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_active ON alert_rule(active)",
 ]
 
 
@@ -311,6 +332,10 @@ class Database:
             # last_seen_date：每次 daily_price 抓到該 sid 就更新；
             # 用於 backtest survivorship 防呆（之前 universe 是固定 yaml，回測不會排除已下市股票）
             ("stock_info", "last_seen_date", "TEXT"),
+            # Trade journal：entry_reason 記「為什麼買這檔」；tags 逗號分隔（"短線強勢,法人連買"），
+            # 給 /api/portfolio/journal-stats 算每個 tag 的勝率。retroactive 加最有效，預設 NULL。
+            ("trade_log", "entry_reason", "TEXT"),
+            ("trade_log", "tags", "TEXT"),
         ]
         for table, col, ddl in migrations:
             cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}

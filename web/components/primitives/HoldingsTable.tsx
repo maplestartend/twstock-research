@@ -50,7 +50,7 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
       <table className="w-full text-[15px] min-w-[1140px] table-fixed">
         <thead className="bg-subtle">
           <tr>
-            <Th className="w-[200px]">代號 / 名稱</Th>
+            <Th sticky className="w-[200px]">代號 / 名稱</Th>
             <Th align="right" className="w-[80px]">張數</Th>
             <Th align="right" className="w-[88px]">均價</Th>
             <Th align="right" className="w-[88px]">現價</Th>
@@ -69,8 +69,8 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
           {rows.map((r) => {
             const bucket = stopBucket(r.atrDistancePct, r.atrBelowStop);
             return (
-            <tr key={r.stockId} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
-              <Td>
+            <tr key={r.stockId} className="group border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
+              <Td sticky>
                 <div className="flex items-center gap-1.5">
                   <WatchlistStarButton
                     stockId={r.stockId}
