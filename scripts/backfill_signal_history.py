@@ -161,6 +161,22 @@ def main() -> int:
     total_elapsed = time.time() - start
     logger.info("完成：%d 天、共寫 %d 筆、總耗時 %.1f 分鐘（workers=%d）",
                 len(plan), written_total, total_elapsed / 60, workers)
+
+    # 預熱 factor_ic_cache：snapshot 剛推進，第一個進 /diagnostics 的人會等 ~17s。
+    # 這裡跑完算好寫進去，使用者第一次進就是秒回。失敗只 log，不影響主任務。
+    try:
+        from app.scoring.factor_diagnostics import (
+            DEFAULT_LOOKBACK_DAYS,
+            get_factor_ic_cached,
+            get_subfactor_ic_cached,
+        )
+        t_cache = time.time()
+        agg = get_factor_ic_cached(db, lookback_days=DEFAULT_LOOKBACK_DAYS)
+        sub = get_subfactor_ic_cached(db, lookback_days=DEFAULT_LOOKBACK_DAYS)
+        logger.info("預熱 IC cache：aggregate %d 列 + subfactor %d 列，耗時 %.1fs",
+                    len(agg), len(sub), time.time() - t_cache)
+    except Exception:
+        logger.exception("預熱 IC cache 失敗（可忽略，UI 第一次進頁時會重算）")
     return 0
 
 

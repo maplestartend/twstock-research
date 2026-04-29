@@ -12,8 +12,8 @@ from app.data.db import Database
 from app.scoring.factor_diagnostics import (
     DEFAULT_HORIZONS,
     DEFAULT_LOOKBACK_DAYS,
-    compute_factor_ic,
-    compute_subfactor_ic,
+    get_factor_ic_cached,
+    get_subfactor_ic_cached,
 )
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
@@ -50,7 +50,7 @@ def factor_ic(
     - 樣本不足（單日 < 30 檔 / 全期 < 5 個 IC 點）會回 null
     """
     horizons = DEFAULT_HORIZONS
-    results = compute_factor_ic(db, lookback_days=lookback_days, horizons=horizons)
+    results = get_factor_ic_cached(db, lookback_days=lookback_days, horizons=horizons)
     rows = [
         FactorICRow(
             factor=r.factor,
@@ -101,7 +101,7 @@ def sub_factor_ic(
     舊 schema（沒寫 parts）的 DB 會回空 rows。
     """
     horizons = DEFAULT_HORIZONS
-    results = compute_subfactor_ic(db, lookback_days=lookback_days, horizons=horizons)
+    results = get_subfactor_ic_cached(db, lookback_days=lookback_days, horizons=horizons)
     rows = [
         SubFactorICRow(
             horizon=r.horizon,

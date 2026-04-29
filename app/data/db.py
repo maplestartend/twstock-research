@@ -171,6 +171,28 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_factor_parts_asof ON signal_history_factor_parts(as_of)",
     "CREATE INDEX IF NOT EXISTS idx_factor_parts_factor ON signal_history_factor_parts(horizon, factor)",
+    # IC 計算結果快取：原始 query 要讀 4M 列 factor_parts、~2M 列 daily_price，74% 時間在 I/O。
+    # 把 compute_factor_ic / compute_subfactor_ic 的輸出存進這張 ~80 列的小表，UI 直接 SELECT
+    # 即秒回。失效條件：snapshot_max_as_of（與 lookback_days、scope）變了 → 重算。
+    """
+    CREATE TABLE IF NOT EXISTS factor_ic_cache (
+        scope TEXT NOT NULL,                -- 'aggregate' | 'subfactor'
+        snapshot_max_as_of TEXT NOT NULL,   -- 當下 signal_history.MAX(as_of)，用來判斷新鮮度
+        lookback_days INTEGER NOT NULL,
+        horizon TEXT NOT NULL,              -- aggregate: forward 天數字串；subfactor: 'short'|'mid'|'long'
+        factor TEXT NOT NULL,
+        forward_horizon INTEGER NOT NULL,   -- aggregate 同 horizon；subfactor 是 5/20/60
+        ic REAL,
+        ic_ir REAL,
+        top_quintile_return REAL,
+        bot_quintile_return REAL,
+        n_dates INTEGER,
+        avg_n_stocks REAL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY (scope, snapshot_max_as_of, lookback_days, horizon, factor, forward_horizon)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_factor_ic_cache_scope ON factor_ic_cache(scope, snapshot_max_as_of, lookback_days)",
     """
     CREATE TABLE IF NOT EXISTS adj_event (
         date TEXT NOT NULL,
