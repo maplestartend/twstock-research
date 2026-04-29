@@ -94,12 +94,19 @@ def main() -> int:
 
     if args.clear and not args.dry_run:
         with db.connect() as conn:
-            n = conn.execute("SELECT COUNT(*) FROM signal_history").fetchone()[0]
+            n_sh = conn.execute("SELECT COUNT(*) FROM signal_history").fetchone()[0]
+            n_parts = conn.execute("SELECT COUNT(*) FROM signal_history_factor_parts").fetchone()[0]
+            n_cache = conn.execute("SELECT COUNT(*) FROM factor_ic_cache").fetchone()[0]
             conn.execute("DELETE FROM signal_history")
+            conn.execute("DELETE FROM signal_history_factor_parts")
+            # IC cache key 是 (scope, snapshot_max_as_of, lookback)；--clear 用同一個日期重寫，
+            # 不清 cache 會回舊算法的 IC 值（髒讀）。
+            conn.execute("DELETE FROM factor_ic_cache")
             conn.commit()
-        logger.info("--clear: 清掉 signal_history %d 列", n)
+        logger.info("--clear: 清掉 signal_history %d 列 + factor_parts %d 列 + ic_cache %d 列",
+                    n_sh, n_parts, n_cache)
     elif args.clear and args.dry_run:
-        logger.info("[dry-run] would DELETE FROM signal_history")
+        logger.info("[dry-run] would DELETE FROM signal_history + factor_parts + ic_cache")
 
     today = date.today()
     targets = _trading_days_back(db, args.days, today)
