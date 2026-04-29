@@ -133,7 +133,12 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - 進場 65 分、出場 40 分，很多行情會錯過
    - 建議用權重調優頁找出符合自己直覺的參數
 
-5. **雷達掃描不含基本面（預設）**
+5. **目前預設權重（2026-04 調整）**
+   - `COMPOSITE_WEIGHTS`：short/mid/long = **0.20 / 0.60 / 0.20**（提高中期訊號權重）
+   - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.35 / 0.25 / 0.25 / 0.05 / 0.10**
+   - 調整目的：降低 value-trap（高股利/低估值單獨失真）對長期分數的干擾，提升品質與成長因子比重
+
+6. **雷達掃描不含基本面（預設）**
    - 勾「含基本面」會變慢但長期分數比較準
    - 三層財報資料源（依精確度與覆蓋度自動選擇）：
      1. `financials`（FinMind 單季，僅 watchlist）：最精準
@@ -141,23 +146,23 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
      3. `financials_cumulative`（OpenAPI 當季累計，全市場最後 fallback）：只算 margin 比率
    - 全市場覆蓋率：**1939/2291 (84.6%) 股票有 long score**，平均 data_completeness 0.885
 
-6. **分數會是 None 代表資料不足**
+7. **分數會是 None 代表資料不足**
    - 子指標回 None（例：新上市 < 60 日無 MA60、非 watchlist 無財報）時整個維度**跳過該項並重新歸一化剩餘權重**，不會用 50 分中性值拖平真實分數
    - 若維度可信度 < 30%，該維度直接吐 None，UI 顯示 "—"、推薦為「⚪ 資料不足」
    - 綜合分數同邏輯：短/中/長 任一為 None 就跳過並 re-normalize
    - `signal_history` 多欄位：`data_completeness`（0~1，加權後可信度）、`is_stale`（最新 daily_price 距今 > 3 天 → 1）
 
-7. **因子實測有效性（forward-return IC，2026-04 量測）**
+8. **因子實測有效性（forward-return IC，2026-04 量測）**
 
-   用 [/diagnostics 因子檢定頁](../web/app/diagnostics/page.tsx) 對 84 天歷史快照（2025-12-16 ~ 2026-04-29）算 Spearman IC，結論如下：
+   用 [/diagnostics 因子檢定頁](../web/app/diagnostics/page.tsx) 對 85 天歷史快照（2025-12-16 ~ 2026-04-29）算 Spearman IC（實際有效 IC 日期 77 天）。forward return 優先使用還原價（`daily_price_adj.close_adj`）以降低除權息/分割干擾，結論如下：
 
    | 因子 | 5 日 IC | 20 日 IC | 60 日 IC | 結論 |
    |---|---|---|---|---|
-   | 短期 | -0.009 | +0.001 | +0.001 | **無預測力**（設計目標 5-10 日 horizon 反而 ≈ 0） |
-   | 中期 | +0.040 | +0.089 | **+0.143** | 主力訊號，IC 隨 horizon 遞增 |
-   | 長期 | +0.035 | +0.015 | -0.005 | 弱 / 60 日歸零（殖利率 + ROE 沒體現） |
+   | 短期 | -0.009 | -0.001 | +0.001 | **無預測力**（設計目標 5-10 日 horizon 反而 ≈ 0） |
+   | 中期 | +0.043 | +0.089 | **+0.143** | 主力訊號，IC 隨 horizon 遞增 |
+   | 長期 | +0.031 | +0.013 | -0.005 | 弱 / 60 日歸零（殖利率 + ROE 沒體現） |
    | 綜合 | +0.051 | +0.096 | **+0.143** | 與中期幾乎一致，雷達主排序合理 |
-   | VR×MACD | -0.009 | -0.024 | -0.072 | 60 日輕微反向（量價爆衝→均值回歸） |
+   | VR×MACD | -0.009 | -0.025 | -0.072 | 60 日輕微反向（量價爆衝→均值回歸） |
 
    實作意義：
    - **雷達 / 自選 用 composite 排序最有依據**（5/20/60 日 IC 都是正的且強度合理）
@@ -179,17 +184,23 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - 跑完 `market_update`（日期推進）或 `--mops`（月營收更新）後快取會自動失效
    - 想強制清：雷達頁的「🔁 重新掃描」按鈕
 
-3. **資料庫已啟用 WAL 模式**
+3. **score_all / 回填效能優化（2026-04）**
+   - `score_all()` 新增 `candidate_stocks` 參數，`backfill_signal_history` 會預先算一次候選池並重用，避免每天重掃 `daily_price`
+   - 批次評分改用 `technical.enrich_for_scoring()`（只算評分會用到的指標），減少 DataFrame 寫入成本
+   - 資料讀取改分窗：技術（300 天）、籌碼（120 天）、估值（400 天）以降低 I/O
+   - 實測（2026-04-29）：完整快照約 **58 秒/天**；`--no-fundamentals` 約 **42 秒/天**
+
+4. **資料庫已啟用 WAL 模式**
    - SQLite 讀寫可並行，UI 跑的同時 `market_update` 寫入不會卡
    - 但仍建議不要同時開多個 FastAPI 實例
 
-4. **分數來源（雷達/自選/持股 vs 詳情頁）**
+5. **分數來源（雷達/自選/持股 vs 詳情頁）**
    - 列表頁讀 `signal_history` 最新一筆當「當下分數」（速度考量）
    - 詳情頁仍即時跑 `score_stock`
    - [snapshot_freshness.ensure_fresh()](../app/scoring/snapshot_freshness.py) 在列表 API 開頭比對 snapshot.as_of vs daily_price.MAX(date)，落後就阻塞補跑（with lock，併發只跑一次）
    - 歷史追蹤頁與分數走勢折線圖讀「歷史快照」（回測用途，不受影響）
 
-5. **盤中即時 / what-if 重算**
+6. **盤中即時 / what-if 重算**
    - 詳情頁 `StockScorePanel` 提供「收盤 / 即時 / 假設」三模式切換（[web/app/stocks/\[stockId\]/StockScorePanel.tsx](../web/app/stocks/[stockId]/StockScorePanel.tsx)）
    - 即時：抓 mis.twse.com.tw 盤中報價 → `score_stock(live_price=...)` 覆寫最新一筆 close 重算技術面
    - 假設：使用者輸入價位（±10% 滑桿）→ 同樣走 `live_price` 路徑

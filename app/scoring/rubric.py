@@ -506,11 +506,12 @@ MID_TERM_WEIGHTS = {
 }
 
 LONG_TERM_WEIGHTS = {
-    "roe": 0.25,
-    "margin_quality": 0.20,
-    "eps_cagr_3y": 0.15,        # 改自 eps_growth：mid 用 yoy、long 用 3 年 CAGR，避免 double counting
-    "dividend": 0.20,
-    "valuation": 0.20,
+    # 依 diagnostics 初版調整：提升品質/成長，降低 value-trap 風險（高股利/低估值單獨失真）
+    "roe": 0.35,
+    "margin_quality": 0.25,
+    "eps_cagr_3y": 0.25,        # 改自 eps_growth：mid 用 yoy、long 用 3 年 CAGR，避免 double counting
+    "dividend": 0.05,
+    "valuation": 0.10,
 }
 
 
@@ -518,8 +519,9 @@ LONG_TERM_WEIGHTS = {
 # 綜合分數層級的維度權重
 # ======================================================================
 COMPOSITE_WEIGHTS = {
-    "short": 0.30,
-    "mid": 0.50,
+    # 依近期 IC：中期訊號穩定領先，短期降權避免噪音主導綜合分
+    "short": 0.20,
+    "mid": 0.60,
     "long": 0.20,
 }
 

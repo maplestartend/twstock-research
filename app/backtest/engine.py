@@ -261,7 +261,8 @@ def _vectorized_short_scores(price: pd.DataFrame, inst: pd.DataFrame, margin: pd
     """
     if price.empty:
         return pd.DataFrame(columns=["date", "short_score"])
-    price = tech.enrich(price)
+    # 回測只需評分相關欄位，使用精簡 enrich 減少大量 dataframe setitem
+    price = tech.enrich_for_scoring(price)
 
     # 預先把 chip 時間序列算好
     if not inst.empty:
@@ -305,6 +306,7 @@ def _vectorized_short_scores(price: pd.DataFrame, inst: pd.DataFrame, margin: pd
             "rsi": R.score_rsi(last),
             "bollinger": R.score_bollinger(last),
             "volume": R.score_volume(last),
+            "vr_macd": R.score_vr_macd(last, prev),
             "foreign": R.score_foreign_short(chip_snap),
             "trust": R.score_trust_short(chip_snap),
             "margin_change": R.score_margin_change(chip_snap),

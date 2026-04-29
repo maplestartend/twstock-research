@@ -147,6 +147,7 @@ def score_all(
     include_fundamentals: bool = True,
     *,
     as_of: str | date | None = None,
+    candidate_stocks: list[tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
     """對 DB 所有有足夠資料的股票打分。
 
@@ -164,14 +165,21 @@ def score_all(
         as_of_d = as_of
     as_of_str = as_of_d.isoformat()
 
-    stocks = list_candidate_stocks(db, min_days)
+    # 回填歷史快照時每天都會呼叫 score_all；候選池（有至少 min_days 日線 + 可交易）
+    # 在同一輪 backfill 內通常固定不變，允許 caller 預先算好傳入，避免每次都掃 daily_price。
+    stocks = candidate_stocks if candidate_stocks is not None else list_candidate_stocks(db, min_days)
     if limit:
         stocks = stocks[:limit]
     if not stocks:
         return pd.DataFrame()
 
-    # 批次載入 as_of 起算往回 400 天（技術指標暖機所需）
-    since = (as_of_d - timedelta(days=400)).isoformat()
+    # 分窗讀取：
+    # - 技術指標只需 ma240 + slope/oscillator 暖機，300 天足夠（較原 400 天省 ~25% I/O）
+    # - 籌碼只用 streak30/cum20，120 天足夠（較原 400 天省 ~70% I/O）
+    # - 估值 per_percentile 維持 400 天，避免估值分位視窗被壓短而改變分數語意
+    price_since = (as_of_d - timedelta(days=300)).isoformat()
+    chip_since = (as_of_d - timedelta(days=120)).isoformat()
+    per_since = (as_of_d - timedelta(days=400)).isoformat()
     # 用 LEFT JOIN 帶上 daily_price_adj，技術指標就能用還原價（除權息/分割不誤導）
     with db.connect() as conn:
         price_all = pd.read_sql_query(
@@ -183,7 +191,7 @@ def score_all(
               ON a.stock_id = p.stock_id AND a.date = p.date
             WHERE p.date BETWEEN ? AND ?
             """,
-            conn, params=[since, as_of_str],
+            conn, params=[price_since, as_of_str],
         )
         # 在還原價覆寫前，用「原始 close」算流動性與當日漲跌（限漲跌停偵測要的是真實價格漲跌，
         # 還原價在除權息/分割日會讓 pct_change 看起來不對 → 漏掉限制鎖死訊號）
@@ -211,9 +219,9 @@ def score_all(
                 if adj_col in price_all.columns:
                     price_all[col] = price_all[adj_col].fillna(price_all[col])
             price_all = price_all.drop(columns=[c for c in ("close_adj", "open_adj", "high_adj", "low_adj") if c in price_all.columns])
-    inst_all = _bulk_load(db, "institutional", since, until=as_of_str)
-    margin_all = _bulk_load(db, "margin", since, until=as_of_str)
-    per_all = _bulk_load(db, "per_pbr", since, until=as_of_str)
+    inst_all = _bulk_load(db, "institutional", chip_since, until=as_of_str)
+    margin_all = _bulk_load(db, "margin", chip_since, until=as_of_str)
+    per_all = _bulk_load(db, "per_pbr", per_since, until=as_of_str)
 
     # 若需要基本面，載入所有財報（只載近 3 年）
     if include_fundamentals:
@@ -327,7 +335,8 @@ def score_all(
         if price.empty or len(price) < min_days:
             continue
         try:
-            price = tech.enrich(price.copy())
+            # 批次掃描用精簡技術欄位，減少全市場 DataFrame 生成成本
+            price = tech.enrich_for_scoring(price.copy())
             inst = inst_groups.get(sid, empty)
             margin = margin_groups.get(sid, empty)
             per_pbr = per_groups.get(sid, empty)

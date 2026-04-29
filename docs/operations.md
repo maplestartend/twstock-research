@@ -102,6 +102,14 @@ python -m pytest tests/ -q
 | `install-schedule.bat` | 註冊 Windows 工作排程，每日 15:30 自動跑 daily-update |
 | `uninstall-schedule.bat` | 移除排程 |
 
+**建議用法（改完策略/評分邏輯後）**
+
+1. 雙擊 `status.bat` 確認 `signal_history.MAX(as_of)` 與 `daily_price.MAX(date)` 是否對齊
+2. 雙擊 `restart.bat`（會先 stop，再 `snapshot_today()` 重產當日快照，最後 relaunch）
+3. 再雙擊一次 `status.bat` 驗收服務狀態與快照版本
+
+> `status.bat` / `restart.bat` 末尾會 `Press any key to continue`；設計上是給雙擊使用。若你在 shell 內跑，結束前要按任意鍵。
+
 私有（被其他 .bat call，不要雙擊）：
 
 | 檔案 | 用途 |
@@ -136,3 +144,25 @@ taskkill /PID <pid> /T /F
 - **想拍截圖驗收 mobile / 視覺**：用 dev server（`launch.bat` 那台 port 3000）就夠，**不要為了拍乾淨截圖而跑 build**。dev server 拍出來和 prod 視覺一致，差別只是 First Load JS 大小。
 
 > 如果你（或 Claude）正在批次改 10+ 個檔案，dev 的 hot-reload 偶爾會吃不消（`Jest worker exceeded retry limit`），這時用上面的「修壞掉的狀態」三步驟還原即可。
+
+## signal_history 回填（因子檢定）
+
+當你改了 `app/scoring/*` 想重跑 `/diagnostics` 歷史 IC，使用：
+
+```bash
+# 先看要跑哪些日期
+python -m scripts.backfill_signal_history --days 60 --dry-run
+
+# 重算最近 60 個交易日（清舊算法）
+python -m scripts.backfill_signal_history --days 60 --clear
+
+# 補全歷史（只補缺日期）
+python -m scripts.backfill_signal_history --days 1044 --skip-existing
+
+# 先求快（不含 fundamentals），之後再補完整版
+python -m scripts.backfill_signal_history --days 1044 --clear --no-fundamentals
+```
+
+效能參考（2026-04-29 實測）：
+- 含 fundamentals：約 58 秒/天（約 16.8 小時 / 1044 天）
+- `--no-fundamentals`：約 42 秒/天（約 12.2 小時 / 1044 天）

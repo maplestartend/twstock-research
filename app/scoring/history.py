@@ -23,7 +23,13 @@ def _nullable_float(v) -> float | None:
     return float(v)
 
 
-def snapshot_today(db: Database, include_fundamentals: bool = True, *, as_of=None) -> int:
+def snapshot_today(
+    db: Database,
+    include_fundamentals: bool = True,
+    *,
+    as_of=None,
+    candidate_stocks: list[tuple[str, str]] | None = None,
+) -> int:
     """計算指定日期全市場評分（預設今日），寫入 signal_history。回傳寫入筆數。
 
     分數缺失（資料不足）會寫入 NULL，而非 50 分中性假值，
@@ -32,7 +38,12 @@ def snapshot_today(db: Database, include_fundamentals: bool = True, *, as_of=Non
     as_of: 評分基準日（YYYY-MM-DD or date）。歷史回放/回測時指定，所有 DB 查詢
     都會把 date <= as_of 設為上限，避免 look-ahead bias。
     """
-    df = radar.score_all(db, include_fundamentals=include_fundamentals, as_of=as_of)
+    df = radar.score_all(
+        db,
+        include_fundamentals=include_fundamentals,
+        as_of=as_of,
+        candidate_stocks=candidate_stocks,
+    )
     if df.empty:
         return 0
 

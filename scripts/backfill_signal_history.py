@@ -20,6 +20,7 @@ from datetime import date, timedelta
 
 from app.config import Config
 from app.data.db import Database
+from app.scoring import radar
 from app.scoring.history import snapshot_today
 
 logger = logging.getLogger("backfill_signal_history")
@@ -75,6 +76,11 @@ def main() -> int:
     plan = [d for d in targets if d not in existing]
     skipped = [d for d in targets if d in existing]
 
+    # 候選池預先計算一次：避免每個 as_of 都重跑 list_candidate_stocks() 全表掃描。
+    # 注意：as_of 越往回，實際可用股票仍會在 score_all 內因 len(price)<min_days 被自動跳過，
+    # 所以重用同一份候選池不會破壞歷史語意。
+    candidate_stocks = radar.list_candidate_stocks(db, min_days=60)
+
     logger.info("計畫回填 %d 天（總共 %d 個交易日；已有快照跳過 %d 個）",
                 len(plan), len(targets), len(skipped))
     if args.dry_run:
@@ -87,7 +93,12 @@ def main() -> int:
     for i, d in enumerate(plan, 1):
         t0 = time.time()
         try:
-            n = snapshot_today(db, include_fundamentals=not args.no_fundamentals, as_of=d)
+            n = snapshot_today(
+                db,
+                include_fundamentals=not args.no_fundamentals,
+                as_of=d,
+                candidate_stocks=candidate_stocks,
+            )
             elapsed = time.time() - t0
             written_total += n
             logger.info("[%d/%d] %s → %d 筆，%.1fs", i, len(plan), d, n, elapsed)

@@ -47,7 +47,11 @@ class FactorICResult:
 
 
 def _fetch_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """一次讀完需要的 signal_history + daily_price，避免在 loop 裡反覆查 DB。"""
+    """一次讀完需要的 signal_history + 價格序列，避免在 loop 裡反覆查 DB。
+
+    forward return 優先使用還原價（daily_price_adj.close_adj），缺值才 fallback 原始 close。
+    這樣除權息/分割附近不會把「機械性價差」誤當成因子預測力。
+    """
     today = taipei_today()
     # 多抓一個 horizon + buffer 30 天，確保最後一日的 forward return 還有資料
     earliest = (today - timedelta(days=lookback_days + max_horizon + 30)).isoformat()
@@ -58,7 +62,13 @@ def _fetch_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.
             conn, params=[earliest],
         )
         prices = pd.read_sql_query(
-            "SELECT date, stock_id, close FROM daily_price WHERE date >= ?",
+            """
+            SELECT p.date, p.stock_id, COALESCE(a.close_adj, p.close) AS close
+            FROM daily_price p
+            LEFT JOIN daily_price_adj a
+              ON a.stock_id = p.stock_id AND a.date = p.date
+            WHERE p.date >= ?
+            """,
             conn, params=[earliest],
         )
     return snap, prices

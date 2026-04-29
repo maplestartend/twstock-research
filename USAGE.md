@@ -61,6 +61,8 @@ python -m scripts.backfill_financials_history --quarters 5
 | `uninstall-schedule.bat` | 移除排程 |
 
 > **找不到 uvicorn / next dev 在哪？** 不必翻 cmd 視窗，雙擊 `stop.bat` 就好（用 port 找 PID）。
+>
+> **常用順序（改完策略/評分邏輯後）**：先 `status.bat` 看 snapshot 對齊狀態 → 跑 `restart.bat` 強制重算當日 snapshot → 再用 `status.bat` 確認重算成功。
 
 > 排程記得到「工作排程器 → TWStockDailyUpdate → 內容」勾「失敗 30 分鐘重試最多 3 次」與「執行工作時喚醒電腦」，筆電睡著也能補跑。
 
@@ -210,17 +212,17 @@ python -m scripts.backfill_financials_history --quarters 8
 - **動態停利**（選用）：BacktestConfig 新增 `trailing_tp_mode`（off/both/only）、`trailing_tp_atr_multiplier`（K，預設 3.0）、`trailing_tp_arm_pnl`（armed 浮盈門檻，預設 8%）、`trailing_tp_arm_days`（armed 持有日門檻，預設 5）。Chandelier-style：peak_high − K×ATR；exit 優先序 stop_loss > trailing_take_profit > take_profit > score_exit > max_hold
 
 ### 🎉 除權息回測
-事件驅動：每次除權息事件模擬「前 N 日進場、後 M 日出場」歷史報酬。3 預設「提前布局 / 經典套息 / 貼息回補」。報酬含「價差 + 現金股利」（不用還原價，避免事件訊號被消化）。資料源 `adj_event`，每次最多 100 檔。
+事件驅動：每次除權息事件模擬「前 N 日進場、後 M 日出場」歷史報酬。3 預設「提前布局 / 經典套息 / 貼息回補」。報酬以**還原價優先**計算（`daily_price_adj.close_adj`，缺值才 fallback 原始 close），避免 split / 配股把績效誤算成假暴跌；資料源 `adj_event`，每次最多 100 檔。
 
 ### 🩺 資料品質
 五類異常掃描：漲停/急漲、跌停/急跌（critical）、量爆（≥5×均量）、停滯（≥3 日不變）、跳空缺口（>15% 且查無 adj_event，疑漏抓還原；critical）。+ 缺值掃描（近 N 日缺超過 1/3）。窗口 5/10/20/60 日切換。各異常類型自動提示對應修補腳本。
 
 ### 📊 因子檢定
-對 `signal_history` 已寫入的歷史快照算 forward-return Information Coefficient（Spearman 秩相關），檢驗 short / mid / long / composite / vr_macd 五個分數對 5 / 20 / 60 日後的報酬率有沒有預測力。
+對 `signal_history` 已寫入的歷史快照算 forward-return Information Coefficient（Spearman 秩相關），檢驗 short / mid / long / composite / vr_macd 五個分數對 5 / 20 / 60 日後的報酬率有沒有預測力。forward return 以 **還原價優先**（`daily_price_adj.close_adj`）計算，缺值才 fallback 原始 close，降低除權息/分割對 IC 的污染。
 - **IC heatmap**：紅 = 正向預測（IC > 0）、綠 = 反向、灰 = 無訊號（|IC| < 0.05）；強度分 weak / mid / strong 三級，> 0.10 算強
 - **IC_IR**（mean / std）：跨期穩定度，> 0.5 算可信賴；< 0.3 表時好時壞，要警惕過擬合
 - **Q5 − Q1 spread**：「買最強 20% / 賣最弱 20%」多空組合的平均 forward return
-- 樣本不足（單日 < 30 檔 / 全期 < 5 個 IC 點）→ 回 — 而非假數字。第一次跑若 signal_history 太薄，先 `python -m scripts.backfill_signal_history --days 60`（30 分鐘）
+- 樣本不足（單日 < 30 檔 / 全期 < 5 個 IC 點）→ 回 — 而非假數字。第一次跑若 signal_history 太薄，先 `python -m scripts.backfill_signal_history --days 60`（含財報約 40~60 秒/天；`--no-fundamentals` 可再加速）
 
 ### ⚙️ 權重調優
 19 子維度 slider（短 9 + 中 5 + 長 5）。即時看自選股**原分數 vs 新分數 + 差異**。
@@ -256,7 +258,7 @@ python -m scripts.backfill_financials_history --quarters 8
 | `python -m scripts.dq_check` / `--push` | 資料品質檢查 | ~1 秒 |
 | `python -m scripts.run_stats` / `--tail 20` / `--show-errors` | 執行統計 | ~1 秒 |
 | `python -m scripts.prune_signals` / `--dry-run` / `--keep 60` | signal_history 壓縮（近 90 天逐日 + 之前只留週一），偶爾跑控制 DB 體積 | ~1 秒 |
-| `python -m scripts.backfill_signal_history --days 60` | 把 signal_history 回填 60 個交易日（給「因子檢定」頁吃）；改過 scoring 邏輯後加 `--clear` 先清舊算法的快照再重算 | ~60 秒/天 |
+| `python -m scripts.backfill_signal_history --days 60` | 把 signal_history 回填 60 個交易日（給「因子檢定」頁吃）；改過 scoring 邏輯後加 `--clear` 先清舊算法的快照再重算。可搭配 `--skip-existing`（只補缺）或 `--no-fundamentals`（加速） | 含財報約 40~60 秒/天；`--no-fundamentals` 約 30~45 秒/天 |
 
 > `--push-line` 舊旗標仍相容（等同 `--push`），LINE Notify 已停服。
 

@@ -144,3 +144,35 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     df["ma60_slope"] = df["ma60"].pct_change(10)
 
     return df
+
+
+def enrich_for_scoring(df: pd.DataFrame) -> pd.DataFrame:
+    """評分流程專用的精簡 enrich。
+
+    與 `enrich()` 相比只計算 score_short_term / score_mid_term 會用到的欄位，
+    避免在全市場批次評分時每檔都生成未使用欄位（ma120/240、macd_line/signal、
+    bb_upper/lower、vol_ratio20、ma20_slope 等），降低 DataFrame setitem 成本。
+    """
+    df = df.sort_values("date").copy()
+
+    # ma alignment / trend
+    df["ma5"] = sma(df["close"], 5)
+    df["ma10"] = sma(df["close"], 10)
+    df["ma20"] = sma(df["close"], 20)
+    df["ma60"] = sma(df["close"], 60)
+    df["ma60_slope"] = df["ma60"].pct_change(10)
+
+    # oscillators
+    df["rsi14"] = rsi(df["close"], 14)
+    k, d = kd(df["high"], df["low"], df["close"], 9)
+    df["k9"] = k
+    df["d9"] = d
+    _, _, hist = macd(df["close"])
+    df["macd_hist"] = hist
+
+    # volatility / volume / volume-ratio
+    df["bb_pos"] = bb_position(df["close"], 20, 2.0)
+    df["vol_ratio5"] = volume_ratio(df["volume"], 5)
+    df["vr26"] = vr(df["close"], df["volume"], 26)
+
+    return df
