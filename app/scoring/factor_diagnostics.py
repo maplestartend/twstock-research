@@ -105,6 +105,33 @@ def _quintile_spread(x: pd.Series, y: pd.Series) -> tuple[float | None, float | 
     return float(q5.mean()), float(q1.mean())
 
 
+def _ic_and_quintile(x: pd.Series, y: pd.Series) -> tuple[float | None, float | None, float | None, int]:
+    """合併版：一次 dropna + 一次 rank，同時算 IC 與 Q5/Q1 mean。
+
+    回傳 (ic, q5_mean, q1_mean, n)。資料不足時前三個為 None、n 仍回 dropna 後實際樣本數
+    （給 avg_n_stocks 統計用）。
+
+    為什麼合併：原本 _spearman_ic 與 _quintile_spread 各自做一次 DataFrame 構造 + dropna
+    + rank，loop 的瓶頸（27ms/iter）一半在這個 redundant 上。共用後降到 ~10ms/iter。
+    """
+    df = pd.DataFrame({"x": x, "y": y}).dropna()
+    n = len(df)
+    if n < MIN_SAMPLES_PER_DATE:
+        return None, None, None, n
+    rank_x = df["x"].rank()
+    rank_y = df["y"].rank()
+    if rank_x.nunique() < 2 or rank_y.nunique() < 2:
+        return None, None, None, n
+    ic_val = rank_x.corr(rank_y)
+    ic: float | None = float(ic_val) if not pd.isna(ic_val) else None
+    pct = rank_x / n  # 等價 df["x"].rank(pct=True)，省掉一次 rank
+    q5_y = df.loc[pct >= 0.8, "y"]
+    q1_y = df.loc[pct <= 0.2, "y"]
+    q5 = float(q5_y.mean()) if not q5_y.empty else None
+    q1 = float(q1_y.mean()) if not q1_y.empty else None
+    return ic, q5, q1, n
+
+
 def compute_factor_ic(
     db: Database,
     *,
@@ -125,6 +152,19 @@ def compute_factor_ic(
     if price_wide.empty:
         return []
 
+    # 把 factor 也預先 pivot 一次（不依賴 horizon，移出迴圈避免 5 × 3 = 15 次重做）
+    factor_pivots: dict[str, pd.DataFrame] = {
+        factor: snap.pivot_table(index="as_of", columns="stock_id", values=factor, aggfunc="first")
+        for factor in FACTORS
+    }
+    # daily_price 表含 22k 個代號（含權證/牛熊證/ETN），但 signal_history 只有 ~2.3k 一般股。
+    # 把 price_wide 縮到 factor_pivot 的代號集合 → forward_return 計算與每日 .loc lookup 都
+    # 從 22k 欄降到 2.3k 欄，本身就 ~10× 加速；後面 _ic_and_quintile 的 dropna 也少很多假 NaN。
+    factor_stocks = factor_pivots[FACTORS[0]].columns
+    common_cols = price_wide.columns.intersection(factor_stocks)
+    if not common_cols.empty:
+        price_wide = price_wide[common_cols]
+
     out: list[FactorICResult] = []
     for horizon in horizons:
         # 用 trading-day shift（DataFrame 沒有 weekend rows，shift(-h) 自動跳）
@@ -137,24 +177,21 @@ def compute_factor_ic(
             q1_per_date: list[float] = []
             n_per_date: list[int] = []
 
-            # 對每個 as_of 日期跑 cross-sectional IC
-            factor_pivot = snap.pivot_table(index="as_of", columns="stock_id", values=factor, aggfunc="first")
+            factor_pivot = factor_pivots[factor]
             common_dates = factor_pivot.index.intersection(forward_returns.index)
             for d in common_dates:
                 x = factor_pivot.loc[d]
                 # forward_returns 用 trading-day index；as_of 可能落在週末（snapshot_today 有寫週六/日?
                 # 實務上 snapshot 都在交易日寫，d 應該在 forward_returns.index 內）
                 y = forward_returns.loc[d]
-                ic = _spearman_ic(x, y)
+                ic, q5, q1, n = _ic_and_quintile(x, y)
                 if ic is None:
                     continue
-                q5, q1 = _quintile_spread(x, y)
                 ic_per_date.append(ic)
                 if q5 is not None and q1 is not None:
                     q5_per_date.append(q5)
                     q1_per_date.append(q1)
-                # 記錄樣本數（兩邊都非 NaN）
-                n_per_date.append(int((x.notna() & y.notna()).sum()))
+                n_per_date.append(n)
 
             if len(ic_per_date) < MIN_DATES_PER_FACTOR:
                 out.append(FactorICResult(

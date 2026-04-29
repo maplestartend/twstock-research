@@ -57,7 +57,10 @@ function ICColor({ ic }: { ic: number | null }) {
 export default async function DiagnosticsPage() {
   let data: FactorICResponse;
   try {
-    data = await apiGet<FactorICResponse>("/api/diagnostics/factor-ic", { noCache: true });
+    // IC 計算每次 ~3-5 秒（cross-sectional Spearman × 5 factors × 3 horizons），
+    // 但結果只在 daily-update 寫新 snapshot 時才會變 → revalidate 1 小時夠用，
+    // 重整想看新算法可以 Ctrl+F5 強迫繞過。
+    data = await apiGet<FactorICResponse>("/api/diagnostics/factor-ic", { revalidate: 3600 });
   } catch (e) {
     return <BackendDownError error={e} pageTitle="因子檢定" />;
   }
