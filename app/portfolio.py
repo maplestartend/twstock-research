@@ -323,16 +323,21 @@ def rebuild_holding(db: Database, stock_id: str) -> None:
     """
     with db.connect() as conn:
         trades = conn.execute(
-            "SELECT action, shares, price, fee, tax FROM trade_log WHERE stock_id=? ORDER BY trade_date, id",
+            "SELECT trade_date, action, shares, price, fee, tax FROM trade_log WHERE stock_id=? ORDER BY trade_date, id",
             (stock_id,),
         ).fetchall()
 
         shares = 0.0
         avg_cost = 0.0
+        # entry_date 取「目前未平倉 cycle 的第一筆 BUY 日」：每次 shares 從 0 → 正
+        # 就重設一次。沒重算這個會讓 trailing 停損 / Chandelier 動態停利在 UI 消失。
+        entry_date: str | None = None
         for t in trades:
             act, s, p = t["action"], float(t["shares"]), float(t["price"])
             fee = float(t["fee"] or 0)
             if act == BUY:
+                if shares == 0:
+                    entry_date = t["trade_date"]
                 new_shares = shares + s
                 avg_cost = ((avg_cost * shares) + (s * p) + fee) / new_shares if new_shares > 0 else 0
                 shares = new_shares
@@ -340,6 +345,7 @@ def rebuild_holding(db: Database, stock_id: str) -> None:
                 shares = max(shares - s, 0)
                 if shares == 0:
                     avg_cost = 0
+                    entry_date = None
 
         if shares == 0:
             # 全部賣光 / 沒有任何 trade → 刪掉 row 而不是留 0-share 殭屍
@@ -347,14 +353,15 @@ def rebuild_holding(db: Database, stock_id: str) -> None:
         else:
             conn.execute(
                 """
-                INSERT INTO holdings (stock_id, shares, avg_cost)
-                VALUES (?, ?, ?)
+                INSERT INTO holdings (stock_id, shares, avg_cost, entry_date)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(stock_id) DO UPDATE SET
                     shares = excluded.shares,
                     avg_cost = excluded.avg_cost,
+                    entry_date = excluded.entry_date,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (stock_id, shares, avg_cost),
+                (stock_id, shares, avg_cost, entry_date),
             )
         conn.commit()
 

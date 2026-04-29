@@ -63,6 +63,9 @@ def snapshot_today(db: Database, include_fundamentals: bool = True, *, as_of=Non
         "composite": df.get("composite", pd.Series(dtype=object)).astype(object).where(
             df.get("composite", pd.Series(dtype=object)).notna(), None,
         ) if "composite" in df.columns else None,
+        "vr_macd": df.get("vr_macd", pd.Series(dtype=object)).astype(object).where(
+            df.get("vr_macd", pd.Series(dtype=object)).notna(), None,
+        ) if "vr_macd" in df.columns else None,
         "data_completeness": df.get("data_completeness", pd.Series(dtype=object)).astype(object).where(
             df.get("data_completeness", pd.Series(dtype=object)).notna(), None,
         ) if "data_completeness" in df.columns else None,

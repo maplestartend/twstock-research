@@ -243,10 +243,11 @@
 #### GET /api/radar/strategies
 - **用途**：列出所有策略 + 當日命中數（以 signal_history.strategies 子字串比對）
 - **Response model**：`list[RadarStrategy]`
+- **策略名單範例**：`短線強勢 / 中期波段 / 長期價值 / 外資連買 / 回檔布局 / 三榜俱佳 / 相對強勢 / 月營收爆發 / 營收持續成長 / 營收高速加速 / 量能動能`
 - **副作用**：開頭呼叫 `ensure_fresh()`
 
 #### GET /api/radar/hits
-- **用途**：當日 signal_history 依策略 + 市場過濾，依 composite 降序
+- **用途**：當日 signal_history 依策略 + 市場過濾，依對應分數降序（短/中/長期/`量能動能` 各依自己的維度，其他 fallback composite）
 - **Query params**：`strategy` (str, 可選)、`market` (list, 預設 `["上市","上櫃","ETF"]`)、`top` (int, 預設 50；`top=0` 視為「全部」不截斷)
 - **Response model**：`list[RadarHit]`
 - **副作用**：開頭呼叫 `ensure_fresh()`
@@ -411,6 +412,10 @@
 - `total: float | None`（資料不足為 None）
 - `completeness: float`（有效子指標權重比，1.0 = 全齊）
 - `parts: dict[str, float | None]`
+  - **short keys**：`ma_alignment, kd, macd, rsi, bollinger, volume, vr_macd, foreign, trust, margin_change`
+  - **mid keys**：`trend, foreign_cum, trust_cum, eps_growth, revenue_growth, vr_macd`
+  - **long keys**：`roe, margin_quality, eps_cagr_3y, dividend, valuation`
+  - `vr_macd`：VR26（成交量比率，台股 26 日慣用）✕ MACD 柱複合分數，用 11 條 decision rule 在「低量谷底+動能反轉=黃金底」與「高量噴出+動能反轉=高檔警示」間給差異化分數，其餘走 zone-only fallback。short 權重 0.08、mid 權重 0.04（mid 端較小，主要當動能 confirmation）。
 
 #### StockScoreView (StockRef)
 - `as_of: str`、`close: float`
@@ -428,6 +433,7 @@
 
 #### RadarHit (StockRef)
 - `close, short, mid, long, composite: float | None`
+- `vr_macd: float | None`（VR26 ✕ MACD 柱複合分；「量能動能」策略依此排序）
 - `recommendation: str | None`、`strategies: str | None`
 - `market: str | None`（"上市" / "上櫃" / "ETF" / "其他"）
 

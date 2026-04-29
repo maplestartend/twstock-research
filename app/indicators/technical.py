@@ -65,6 +65,49 @@ def volume_ratio(volume: pd.Series, period: int = 5) -> pd.Series:
     return volume / avg.replace(0, np.nan)
 
 
+def vr(close: pd.Series, volume: pd.Series, period: int = 26) -> pd.Series:
+    """成交量比率 (Volume Ratio, 台股 26 日慣用版).
+
+    VR = (UV + 0.5 * FV) / (DV + 0.5 * FV) * 100
+    where over the trailing `period` days:
+      UV = sum of volume on days where close > prev_close
+      DV = sum of volume on days where close < prev_close
+      FV = sum of volume on days where close == prev_close
+
+    Edge cases:
+      - First `period` rows → NaN (insufficient comparisons).
+      - Denominator zero (all up days) → cap at 1000.0.
+      - UV == 0 and DV == 0 (entire window flat / suspended) → NaN.
+    """
+    delta = close.diff()
+    vol = volume.astype(float)
+    # close.diff() 第一筆是 NaN → np.where 會走 else 分支，當成「平盤」處理是 OK
+    # 但實際上第一筆缺 prev_close 比較，rolling 從第二筆才開始累，period 內仍會被 NaN 蓋掉
+    up_vol = np.where(delta > 0, vol, 0.0)
+    down_vol = np.where(delta < 0, vol, 0.0)
+    flat_vol = np.where(delta == 0, vol, 0.0)
+    uv_series = pd.Series(up_vol, index=close.index)
+    dv_series = pd.Series(down_vol, index=close.index)
+    fv_series = pd.Series(flat_vol, index=close.index)
+    uv = uv_series.rolling(window=period, min_periods=period).sum()
+    dv = dv_series.rolling(window=period, min_periods=period).sum()
+    fv = fv_series.rolling(window=period, min_periods=period).sum()
+
+    numerator = uv + 0.5 * fv
+    denominator = dv + 0.5 * fv
+
+    # 預設用一般公式
+    result = (numerator / denominator.replace(0, np.nan)) * 100.0
+    # 全部上漲（DV+0.5*FV == 0）但有 UV → cap 1000
+    cap_mask = (denominator == 0) & (numerator > 0)
+    result = result.where(~cap_mask, 1000.0)
+    # 整窗 flat / suspended（UV == 0 AND DV == 0）→ NaN（denominator 可能 0 或只有 0.5*FV）
+    flat_mask = (uv == 0) & (dv == 0)
+    result = result.where(~flat_mask, np.nan)
+    # 暖機期 (前 period 筆) 由 rolling 的 min_periods 自動 NaN
+    return result
+
+
 def enrich(df: pd.DataFrame) -> pd.DataFrame:
     """在 daily_price DataFrame 上加入所有常用技術指標。期望欄位：date/open/high/low/close/volume。"""
     df = df.sort_values("date").copy()
@@ -94,6 +137,7 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
 
     df["vol_ratio5"] = volume_ratio(df["volume"], 5)
     df["vol_ratio20"] = volume_ratio(df["volume"], 20)
+    df["vr26"] = vr(df["close"], df["volume"], 26)
 
     # MA 斜率（近 5 日變化率）
     df["ma20_slope"] = df["ma20"].pct_change(5)

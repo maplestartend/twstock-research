@@ -3428,6 +3428,17 @@
               }
             ],
             "title": "Strategies"
+          },
+          "vrMacd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vrmacd"
           }
         },
         "required": [

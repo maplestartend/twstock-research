@@ -104,6 +104,7 @@ def score_short_term(price_df: pd.DataFrame, chip_snap: dict) -> ScoreBreakdown:
         "rsi": R.score_rsi(last),
         "bollinger": R.score_bollinger(last),
         "volume": R.score_volume(last),
+        "vr_macd": R.score_vr_macd(last, prev),
         "foreign": R.score_foreign_short(chip_snap),
         "trust": R.score_trust_short(chip_snap),
         "margin_change": R.score_margin_change(chip_snap),
@@ -118,12 +119,14 @@ def score_short_term(price_df: pd.DataFrame, chip_snap: dict) -> ScoreBreakdown:
 
 def score_mid_term(price_df: pd.DataFrame, chip_snap: dict, fund_snap: dict) -> ScoreBreakdown:
     last = price_df.iloc[-1]
+    prev = price_df.iloc[-2] if len(price_df) >= 2 else None
     parts: dict[str, Optional[float]] = {
         "trend": R.score_trend_mid(last),
         "foreign_cum": R.score_foreign_mid(chip_snap),
         "trust_cum": R.score_trust_mid(chip_snap),
         "eps_growth": R.score_eps_growth(fund_snap),
         "revenue_growth": R.score_revenue_growth(fund_snap),
+        "vr_macd": R.score_vr_macd(last, prev),
     }
     total, completeness = _weighted(parts, R.MID_TERM_WEIGHTS)
     return ScoreBreakdown(

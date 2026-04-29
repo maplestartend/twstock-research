@@ -144,6 +144,7 @@ SCHEMA = [
         mid REAL,
         long REAL,
         composite REAL,
+        vr_macd REAL,
         recommendation TEXT,
         strategies TEXT,
         data_completeness REAL,
@@ -327,6 +328,7 @@ class Database:
             # (table, column_name, ddl_fragment)
             ("signal_history", "data_completeness", "REAL"),
             ("signal_history", "is_stale", "INTEGER DEFAULT 0"),
+            ("signal_history", "vr_macd", "REAL"),
             ("financials_cumulative", "publish_date", "TEXT"),
             ("financials_quarterly_derived", "publish_date", "TEXT"),
             # last_seen_date：每次 daily_price 抓到該 sid 就更新；

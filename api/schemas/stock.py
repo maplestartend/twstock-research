@@ -119,6 +119,7 @@ class RadarHit(StockRef):
     mid: float | None = None
     long: float | None = None
     composite: float | None = None
+    vr_macd: float | None = None
     recommendation: str | None = None
     strategies: str | None = None
     market: str | None = None  # "上市" | "上櫃" | "ETF" | "其他"

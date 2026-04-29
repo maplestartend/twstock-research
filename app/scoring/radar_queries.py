@@ -20,8 +20,9 @@ _STRATEGY_SORT_COLUMN: dict[str, str] = {
     "短線強勢": "short",
     "中期波段": "mid",
     "長期價值": "long",
+    "量能動能": "vr_macd",
 }
-_ALLOWED_SORT_COLUMNS = {"short", "mid", "long", "composite"}
+_ALLOWED_SORT_COLUMNS = {"short", "mid", "long", "composite", "vr_macd"}
 
 
 def latest_as_of(db: Database) -> str | None:
@@ -60,7 +61,7 @@ def query_radar_hits(
     unlimited = limit is None or limit <= 0
     sql = (
         "SELECT s.stock_id, s.stock_name, s.close, s.short, s.mid, s.long, "
-        "       s.composite, s.recommendation, s.strategies, i.type "
+        "       s.composite, s.vr_macd, s.recommendation, s.strategies, i.type "
         "FROM signal_history s "
         "LEFT JOIN stock_info i ON i.stock_id = s.stock_id "
         "WHERE s.as_of = ? "
@@ -70,10 +71,14 @@ def query_radar_hits(
     if strategy:
         sql += "  AND s.strategies LIKE ? "
         params.append(f"%{strategy}%")
-    # 主排序：對應分數降序、NULL 推到最後；同分時用 composite 當 tie-breaker，避免不穩定排序
+    # 主排序：對應分數降序、NULL 推到最後；
+    # tie-breaker chain: short DESC（量能動能策略要求；對其他策略也是合理 fallback）
+    # → composite DESC → stock_id ASC（穩定排序、避免相同分數時順序漂浮）
     sql += (
         f"ORDER BY s.{sort_col} IS NULL, s.{sort_col} DESC, "
-        f"         s.composite IS NULL, s.composite DESC"
+        f"         s.short IS NULL, s.short DESC, "
+        f"         s.composite IS NULL, s.composite DESC, "
+        f"         s.stock_id"
     )
     if not unlimited:
         # 多抓一些後再依 market 過濾，避免邊界不足
@@ -96,6 +101,7 @@ def query_radar_hits(
             "mid": r["mid"],
             "long": r["long"],
             "composite": r["composite"],
+            "vr_macd": r["vr_macd"],
             "recommendation": r["recommendation"],
             "strategies": r["strategies"],
             "market": mkt,

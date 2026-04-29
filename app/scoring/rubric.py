@@ -140,6 +140,77 @@ def score_bollinger(last_row: pd.Series) -> Optional[float]:
     return 25.0
 
 
+def _vr_zone_score(vr_val: float) -> float:
+    """VR 26 分區的 baseline 分數（不看 MACD 時的中性參考）。
+    台股慣例：< 40 為超低量谷底（反彈機會）、40-80 為偏低（健康整理）、
+    80-150 為均衡（多空拉鋸）、150-250 為熱絡、250-450 為過熱、>= 450 為極端噴量。
+    """
+    if vr_val < 40: return 65.0
+    if vr_val < 80: return 80.0
+    if vr_val < 150: return 60.0
+    if vr_val < 250: return 70.0
+    if vr_val < 450: return 35.0
+    return 15.0
+
+
+def score_vr_macd(last_row: pd.Series, prev_row: pd.Series | None = None) -> Optional[float]:
+    """成交量比率 (VR26) ✕ MACD 柱複合評分。
+
+    透過 VR 分區判斷量能位置（低量谷底 / 健康量 / 過熱），再用 MACD 柱方向確認動能。
+    rule A 最嚴格（VR 低量+rising+MACD turning up）→ 88 分（黃金底訊號）；
+    rule G 最危險（VR 噴量+MACD turning down）→ 10 分（高檔反轉警示）。
+
+    缺 prev_row 時走 zone-only fallback (rule K)：用 VR 分區基礎分 ±5（看 MACD 是否為正）。
+    """
+    vr_val = last_row.get("vr26")
+    hist = last_row.get("macd_hist")
+    if _is_missing(vr_val) or _is_missing(hist):
+        return None
+
+    # prev_row 缺失（DataFrame 第 1 筆）→ zone-only fallback ±5
+    if prev_row is None:
+        zone = _vr_zone_score(vr_val)
+        return _clip(zone + (5 if hist > 0 else -5))
+
+    vr_prev = prev_row.get("vr26")
+    hist_prev = prev_row.get("macd_hist")
+    if _is_missing(vr_prev) or _is_missing(hist_prev):
+        # prev row 有但欄位缺 → 同樣走 fallback
+        zone = _vr_zone_score(vr_val)
+        return _clip(zone + (5 if hist > 0 else -5))
+
+    vr_rising = vr_val > vr_prev
+    hist_pos = hist > 0
+    hist_growing = hist > hist_prev
+    hist_turning_up = (hist > hist_prev) and (hist_prev <= 0)
+    hist_turning_down = (hist < hist_prev) and (hist_prev >= 0)
+
+    # Decision matrix — first match wins
+    if vr_val < 80 and vr_rising and hist_turning_up:           # A
+        return 88.0
+    if vr_val < 40 and hist_turning_up:                          # I
+        return 75.0
+    if vr_val < 80 and vr_rising and hist_pos:                   # B
+        return 78.0
+    if vr_val < 40 and not hist_pos:                             # J
+        return 35.0
+    if 80 <= vr_val < 150 and hist_pos and hist_growing:         # C
+        return 72.0
+    if 150 <= vr_val < 250 and hist_pos:                         # D
+        return 62.0
+    if 250 <= vr_val < 450 and hist_growing:                     # E
+        return 40.0
+    if 250 <= vr_val < 450 and hist_turning_down:                # F
+        return 20.0
+    if vr_val >= 450 and hist_turning_down:                      # G
+        return 10.0
+    if vr_val >= 450 and hist_pos:                               # H
+        return 25.0
+    # K fallback：zone-only ±5
+    zone = _vr_zone_score(vr_val)
+    return _clip(zone + (5 if hist_pos else -5))
+
+
 def score_volume(last_row: pd.Series) -> Optional[float]:
     vr = last_row.get("vol_ratio5")
     if _is_missing(vr):
@@ -415,10 +486,11 @@ def score_valuation(fund: dict) -> Optional[float]:
 SHORT_TERM_WEIGHTS = {
     "ma_alignment": 0.15,
     "kd": 0.12,
-    "macd": 0.08,
+    "macd": 0.04,           # -0.04 讓給 vr_macd（避免 MACD 維度被 double weighted）
     "rsi": 0.08,
     "bollinger": 0.07,
-    "volume": 0.12,
+    "volume": 0.08,         # -0.04 讓給 vr_macd（vr_macd 已含量能訊號）
+    "vr_macd": 0.08,        # 新增：VR26 ✕ MACD 柱複合，動能/反轉確認
     "foreign": 0.20,
     "trust": 0.10,
     "margin_change": 0.08,
@@ -429,7 +501,8 @@ MID_TERM_WEIGHTS = {
     "foreign_cum": 0.20,
     "trust_cum": 0.15,
     "eps_growth": 0.20,
-    "revenue_growth": 0.15,
+    "revenue_growth": 0.11, # -0.04 讓給 vr_macd（mid 沒 macd key 可砍，從 revenue_growth 撥）
+    "vr_macd": 0.04,        # 新增：mid 端權重較小，主要當動能 confirmation
 }
 
 LONG_TERM_WEIGHTS = {
@@ -475,13 +548,13 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
         "description": "重視 ROE / 股利 / 估值，偏向找體質好且不貴的長線標的；技術面權重壓低。",
         "weights": {
             "short": {
-                "ma_alignment": 0.20, "kd": 0.05, "macd": 0.05, "rsi": 0.05,
-                "bollinger": 0.05, "volume": 0.10, "foreign": 0.30,
-                "trust": 0.15, "margin_change": 0.05,
+                "ma_alignment": 0.20, "kd": 0.05, "macd": 0.03, "rsi": 0.05,
+                "bollinger": 0.05, "volume": 0.07, "vr_macd": 0.05,
+                "foreign": 0.30, "trust": 0.15, "margin_change": 0.05,
             },
             "mid": {
                 "trend": 0.20, "foreign_cum": 0.20, "trust_cum": 0.10,
-                "eps_growth": 0.20, "revenue_growth": 0.30,
+                "eps_growth": 0.20, "revenue_growth": 0.28, "vr_macd": 0.02,
             },
             "long": {
                 "roe": 0.30, "margin_quality": 0.20, "eps_cagr_3y": 0.10,
@@ -494,13 +567,13 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
         "description": "重押 EPS / 營收成長 + 趨勢；找會大漲的飆股，估值與股利讓位。",
         "weights": {
             "short": {
-                "ma_alignment": 0.20, "kd": 0.10, "macd": 0.15, "rsi": 0.10,
-                "bollinger": 0.05, "volume": 0.15, "foreign": 0.15,
-                "trust": 0.05, "margin_change": 0.05,
+                "ma_alignment": 0.20, "kd": 0.10, "macd": 0.11, "rsi": 0.10,
+                "bollinger": 0.05, "volume": 0.11, "vr_macd": 0.08,
+                "foreign": 0.15, "trust": 0.05, "margin_change": 0.05,
             },
             "mid": {
-                "trend": 0.35, "foreign_cum": 0.10, "trust_cum": 0.10,
-                "eps_growth": 0.25, "revenue_growth": 0.20,
+                "trend": 0.33, "foreign_cum": 0.10, "trust_cum": 0.10,
+                "eps_growth": 0.23, "revenue_growth": 0.20, "vr_macd": 0.04,
             },
             "long": {
                 "roe": 0.25, "margin_quality": 0.20, "eps_cagr_3y": 0.35,
@@ -513,13 +586,13 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
         "description": "短期看技術線型 (MA/KD/MACD/BB) + 量能；中長期權重壓低，著重短打。",
         "weights": {
             "short": {
-                "ma_alignment": 0.22, "kd": 0.18, "macd": 0.15, "rsi": 0.12,
-                "bollinger": 0.10, "volume": 0.15, "foreign": 0.04,
-                "trust": 0.02, "margin_change": 0.02,
+                "ma_alignment": 0.20, "kd": 0.15, "macd": 0.10, "rsi": 0.10,
+                "bollinger": 0.08, "volume": 0.10, "vr_macd": 0.15,
+                "foreign": 0.04, "trust": 0.04, "margin_change": 0.04,
             },
             "mid": {
-                "trend": 0.50, "foreign_cum": 0.10, "trust_cum": 0.10,
-                "eps_growth": 0.15, "revenue_growth": 0.15,
+                "trend": 0.45, "foreign_cum": 0.10, "trust_cum": 0.10,
+                "eps_growth": 0.15, "revenue_growth": 0.15, "vr_macd": 0.05,
             },
             "long": {
                 "roe": 0.20, "margin_quality": 0.20, "eps_cagr_3y": 0.20,
@@ -532,13 +605,13 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
         "description": "聚焦三大法人 + 融資籌碼變動；技術只看趨勢，基本面當輔助。",
         "weights": {
             "short": {
-                "ma_alignment": 0.10, "kd": 0.05, "macd": 0.05, "rsi": 0.05,
-                "bollinger": 0.05, "volume": 0.10, "foreign": 0.30,
-                "trust": 0.20, "margin_change": 0.10,
+                "ma_alignment": 0.10, "kd": 0.03, "macd": 0.02, "rsi": 0.05,
+                "bollinger": 0.05, "volume": 0.05, "vr_macd": 0.10,
+                "foreign": 0.30, "trust": 0.20, "margin_change": 0.10,
             },
             "mid": {
-                "trend": 0.20, "foreign_cum": 0.30, "trust_cum": 0.25,
-                "eps_growth": 0.15, "revenue_growth": 0.10,
+                "trend": 0.20, "foreign_cum": 0.30, "trust_cum": 0.23,
+                "eps_growth": 0.13, "revenue_growth": 0.10, "vr_macd": 0.04,
             },
             "long": {
                 "roe": 0.20, "margin_quality": 0.15, "eps_cagr_3y": 0.15,
@@ -551,13 +624,13 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
         "description": "EPS / 營收 / ROE / 毛利率 為主，偏巴菲特式選股；技術面只當進場時機參考。",
         "weights": {
             "short": {
-                "ma_alignment": 0.20, "kd": 0.10, "macd": 0.10, "rsi": 0.10,
-                "bollinger": 0.05, "volume": 0.10, "foreign": 0.20,
-                "trust": 0.10, "margin_change": 0.05,
+                "ma_alignment": 0.20, "kd": 0.10, "macd": 0.09, "rsi": 0.10,
+                "bollinger": 0.05, "volume": 0.08, "vr_macd": 0.03,
+                "foreign": 0.20, "trust": 0.10, "margin_change": 0.05,
             },
             "mid": {
                 "trend": 0.15, "foreign_cum": 0.10, "trust_cum": 0.05,
-                "eps_growth": 0.40, "revenue_growth": 0.30,
+                "eps_growth": 0.39, "revenue_growth": 0.29, "vr_macd": 0.02,
             },
             "long": {
                 "roe": 0.30, "margin_quality": 0.30, "eps_cagr_3y": 0.20,
@@ -573,7 +646,7 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
 # ======================================================================
 # 給對 19 個指標看到頭暈的使用者用。前端會用這份白名單決定哪些 slider 顯示。
 BEGINNER_VISIBLE_KEYS: dict[str, list[str]] = {
-    "short": ["ma_alignment", "volume", "foreign", "trust", "kd"],
+    "short": ["ma_alignment", "volume", "vr_macd", "foreign", "trust", "kd"],
     "mid": ["trend", "eps_growth", "revenue_growth", "foreign_cum"],
     "long": ["roe", "eps_cagr_3y", "margin_quality", "dividend", "valuation"],
 }

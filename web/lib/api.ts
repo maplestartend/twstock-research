@@ -278,6 +278,7 @@ export type RadarHit = {
   stockId: string; stockName: string;
   close: number | null;
   short: number | null; mid: number | null; long: number | null; composite: number | null;
+  vrMacd: number | null;    // VR(26) × MACD 柱複合分；給「量能動能」策略當主要排序依據
   recommendation: string | null;
   strategies: string | null;
   market?: string | null;   // "上市" | "上櫃" | "ETF" | "其他"

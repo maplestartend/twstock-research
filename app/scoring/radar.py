@@ -332,6 +332,11 @@ def score_all(
             short = eng.score_short_term(price, chip_snap)
             mid = eng.score_mid_term(price, chip_snap, fund_snap)
             long_ = eng.score_long_term(fund_snap, stock_id=sid)
+            vr_macd_val = short.parts.get("vr_macd")
+            # vr26 / macd_hist 原始值給 _strat_vr_macd 做更嚴格的 filter（VR>150 + MACD 紅柱）
+            last_row = price.iloc[-1]
+            vr26_val = float(last_row["vr26"]) if pd.notna(last_row.get("vr26")) else None
+            macd_hist_val = float(last_row["macd_hist"]) if pd.notna(last_row.get("macd_hist")) else None
 
             composite, _comp_usage = eng.composite_score(short.total, mid.total, long_.total)
             data_completeness = eng.overall_completeness(short, mid, long_)
@@ -350,6 +355,9 @@ def score_all(
                 "mid": mid.total,
                 "long": long_.total,
                 "composite": composite,
+                "vr_macd": vr_macd_val,
+                "vr26": vr26_val,
+                "macd_hist": macd_hist_val,
                 "data_completeness": data_completeness,
                 "is_stale": is_stale,
                 "recommendation": eng.recommendation_label(composite),
@@ -455,6 +463,27 @@ def _strat_revenue_hot_streak(df: pd.DataFrame) -> pd.DataFrame:
     return df[(df["rev_yoy_streak_hot"].fillna(0) >= 3) & (df["mid"] >= 50)]
 
 
+def _strat_vr_macd(df: pd.DataFrame) -> pd.DataFrame:
+    """量能動能榜：vr_macd >= 60、未過時、且額外要求 VR26 > 150 + MACD 紅柱（hist > 0）。
+
+    後兩條是使用者指定的硬篩選：要量能進入「活躍以上」區間（VR>150）且
+    動能向上（MACD 柱站上 0 軸 = 紅柱）。少了任一個都不算「量能 × 動能」共振。
+    score_vr_macd 內已部分覆蓋這些情況（rule D/C/B 等），但複合分數裡 K-fallback
+    路徑可能讓 vr26<150 但 macd_hist 正向的 row 也得 60+，這裡再過一次硬條件。
+    """
+    if "vr_macd" not in df.columns:
+        return df.head(0)
+    if "vr26" not in df.columns or "macd_hist" not in df.columns:
+        # 沒有原始指標欄位（例如只 seed signal_history 跑單元測試）就退回基本篩選
+        return df[(df["vr_macd"].fillna(-1) >= 60) & (df["is_stale"].fillna(0) == 0)]
+    return df[
+        (df["vr_macd"].fillna(-1) >= 60)
+        & (df["is_stale"].fillna(0) == 0)
+        & (df["vr26"].fillna(-1) > 150)
+        & (df["macd_hist"].fillna(-1) > 0)
+    ]
+
+
 STRATEGIES: dict[str, Strategy] = {
     "短線強勢": Strategy(
         name="短線強勢",
@@ -520,6 +549,13 @@ STRATEGIES: dict[str, Strategy] = {
         filter_fn=_strat_revenue_hot_streak,
         sort_by="rev_yoy_streak_hot",
         stocks_only=True,
+    ),
+    "量能動能": Strategy(
+        name="量能動能",
+        description="VR26 > 150 + MACD 紅柱 + 複合分≥60，依 vr_macd 排序",
+        filter_fn=_strat_vr_macd,
+        sort_by="vr_macd",
+        stocks_only=False,  # ETF 同樣有量能訊號
     ),
 }
 
