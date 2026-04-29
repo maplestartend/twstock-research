@@ -19,6 +19,7 @@ import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { Pagination } from "@/components/primitives/Pagination";
 import { fmtPct, tone, toneClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { DatePicker } from "./DatePicker";
 
 export const revalidate = 300;
 
@@ -126,9 +127,9 @@ export default async function HistoryPage({
 
       {/* Filters */}
       <section className="flex flex-wrap items-center gap-6 text-sm">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[var(--text-tertiary)]">快照日期</span>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             {dates.slice(0, 10).map((d) => {
               const active = d === asOf;
               return (
@@ -149,7 +150,17 @@ export default async function HistoryPage({
               );
             })}
             {dates.length > 10 && (
-              <span className="text-xs text-[var(--text-tertiary)]">…+{dates.length - 10}</span>
+              <>
+                <span className="text-xs text-[var(--text-tertiary)] ml-1">更早</span>
+                <DatePicker
+                  dates={dates}
+                  current={asOf}
+                  preservedParams={{
+                    strategy: validStrategy,
+                    type: typeTab !== "stock" ? typeTab : undefined,
+                  }}
+                />
+              </>
             )}
           </div>
         </div>
