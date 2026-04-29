@@ -259,6 +259,7 @@ python -m scripts.backfill_financials_history --quarters 8
 | `python -m scripts.run_stats` / `--tail 20` / `--show-errors` | 執行統計 | ~1 秒 |
 | `python -m scripts.prune_signals` / `--dry-run` / `--keep 60` | signal_history 壓縮（近 90 天逐日 + 之前只留週一），偶爾跑控制 DB 體積 | ~1 秒 |
 | `python -m scripts.backfill_signal_history --days 60` | 把 signal_history 回填 60 個交易日（給「因子檢定」頁吃）；改過 scoring 邏輯後加 `--clear` 先清舊算法的快照再重算。可搭配 `--skip-existing`（只補缺）或 `--no-fundamentals`（加速） | 含財報約 40~60 秒/天；`--no-fundamentals` 約 30~45 秒/天 |
+| `python -m scripts.backfill_index_yfinance --from 2022-01-01` | 用 yfinance `^TWII` 補 TWSE 加權指數歷史（TWSE OpenAPI 只回 ~2.7 年，要更早只能靠 yfinance）。預設 `--skip-existing` 不覆寫，給 mid factor RS 因子用 | ~30 秒 |
 
 > `--push-line` 舊旗標仍相容（等同 `--push`），LINE Notify 已停服。
 
