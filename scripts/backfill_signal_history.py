@@ -4,19 +4,25 @@
 資料時，可用本腳本批次重算 N 天份的快照，讓 IC 分析有足夠樣本。
 
 每天會跑一次 score_all(as_of=date)，含完整 fundamentals → 約 30-60 秒/天。
-60 天 ≈ 30-60 分鐘。建議先用 --dry-run 看看會跑哪些日期再實際執行。
+**並行模式（預設 --workers 4）**：85 天 ≈ 18-25 分鐘（單核序列模式約 70 分鐘）。
+建議先用 --dry-run 看看會跑哪些日期再實際執行。
 
 用法：
-    python -m scripts.backfill_signal_history --days 60          # 回填過去 60 個交易日
-    python -m scripts.backfill_signal_history --days 60 --skip-existing  # 跳過已有快照的日期
-    python -m scripts.backfill_signal_history --days 7 --dry-run         # 只列出計畫
+    python -m scripts.backfill_signal_history --days 60               # 預設 --workers 4
+    python -m scripts.backfill_signal_history --days 60 --workers 1   # 序列模式 (debug 用)
+    python -m scripts.backfill_signal_history --days 60 --workers 8   # 機器核心多時加碼
+    python -m scripts.backfill_signal_history --days 60 --skip-existing
+    python -m scripts.backfill_signal_history --days 7 --dry-run
 """
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, timedelta
+from pathlib import Path
 
 from app.config import Config
 from app.data.db import Database
@@ -24,6 +30,30 @@ from app.scoring import radar
 from app.scoring.history import snapshot_today
 
 logger = logging.getLogger("backfill_signal_history")
+
+
+def _snapshot_one_day(args: tuple[str, str, list[tuple[str, str]], bool]) -> tuple[str, int, float, str | None]:
+    """Worker entry：跑單一 as_of 的 snapshot_today。每個 worker process 自己建 DB 連線
+    （SQLite 在 WAL 模式下支援多 process 並行寫；snapshot_today 內部 transaction 短）。
+
+    回傳 (as_of_iso, rows_written, elapsed_seconds, error_msg | None)。
+    例外不擲出 — 用 error_msg 帶回主程序，避免 Pool 中斷其他 worker。
+    """
+    db_path, as_of_iso, candidate_stocks, include_fundamentals = args
+    t0 = time.time()
+    try:
+        # Database 初始化要 Path 物件（自己呼叫 .parent.mkdir）；Pool 跨 process 傳的是 str
+        # 比較好（Path 在某些情況不易 pickle），所以這裡再轉回。
+        db = Database(Path(db_path))
+        n = snapshot_today(
+            db,
+            include_fundamentals=include_fundamentals,
+            as_of=as_of_iso,
+            candidate_stocks=candidate_stocks,
+        )
+        return as_of_iso, n, time.time() - t0, None
+    except Exception as e:
+        return as_of_iso, 0, time.time() - t0, f"{type(e).__name__}: {e}"
 
 
 def _trading_days_back(db: Database, n: int, until: date) -> list[str]:
@@ -51,6 +81,11 @@ def main() -> int:
                         help="DELETE FROM signal_history 後再回填。改過 scoring 規則時用，避免新舊算法混在一起。")
     parser.add_argument("--dry-run", action="store_true", help="只列出計畫不實際跑")
     parser.add_argument("--no-fundamentals", action="store_true", help="略過財報以加速（長期分數會用 per_pbr 推估）")
+    parser.add_argument(
+        "--workers", type=int, default=4,
+        help="並行 process 數（預設 4）。每個 worker 同時處理一個 as_of 日期；"
+        " SQLite WAL 模式下多 process 並寫安全。設 1 = 序列模式（debug 用）。",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -90,24 +125,42 @@ def main() -> int:
 
     start = time.time()
     written_total = 0
-    for i, d in enumerate(plan, 1):
-        t0 = time.time()
-        try:
-            n = snapshot_today(
-                db,
-                include_fundamentals=not args.no_fundamentals,
-                as_of=d,
-                candidate_stocks=candidate_stocks,
-            )
-            elapsed = time.time() - t0
-            written_total += n
-            logger.info("[%d/%d] %s → %d 筆，%.1fs", i, len(plan), d, n, elapsed)
-        except Exception:
-            logger.exception("[%d/%d] %s 失敗，繼續下一天", i, len(plan), d)
+    workers = max(1, args.workers)
+    db_path = str(Config.load().database.path)
+    include_fundamentals = not args.no_fundamentals
+    job_args = [
+        (db_path, d, candidate_stocks, include_fundamentals) for d in plan
+    ]
+
+    if workers == 1:
+        # 序列模式 — 跟舊行為一致，方便 debug。
+        for i, args_tuple in enumerate(job_args, 1):
+            d, n, elapsed, err = _snapshot_one_day(args_tuple)
+            if err:
+                logger.error("[%d/%d] %s 失敗: %s", i, len(plan), d, err)
+            else:
+                written_total += n
+                logger.info("[%d/%d] %s → %d 筆，%.1fs", i, len(plan), d, n, elapsed)
+    else:
+        # 並行模式 — 每個 worker 跑一個 as_of。SQLite WAL 允許多 process 並寫，
+        # snapshot_today 的 transaction 短（< 1s）所以 lock 爭用很低。
+        # task 在主程序按 plan 順序送出，但 worker 完成順序不保證；用 as_completed 收結果。
+        logger.info("並行模式 workers=%d", workers)
+        completed = 0
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_snapshot_one_day, a): a[1] for a in job_args}
+            for fut in as_completed(futures):
+                completed += 1
+                d, n, elapsed, err = fut.result()
+                if err:
+                    logger.error("[%d/%d] %s 失敗: %s", completed, len(plan), d, err)
+                else:
+                    written_total += n
+                    logger.info("[%d/%d] %s → %d 筆，%.1fs", completed, len(plan), d, n, elapsed)
 
     total_elapsed = time.time() - start
-    logger.info("完成：%d 天、共寫 %d 筆、總耗時 %.1f 分鐘",
-                len(plan), written_total, total_elapsed / 60)
+    logger.info("完成：%d 天、共寫 %d 筆、總耗時 %.1f 分鐘（workers=%d）",
+                len(plan), written_total, total_elapsed / 60, workers)
     return 0
 
 
