@@ -133,10 +133,17 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - 進場 65 分、出場 40 分，很多行情會錯過
    - 建議用權重調優頁找出符合自己直覺的參數
 
-5. **目前預設權重（2026-04 調整）**
-   - `COMPOSITE_WEIGHTS`：short/mid/long = **0.20 / 0.60 / 0.20**（提高中期訊號權重）
-   - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.35 / 0.25 / 0.25 / 0.05 / 0.10**
-   - 調整目的：降低 value-trap（高股利/低估值單獨失真）對長期分數的干擾，提升品質與成長因子比重
+5. **目前預設權重（v3，2026-04-30 依 sub-factor IC 細調）**
+   - `COMPOSITE_WEIGHTS`：short/mid/long = **0.20 / 0.60 / 0.20**（不動 — reviewer 警告：mid IC ≈ composite IC 不足以推到 0.70/0.15/0.15）
+   - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.40 / 0.30 / 0.05 / 0.15 / 0.10**
+     - **`eps_cagr_3y` 從 0.25 砍到 0.05**：需 16 季 EPS（4 年）才算得出，全市場 `financials_quarterly_derived` 只 backfill 5 季 → 全 null。屬 **data quality 問題**，非因子問題；補完 4 年財報後可回升。
+     - **`dividend` 從 0.05 拉到 0.15**：是 long term 最穩定訊號（5/20/60 日 IC 都 ~+0.03、IR 1.86）。
+     - **`roe` / `margin_quality` 各 +0.05**：吸收 eps_cagr_3y 釋出的 0.20。`roe` 5d IC +0.091、IR 2.05 是長期最強單因子。
+     - **`valuation` 不動**：60 日 IC -0.048 看似反向但 reviewer 認為是 2026Q1 regime artifact（年底+農曆年+AI 主題股輾傳產），保留 0.10 防 regime switch。
+   - `SHORT_TERM_WEIGHTS`：ma_alignment 0.18 / kd 0.10 / macd 0.04 / rsi 0.07 / bollinger 0.06 / volume 0.08 / vr_macd 0.06 / foreign 0.20 / trust 0.13 / margin_change 0.08
+     - 改動原則：只動 5d/20d 都同向且樣本夠的訊號，不依賴小樣本 60d horizon 做大改。`rsi`/`bollinger`/`kd`/`vr_macd` 各 -0.01~0.02（一致弱反向），`ma_alignment` +0.03（60d 唯一強訊號）、`trust` +0.03（Q5-Q1 spread 大）。
+   - `MID_TERM_WEIGHTS`：trend 0.32 / foreign_cum 0.20 / trust_cum 0.17 / eps_growth 0.18 / revenue_growth 0.10 / vr_macd 0.03
+     - `trend` +0.02（全 horizon 一致正、Q5-Q1 spread 大）、`trust_cum` +0.02、`vr_macd` -0.01（mid 內也反向）。
 
 6. **雷達掃描不含基本面（預設）**
    - 勾「含基本面」會變慢但長期分數比較準
@@ -152,25 +159,44 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - 綜合分數同邏輯：短/中/長 任一為 None 就跳過並 re-normalize
    - `signal_history` 多欄位：`data_completeness`（0~1，加權後可信度）、`is_stale`（最新 daily_price 距今 > 3 天 → 1）
 
-8. **因子實測有效性（forward-return IC，2026-04 量測）**
+8. **因子實測有效性（forward-return IC）**
 
-   用 [/diagnostics 因子檢定頁](../web/app/diagnostics/page.tsx) 對 85 天歷史快照（2025-12-16 ~ 2026-04-29）算 Spearman IC（實際有效 IC 日期 77 天）。forward return 優先使用還原價（`daily_price_adj.close_adj`）以降低除權息/分割干擾，結論如下：
+   用 [/diagnostics 因子檢定頁](../web/app/diagnostics/page.tsx) 對歷史快照算 cross-sectional Spearman IC。forward return 優先使用還原價（`daily_price_adj.close_adj`）以降低除權息/分割干擾。
+
+   ### v3 baseline（2026-04-30 量測，100 天樣本 2025-11-25 ~ 2026-04-29）
 
    | 因子 | 5 日 IC | 20 日 IC | 60 日 IC | 結論 |
    |---|---|---|---|---|
-   | 短期 | -0.009 | -0.001 | +0.001 | **無預測力**（設計目標 5-10 日 horizon 反而 ≈ 0） |
-   | 中期 | +0.043 | +0.089 | **+0.143** | 主力訊號，IC 隨 horizon 遞增 |
-   | 長期 | +0.031 | +0.013 | -0.005 | 弱 / 60 日歸零（殖利率 + ROE 沒體現） |
-   | 綜合 | +0.051 | +0.096 | **+0.143** | 與中期幾乎一致，雷達主排序合理 |
-   | VR×MACD | -0.009 | -0.025 | -0.072 | 60 日輕微反向（量價爆衝→均值回歸） |
+   | 綜合 | +0.040 | +0.086 | **+0.126** | 主排序依據，IC 隨 horizon 遞增 |
+   | 中期 | +0.031 | +0.081 | +0.124 | 與綜合幾乎一致，是主力訊號 |
+   | 短期 | -0.014 | +0.009 | +0.036 | 5d 仍弱負、60d 略正（小樣本） |
+   | 長期 | +0.017 | -0.003 | -0.023 | 60d 仍負（待 eps_cagr_3y data 修好＋valuation regime 換證） |
+   | VR×MACD | -0.008 | -0.017 | -0.048 | 全 horizon 反向（量價爆衝→均值回歸）|
 
-   實作意義：
-   - **雷達 / 自選 用 composite 排序最有依據**（5/20/60 日 IC 都是正的且強度合理）
-   - **短期分數的子因子權重值得重新檢驗** — 設計給 5-10 日 horizon 但 IC 全 horizon ≈ 0，可能 RSI / KD / MA20 三類訊號互相抵銷
-   - **長期分數需要重看 ROE / EPS / 殖利率的權重比例** — 60 日 IC 應為正，目前 -0.005 表示這組組合在實證上沒抓到「便宜＋穩定盈利」的長線報酬
-   - **VR×MACD 雷達策略繼續用沒問題**（短期），但別把它當長期信號（60 日反向）
+   ### Sub-factor 觀察（v3 樣本）
 
-   重新跑此分析的方法：`python -m scripts.backfill_signal_history --days 60 --clear`（改 scoring 後跑一次清舊算法、重算最新 60 天），然後開 [/diagnostics](http://localhost:3000/diagnostics)。
+   - **mid trend** 60d IC +0.155、Q5-Q1 +21.05% — 全系統最強訊號
+   - **short ma_alignment** 60d IC +0.101 — 短期唯一持續有預測力的子因子
+   - **long roe** 5d IC +0.091（IR 2.05）— 長期最強單因子
+   - **short rsi** 60d IC -0.101、Q5-Q1 -11.86%；**bollinger** 60d -0.087；**kd** 60d -0.068 — 短期動量/超買超賣類在台股近 5 個月明顯反向
+   - **long valuation** 60d IC -0.030、Q5-Q1 -13.17% — 樣本期偏向 AI 主題股（成長），便宜股反而跌；獨立 reviewer 認為是 regime artifact 非真實 alpha
+   - **long eps_cagr_3y** 全 horizon null — 需要 16 季 EPS，全市場資料不足
+
+   ### v2→v3 變化解讀
+
+   v2（85 天）composite IC 為 +0.055/+0.098/+0.146，v3（100 天）為 +0.040/+0.086/+0.126，全 horizon 下跌。但 sub-factor IC（與權重無關）也同步下跌（mid trend 60d 從 +0.183→+0.155、ma_alignment 從 +0.119→+0.101）→ **變化 100% 來自樣本擴展（多 15 天 11-12 月，AI 行情前的 regime），非權重變糟**。v3 權重每條改動方向都有 sub-factor IC 證據支持。
+
+   ### 樣本量對結果的可信度警告
+
+   60d horizon 只有 40 個 IC 點（5d 95、20d 80），且這 40 個 forward window 互相高度相關（有效獨立樣本 ~10-15）。IC_IR > 3 的數字含相當統計幻覺成分。**做下一輪權重調整前建議先 backfill 到 ≥ 200 天（一次完整熊牛轉換）**，現有 100 天結論宜當「方向參考」非「最終答案」。
+
+   ### 重新跑此分析的方法
+
+   ```bash
+   # 改 scoring 後跑一次（清舊算法 + 重算 + 預熱 IC cache）
+   python -m scripts.backfill_signal_history --days 100 --clear --workers 4
+   ```
+   完成後開 [/diagnostics](http://localhost:3000/diagnostics) 即看到結果（warm cache <100ms）。
 
 ### ⚠️ 程式面
 

@@ -484,34 +484,37 @@ def score_valuation(fund: dict) -> Optional[float]:
 # 權重設定
 # ======================================================================
 SHORT_TERM_WEIGHTS = {
-    "ma_alignment": 0.15,
-    "kd": 0.12,
-    "macd": 0.04,           # -0.04 讓給 vr_macd（避免 MACD 維度被 double weighted）
-    "rsi": 0.08,
-    "bollinger": 0.07,
-    "volume": 0.08,         # -0.04 讓給 vr_macd（vr_macd 已含量能訊號）
-    "vr_macd": 0.08,        # 新增：VR26 ✕ MACD 柱複合，動能/反轉確認
-    "foreign": 0.20,
-    "trust": 0.10,
+    # v3：依 5d / 20d IC 共識做小幅再平衡（保守版，不依賴小樣本 60d 結論）
+    "ma_alignment": 0.18,   # +0.03 — 60d IC +0.119 唯一強訊號，5d/20d 弱故只小幅上調
+    "kd": 0.10,             # -0.02 — 5d/20d 一致弱負
+    "macd": 0.04,
+    "rsi": 0.07,            # -0.01 — 一致弱負，小砍
+    "bollinger": 0.06,      # -0.01
+    "volume": 0.08,
+    "vr_macd": 0.06,        # -0.02 — 全 horizon 反向，但 60d 樣本太少，保留小權重以防 regime switch
+    "foreign": 0.20,        # 結構性訊號保留
+    "trust": 0.13,          # +0.03 — Q5-Q1 spread 60d +11.29% 雖然 IC 弱
     "margin_change": 0.08,
 }
 
 MID_TERM_WEIGHTS = {
-    "trend": 0.30,
+    # v3：trend 仍是最強信號，trust_cum 升、eps_growth/revenue_growth 微降
+    "trend": 0.32,          # +0.02 — 5d/20d/60d 全 horizon 一致正
     "foreign_cum": 0.20,
-    "trust_cum": 0.15,
-    "eps_growth": 0.20,
-    "revenue_growth": 0.11, # -0.04 讓給 vr_macd（mid 沒 macd key 可砍，從 revenue_growth 撥）
-    "vr_macd": 0.04,        # 新增：mid 端權重較小，主要當動能 confirmation
+    "trust_cum": 0.17,      # +0.02 — 5d/20d 一致正且 spread 大
+    "eps_growth": 0.18,     # -0.02 — 仍正但讓出給更強因子
+    "revenue_growth": 0.10, # -0.01
+    "vr_macd": 0.03,        # -0.01 — short/mid 同方向反向，小幅修剪
 }
 
 LONG_TERM_WEIGHTS = {
-    # 依 diagnostics 初版調整：提升品質/成長，降低 value-trap 風險（高股利/低估值單獨失真）
-    "roe": 0.35,
-    "margin_quality": 0.25,
-    "eps_cagr_3y": 0.25,        # 改自 eps_growth：mid 用 yoy、long 用 3 年 CAGR，避免 double counting
-    "dividend": 0.05,
-    "valuation": 0.10,
+    # v3：把 eps_cagr_3y 大砍到 0.05（資料品質問題：需 16 季 EPS、全市場大量缺值 → 全 null）
+    # 釋出 0.20 給 roe/margin_quality/dividend；valuation 保留待 regime 換證
+    "roe": 0.40,            # +0.05 — 5d IC +0.091 IR 2.05 為長期最強單因子
+    "margin_quality": 0.30, # +0.05
+    "eps_cagr_3y": 0.05,    # -0.20 — data quality；資料修好（補 4 年財報）後可回升
+    "dividend": 0.15,       # +0.10 — 全 horizon 都穩定 +0.03，IR 1.86 為長期最穩定因子
+    "valuation": 0.10,      # 不動 — 60d -0.048 看似反向，但 reviewer 認為是 2026Q1 regime artifact
 }
 
 
