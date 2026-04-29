@@ -191,6 +191,8 @@ def check_alerts(db: Database, *, push: bool = True) -> list[AlertHit]:
 
     呼叫端：daily-update.bat 結尾呼叫一次（資料更新完才檢查）；UI `/api/alerts/check` endpoint
     給「測試規則」按鈕用（push=False 不真的推）。
+
+    last_triggered_at 只在 push=True 時更新——否則 UI 預覽會佔掉真實 daily push 的 24h cooldown。
     """
     today = taipei_today().isoformat()
     hits: list[AlertHit] = []
@@ -218,8 +220,9 @@ def check_alerts(db: Database, *, push: bool = True) -> list[AlertHit]:
                 continue
             hit.stock_name = _stock_name(db, hit.stock_id)
             hits.append(hit)
-        # 標記已觸發
-        if hits:
+        # 標記已觸發 — 只有真實推送時才寫 last_triggered_at，避免 UI 預覽（push=False）
+        # 把後續 daily-update 的 cooldown 用掉。
+        if push and hits:
             now_iso = taipei_now().replace(tzinfo=None).isoformat(timespec="seconds")
             conn.executemany(
                 "UPDATE alert_rule SET last_triggered_at=? WHERE id=?",
@@ -237,3 +240,48 @@ def check_alerts(db: Database, *, push: bool = True) -> list[AlertHit]:
             title=f"📡 {today} 預警觸發 {len(hits)} 條",
         )
     return hits
+
+
+def current_state(db: Database, rule: dict) -> tuple[float | None, bool]:
+    """非破壞性查詢：回傳 (actual_value, triggered)，不更新任何狀態。
+
+    給 UI 在規則列表上顯示「現值 / 離觸發距離」用：即使規則沒被觸發也回 actual_value，
+    讓使用者看到「現價 950，離 800 還 18.7%」這種距離資訊。
+    """
+    kind = rule["rule_kind"]
+    sid = rule["stock_id"]
+    try:
+        with db.connect() as conn:
+            if kind in ("price_below", "price_above"):
+                hit = _check_price_rule(conn, dict(rule))
+                if hit is not None:
+                    return hit.actual_value, True
+                row = conn.execute(
+                    "SELECT close FROM daily_price WHERE stock_id=? ORDER BY date DESC LIMIT 1",
+                    (sid,),
+                ).fetchone()
+                return (float(row["close"]) if row and row["close"] is not None else None), False
+            if kind in ("score_drop", "score_rise"):
+                hit = _check_score_rule(conn, dict(rule))
+                if hit is not None:
+                    return hit.actual_value, True
+                rows = conn.execute(
+                    "SELECT short FROM signal_history WHERE stock_id=? ORDER BY as_of DESC LIMIT 8",
+                    (sid,),
+                ).fetchall()
+                if len(rows) < 2 or rows[0]["short"] is None or rows[-1]["short"] is None:
+                    return None, False
+                delta = float(rows[0]["short"]) - float(rows[-1]["short"])
+                return delta, False
+            if kind == "atr_breached":
+                hit = _check_atr_rule(db, conn, dict(rule))
+                if hit is not None:
+                    return hit.actual_value, True
+                row = conn.execute(
+                    "SELECT close FROM daily_price WHERE stock_id=? ORDER BY date DESC LIMIT 1",
+                    (sid,),
+                ).fetchone()
+                return (float(row["close"]) if row and row["close"] is not None else None), False
+    except Exception as e:
+        logger.warning("current_state(rule=%s) 評估失敗: %s", rule.get("id"), e)
+    return None, False

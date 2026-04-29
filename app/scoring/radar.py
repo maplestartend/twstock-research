@@ -176,7 +176,7 @@ def score_all(
     with db.connect() as conn:
         price_all = pd.read_sql_query(
             """
-            SELECT p.date, p.stock_id, p.open, p.high, p.low, p.close, p.volume,
+            SELECT p.date, p.stock_id, p.open, p.high, p.low, p.close, p.volume, p.amount,
                    a.close_adj, a.open_adj, a.high_adj, a.low_adj
             FROM daily_price p
             LEFT JOIN daily_price_adj a
@@ -185,6 +185,24 @@ def score_all(
             """,
             conn, params=[since, as_of_str],
         )
+        # 在還原價覆寫前，用「原始 close」算流動性與當日漲跌（限漲跌停偵測要的是真實價格漲跌，
+        # 還原價在除權息/分割日會讓 pct_change 看起來不對 → 漏掉限制鎖死訊號）
+        liquidity_by_sid: dict[str, dict[str, float | None]] = {}
+        if not price_all.empty:
+            for sid, g in price_all.sort_values("date").groupby("stock_id"):
+                tail20 = g.tail(20)
+                amt_mean = tail20["amount"].mean() if "amount" in tail20.columns else None
+                amount_20d = float(amt_mean) if amt_mean is not None and not pd.isna(amt_mean) else None
+                pct_change: float | None = None
+                if len(g) >= 2:
+                    last_close = g.iloc[-1]["close"]
+                    prev_close = g.iloc[-2]["close"]
+                    if prev_close and not pd.isna(prev_close) and not pd.isna(last_close):
+                        pct_change = float((last_close - prev_close) / prev_close)
+                liquidity_by_sid[sid] = {
+                    "amount_20d": amount_20d,
+                    "pct_change_today": pct_change,
+                }
         if not price_all.empty:
             price_all["date"] = pd.to_datetime(price_all["date"])
             # 有還原價就替換，沒還原就保留原值
@@ -379,6 +397,8 @@ def score_all(
                 "rev_yoy_month": rev_yoy_m,
                 "rev_yoy_streak_pos": rev_streak.get("rev_yoy_streak_pos"),
                 "rev_yoy_streak_hot": rev_streak.get("rev_yoy_streak_hot"),
+                "amount_20d": liquidity_by_sid.get(sid, {}).get("amount_20d"),
+                "pct_change_today": liquidity_by_sid.get(sid, {}).get("pct_change_today"),
                 "as_of": as_of_str,
             })
         except Exception as e:

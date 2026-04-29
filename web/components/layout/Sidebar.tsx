@@ -50,6 +50,7 @@ const SECTIONS: NavSection[] = [
     heading: "系統",
     items: [
       { href: "/dq", icon: "health_and_safety", label: "資料品質" },
+      { href: "/diagnostics", icon: "insights", label: "因子檢定" },
     ],
   },
 ];

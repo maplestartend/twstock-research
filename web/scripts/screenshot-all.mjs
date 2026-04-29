@@ -25,6 +25,7 @@ const PAGES = [
   { slug: "holdings", path: "/holdings", slow: false },
   { slug: "radar", path: "/radar", slow: true },
   { slug: "dividend-calendar", path: "/dividend-calendar", slow: false },
+  { slug: "alerts", path: "/alerts", slow: false },
   { slug: "history", path: "/history", slow: true },
   { slug: "watchlist-manage", path: "/watchlist-manage", slow: false },
   { slug: "backtest", path: "/backtest", slow: false },
@@ -33,6 +34,7 @@ const PAGES = [
   { slug: "grid-search", path: "/grid-search", slow: false },
   { slug: "weight-tuner", path: "/weight-tuner", slow: false },
   { slug: "dq", path: "/dq", slow: true },
+  { slug: "diagnostics", path: "/diagnostics", slow: false },
 ];
 
 const THEMES = ["dark", "light"];

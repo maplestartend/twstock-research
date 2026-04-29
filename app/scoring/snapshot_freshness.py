@@ -41,8 +41,8 @@ def _latest_snapshot_date(db: Database) -> str | None:
 # 抓到，要等四張表同步才算 stable。
 _SCORING_DATASETS: tuple[str, ...] = (
     "daily_price",
-    "daily_institutional",
-    "daily_margin",
+    "institutional",
+    "margin",
     "per_pbr",
 )
 

@@ -591,6 +591,39 @@ export type DataFreshness = {
   tone: "ok" | "warning" | "error" | "neutral";
 };
 
+export type PositionSuggestRequest = {
+  capital: number;
+  entry_price: number;
+  stop_price: number;
+  risk_per_trade?: number;
+  lot_size?: number;
+};
+
+export type PositionSuggestResponse = {
+  maxShares: number;
+  maxLots: number;
+  maxPositionValue: number;
+  riskAmount: number;
+  riskPerShare: number;
+};
+
+export type FactorICRow = {
+  factor: string;
+  horizon: number;
+  ic: number | null;
+  icIr: number | null;
+  topQuintileReturn: number | null;
+  botQuintileReturn: number | null;
+  nDates: number;
+  avgNStocks: number;
+};
+
+export type FactorICResponse = {
+  lookbackDays: number;
+  horizons: number[];
+  rows: FactorICRow[];
+};
+
 export type StockMeta = {
   stockId: string; stockName: string;
   industry: string | null; marketType: string | null;
@@ -757,6 +790,9 @@ export type AlertRule = {
   active: boolean;
   lastTriggeredAt: string | null;
   createdAt: string;
+  // server-side 即時評估 (僅 active 規則；資料不足時 actualValue 為 null)
+  actualValue: number | null;
+  triggered: boolean;
 };
 
 export type AlertHit = {

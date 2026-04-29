@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from api.common import get_stock_name as _stock_name, make_placeholders, safe_float as _safe
 from api.deps import get_db
+from api.schemas.common import CamelModel
 from api.schemas.portfolio import (
     HoldingRow,
     JournalStatRow,
@@ -60,7 +61,7 @@ class PositionSuggestBody(BaseModel):
     lot_size: int = Field(default=1000, ge=1)
 
 
-class PositionSuggestResponse(BaseModel):
+class PositionSuggestResponse(CamelModel):
     max_shares: int
     max_lots: float
     max_position_value: float

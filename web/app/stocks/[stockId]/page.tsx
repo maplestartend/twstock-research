@@ -17,6 +17,7 @@ import { fmtPct, fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { StockScorePanel } from "./StockScorePanel";
 import { NarrativeSection } from "./NarrativeSection";
+import { PositionSuggestCard } from "./PositionSuggestCard";
 
 export const revalidate = 60;
 
@@ -106,13 +107,21 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
         </div>
       </section>
 
-      {/* ATR exits（停損 + 動態停利） */}
+      {/* ATR exits（停損 + 動態停利）+ 進場買進試算 */}
       {atr && (atr.fixed || atr.trailing || atr.takeProfit) && (
         <section className="flex flex-col gap-3">
           <SectionTitle icon="shield">
             ATR 動態出場（停損 2×、停利 {atr.takeProfit ? atr.takeProfit.multiplier.toFixed(1) : "3.0"}× ATR-{atr.period}）
           </SectionTitle>
           <AtrStopBlock atr={atr} latestClose={price.ohlcv[price.ohlcv.length - 1]?.close ?? null} />
+          {/* 把停損自動帶入「現在買的話該買幾張」決策卡：使用者不必跳到新增交易表單試算 */}
+          {!myHolding && atr.fixed && (
+            <PositionSuggestCard
+              stockId={stockId}
+              entryPrice={price.ohlcv[price.ohlcv.length - 1]?.close ?? null}
+              stopPrice={atr.fixed.stopPrice}
+            />
+          )}
           {!myHolding && (
             <p className="text-xs text-[var(--text-tertiary)] pl-1">
               <Icon name="info" size={12} className="inline-block mr-1 align-text-bottom" />

@@ -36,10 +36,27 @@ def snapshot_today(db: Database, include_fundamentals: bool = True, *, as_of=Non
     if df.empty:
         return 0
 
+    # 流動性硬過濾：策略命中的候選池剔除「實際上買不到 / 賣不掉」的股票（成交量過低、
+    # 當日漲跌停鎖死）。為什麼只 gating 策略標籤而不影響分數本身：score_all 的分數仍要
+    # 寫進 signal_history（讓個股歷史分數曲線不出現空洞），只有 radar hits（讀 signal_history
+    # 的 strategies 欄位）需要被「可交易性」過濾。
+    #
+    # 安全閥：若流動性欄位有效資料 < 50%（例：舊 DB 還沒 backfill amount），就跳過該條件，
+    # 避免整個雷達清空。
+    tradable = df
+    amt = df.get("amount_20d")
+    if amt is not None and amt.notna().mean() > 0.5:
+        # 20 日平均成交額 < 100 萬元：太薄，掛單即移動報價、無法以接近收盤價成交
+        tradable = tradable[amt.fillna(0) >= 1_000_000]
+    chg = df.get("pct_change_today")
+    if chg is not None and chg.notna().mean() > 0.5:
+        # 當日漲跌幅 ≥ 9.5%：接近 ±10% 漲跌停，多半已鎖死無交易（流動性蒸發）
+        tradable = tradable[chg.reindex(tradable.index).fillna(0).abs() < 0.095]
+
     # 策略命中（每檔可能命中多個 strategy）：用 dict 收，最後 vector 化 ',' join
     strategy_hits: dict[str, list[str]] = {sid: [] for sid in df["stock_id"]}
     for name, strat in radar.STRATEGIES.items():
-        hit = strat.filter_fn(df)
+        hit = strat.filter_fn(tradable)
         for sid in hit["stock_id"]:
             strategy_hits[sid].append(name)
 

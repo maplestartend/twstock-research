@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import alerts, backtest, calendar, dashboard, dq, history, market, portfolio, radar, search, stocks, system, watchlist, weight_tuner
+from api.routers import alerts, backtest, calendar, dashboard, diagnostics, dq, history, market, portfolio, radar, search, stocks, system, watchlist, weight_tuner
 
 app = FastAPI(
     title="台股研究儀表板 API",
@@ -44,6 +44,7 @@ app.include_router(search.router)
 app.include_router(dq.router)
 app.include_router(system.router)
 app.include_router(alerts.router)
+app.include_router(diagnostics.router)
 
 
 @app.get("/api/health", tags=["system"])

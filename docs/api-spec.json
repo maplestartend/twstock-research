@@ -119,20 +119,32 @@
         "type": "object"
       },
       "AlertRuleRow": {
+        "description": "欄位 snake_case，序列化成 camelCase（CamelModel 規則）。",
         "properties": {
           "active": {
             "title": "Active",
             "type": "boolean"
           },
-          "created_at": {
-            "title": "Created At",
+          "actualValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actualvalue"
+          },
+          "createdAt": {
+            "title": "Createdat",
             "type": "string"
           },
           "id": {
             "title": "Id",
             "type": "integer"
           },
-          "last_triggered_at": {
+          "lastTriggeredAt": {
             "anyOf": [
               {
                 "type": "string"
@@ -141,7 +153,7 @@
                 "type": "null"
               }
             ],
-            "title": "Last Triggered At"
+            "title": "Lasttriggeredat"
           },
           "note": {
             "anyOf": [
@@ -154,12 +166,12 @@
             ],
             "title": "Note"
           },
-          "rule_kind": {
-            "title": "Rule Kind",
+          "ruleKind": {
+            "title": "Rulekind",
             "type": "string"
           },
-          "stock_id": {
-            "title": "Stock Id",
+          "stockId": {
+            "title": "Stockid",
             "type": "string"
           },
           "threshold": {
@@ -172,16 +184,21 @@
               }
             ],
             "title": "Threshold"
+          },
+          "triggered": {
+            "default": false,
+            "title": "Triggered",
+            "type": "boolean"
           }
         },
         "required": [
           "id",
-          "stock_id",
-          "rule_kind",
+          "stockId",
+          "ruleKind",
           "threshold",
           "note",
           "active",
-          "created_at"
+          "createdAt"
         ],
         "title": "AlertRuleRow",
         "type": "object"
@@ -1359,6 +1376,111 @@
           "exDate"
         ],
         "title": "ExDividendEvent",
+        "type": "object"
+      },
+      "FactorICResponse": {
+        "properties": {
+          "horizons": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Horizons",
+            "type": "array"
+          },
+          "lookbackDays": {
+            "title": "Lookbackdays",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/FactorICRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lookbackDays",
+          "horizons",
+          "rows"
+        ],
+        "title": "FactorICResponse",
+        "type": "object"
+      },
+      "FactorICRow": {
+        "properties": {
+          "avgNStocks": {
+            "title": "Avgnstocks",
+            "type": "number"
+          },
+          "botQuintileReturn": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Botquintilereturn"
+          },
+          "factor": {
+            "title": "Factor",
+            "type": "string"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "integer"
+          },
+          "ic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ic"
+          },
+          "icIr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icir"
+          },
+          "nDates": {
+            "title": "Ndates",
+            "type": "integer"
+          },
+          "topQuintileReturn": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topquintilereturn"
+          }
+        },
+        "required": [
+          "factor",
+          "horizon",
+          "ic",
+          "icIr",
+          "topQuintileReturn",
+          "botQuintileReturn",
+          "nDates",
+          "avgNStocks"
+        ],
+        "title": "FactorICRow",
         "type": "object"
       },
       "GridSearchRequest": {
@@ -3194,33 +3316,33 @@
       },
       "PositionSuggestResponse": {
         "properties": {
-          "max_lots": {
-            "title": "Max Lots",
+          "maxLots": {
+            "title": "Maxlots",
             "type": "number"
           },
-          "max_position_value": {
-            "title": "Max Position Value",
+          "maxPositionValue": {
+            "title": "Maxpositionvalue",
             "type": "number"
           },
-          "max_shares": {
-            "title": "Max Shares",
+          "maxShares": {
+            "title": "Maxshares",
             "type": "integer"
           },
-          "risk_amount": {
-            "title": "Risk Amount",
+          "riskAmount": {
+            "title": "Riskamount",
             "type": "number"
           },
-          "risk_per_share": {
-            "title": "Risk Per Share",
+          "riskPerShare": {
+            "title": "Riskpershare",
             "type": "number"
           }
         },
         "required": [
-          "max_shares",
-          "max_lots",
-          "max_position_value",
-          "risk_amount",
-          "risk_per_share"
+          "maxShares",
+          "maxLots",
+          "maxPositionValue",
+          "riskAmount",
+          "riskPerShare"
         ],
         "title": "PositionSuggestResponse",
         "type": "object"
@@ -5346,7 +5468,7 @@
     },
     "/api/alerts/rules": {
       "get": {
-        "description": "列出所有預警規則。?active_only=true 只看開啟中。",
+        "description": "列出所有預警規則。?active_only=true 只看開啟中。\n\n每條 active 規則會即時評估 actualValue/triggered，供 UI 顯示「現值 / 離觸發距離」。\ninactive 規則不評估（沒意義也避免做白工）。",
         "operationId": "list_rules_api_alerts_rules_get",
         "parameters": [
           {
@@ -6003,6 +6125,52 @@
         "summary": "Snapshot Delta",
         "tags": [
           "dashboard"
+        ]
+      }
+    },
+    "/api/diagnostics/factor-ic": {
+      "get": {
+        "description": "每個 (factor, horizon) 的 forward-return Information Coefficient + IC_IR + quintile spread。\n\n解讀：\n- `ic`：cross-sectional Spearman 相關，取所有日期平均。> 0.05 算有訊號、> 0.1 算強\n- `ic_ir`：mean/std，反映訊號穩定度。> 0.5 算可信賴的因子\n- `top_quintile_return - bot_quintile_return`：實際多空組合可獲取的 spread\n- 樣本不足（單日 < 30 檔 / 全期 < 5 個 IC 點）會回 null",
+        "operationId": "factor_ic_api_diagnostics_factor_ic_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lookback_days",
+            "required": false,
+            "schema": {
+              "default": 120,
+              "maximum": 365,
+              "minimum": 30,
+              "title": "Lookback Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactorICResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Factor Ic",
+        "tags": [
+          "diagnostics"
         ]
       }
     },

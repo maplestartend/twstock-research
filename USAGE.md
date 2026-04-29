@@ -215,6 +215,13 @@ python -m scripts.backfill_financials_history --quarters 8
 ### 🩺 資料品質
 五類異常掃描：漲停/急漲、跌停/急跌（critical）、量爆（≥5×均量）、停滯（≥3 日不變）、跳空缺口（>15% 且查無 adj_event，疑漏抓還原；critical）。+ 缺值掃描（近 N 日缺超過 1/3）。窗口 5/10/20/60 日切換。各異常類型自動提示對應修補腳本。
 
+### 📊 因子檢定
+對 `signal_history` 已寫入的歷史快照算 forward-return Information Coefficient（Spearman 秩相關），檢驗 short / mid / long / composite / vr_macd 五個分數對 5 / 20 / 60 日後的報酬率有沒有預測力。
+- **IC heatmap**：紅 = 正向預測（IC > 0）、綠 = 反向、灰 = 無訊號（|IC| < 0.05）；強度分 weak / mid / strong 三級，> 0.10 算強
+- **IC_IR**（mean / std）：跨期穩定度，> 0.5 算可信賴；< 0.3 表時好時壞，要警惕過擬合
+- **Q5 − Q1 spread**：「買最強 20% / 賣最弱 20%」多空組合的平均 forward return
+- 樣本不足（單日 < 30 檔 / 全期 < 5 個 IC 點）→ 回 — 而非假數字。第一次跑若 signal_history 太薄，先 `python -m scripts.backfill_signal_history --days 60`（30 分鐘）
+
 ### ⚙️ 權重調優
 19 子維度 slider（短 9 + 中 5 + 長 5）。即時看自選股**原分數 vs 新分數 + 差異**。
 - **🎨 主題式預設**：6 組（default / conservative / growth / technical / chip / fundamental，定義在 [app/scoring/rubric.py](app/scoring/rubric.py) 的 `BUILTIN_WEIGHT_PRESETS`）
@@ -249,6 +256,7 @@ python -m scripts.backfill_financials_history --quarters 8
 | `python -m scripts.dq_check` / `--push` | 資料品質檢查 | ~1 秒 |
 | `python -m scripts.run_stats` / `--tail 20` / `--show-errors` | 執行統計 | ~1 秒 |
 | `python -m scripts.prune_signals` / `--dry-run` / `--keep 60` | signal_history 壓縮（近 90 天逐日 + 之前只留週一），偶爾跑控制 DB 體積 | ~1 秒 |
+| `python -m scripts.backfill_signal_history --days 60` | 把 signal_history 回填 60 個交易日（給「因子檢定」頁吃）；改過 scoring 邏輯後加 `--clear` 先清舊算法的快照再重算 | ~60 秒/天 |
 
 > `--push-line` 舊旗標仍相容（等同 `--push`），LINE Notify 已停服。
 
