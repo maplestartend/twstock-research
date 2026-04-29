@@ -624,6 +624,24 @@ export type FactorICResponse = {
   rows: FactorICRow[];
 };
 
+export type SubFactorICRow = {
+  horizon: string;            // 'short' | 'mid' | 'long'
+  factor: string;             // 'rsi', 'kd', 'ma_alignment', etc.
+  forwardHorizon: number;     // 5 / 20 / 60
+  ic: number | null;
+  icIr: number | null;
+  topQuintileReturn: number | null;
+  botQuintileReturn: number | null;
+  nDates: number;
+  avgNStocks: number;
+};
+
+export type SubFactorICResponse = {
+  lookbackDays: number;
+  horizons: number[];
+  rows: SubFactorICRow[];
+};
+
 export type StockMeta = {
   stockId: string; stockName: string;
   industry: string | null; marketType: string | null;

@@ -330,6 +330,9 @@ def score_all(
 
     empty = pd.DataFrame()
     rows = []
+    # 子因子分數累計（給 /diagnostics sub-factor IC 用）。長格式，每檔 × 每個 horizon 子項一列。
+    # 統一在這層收，避免 snapshot_today 還要重跑 score_*_term 一次。
+    parts_rows: list[dict] = []
     for sid, name in stocks:
         price = price_groups.get(sid, empty)
         if price.empty or len(price) < min_days:
@@ -360,6 +363,15 @@ def score_all(
             mid = eng.score_mid_term(price, chip_snap, fund_snap)
             long_ = eng.score_long_term(fund_snap, stock_id=sid)
             vr_macd_val = short.parts.get("vr_macd")
+            # 收子因子分數（None 也記，下游 IC 算法跑 dropna 自動排除）
+            for horizon_name, breakdown in (("short", short), ("mid", mid), ("long", long_)):
+                for factor_name, factor_score in breakdown.parts.items():
+                    parts_rows.append({
+                        "stock_id": sid,
+                        "horizon": horizon_name,
+                        "factor": factor_name,
+                        "score": factor_score,
+                    })
             # vr26 / macd_hist 原始值給 _strat_vr_macd 做更嚴格的 filter（VR>150 + MACD 紅柱）
             last_row = price.iloc[-1]
             vr26_val = float(last_row["vr26"]) if pd.notna(last_row.get("vr26")) else None
@@ -412,7 +424,15 @@ def score_all(
             })
         except Exception as e:
             logger.debug("score %s 失敗: %s", sid, e)
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    # 子因子分數透過 .attrs 帶出（保持 score_all 簽名不變，避免 monkeypatch 測試破壞）。
+    # snapshot_today 是唯一讀者，讀完就寫入 signal_history_factor_parts。
+    if parts_rows and not out.empty:
+        as_of_value = out["as_of"].iloc[0]
+        parts_df = pd.DataFrame(parts_rows)
+        parts_df["as_of"] = as_of_value
+        out.attrs["parts"] = parts_df
+    return out
 
 
 # ======================================================================

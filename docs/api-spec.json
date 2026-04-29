@@ -4605,6 +4605,116 @@
         "title": "StockScoreView",
         "type": "object"
       },
+      "SubFactorICResponse": {
+        "properties": {
+          "horizons": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Horizons",
+            "type": "array"
+          },
+          "lookbackDays": {
+            "title": "Lookbackdays",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/SubFactorICRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lookbackDays",
+          "horizons",
+          "rows"
+        ],
+        "title": "SubFactorICResponse",
+        "type": "object"
+      },
+      "SubFactorICRow": {
+        "properties": {
+          "avgNStocks": {
+            "title": "Avgnstocks",
+            "type": "number"
+          },
+          "botQuintileReturn": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Botquintilereturn"
+          },
+          "factor": {
+            "title": "Factor",
+            "type": "string"
+          },
+          "forwardHorizon": {
+            "title": "Forwardhorizon",
+            "type": "integer"
+          },
+          "horizon": {
+            "title": "Horizon",
+            "type": "string"
+          },
+          "ic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ic"
+          },
+          "icIr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icir"
+          },
+          "nDates": {
+            "title": "Ndates",
+            "type": "integer"
+          },
+          "topQuintileReturn": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topquintilereturn"
+          }
+        },
+        "required": [
+          "horizon",
+          "factor",
+          "forwardHorizon",
+          "ic",
+          "icIr",
+          "topQuintileReturn",
+          "botQuintileReturn",
+          "nDates",
+          "avgNStocks"
+        ],
+        "title": "SubFactorICRow",
+        "type": "object"
+      },
       "TradeCreateBody": {
         "description": "新增交易 request body。fee/tax 留空 → 後端依券商規則算\n（手續費 0.1425%×券商折扣；賣方證交稅依代號：一般股 0.3%、股票型 ETF 0.1%、債券 ETF 0%）。",
         "properties": {
@@ -6169,6 +6279,52 @@
           }
         },
         "summary": "Factor Ic",
+        "tags": [
+          "diagnostics"
+        ]
+      }
+    },
+    "/api/diagnostics/sub-factor-ic": {
+      "get": {
+        "description": "子因子 IC 拆解：每個 (horizon, factor, forward_horizon) 的預測力。\n\n回答「短期分數整體 IC ≈ 0，是哪個子因子（rsi / kd / ma_alignment / foreign...）拖累？」。\n讀 signal_history_factor_parts 表，需先用 backfill_signal_history 寫入分數歷史；\n舊 schema（沒寫 parts）的 DB 會回空 rows。",
+        "operationId": "sub_factor_ic_api_diagnostics_sub_factor_ic_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lookback_days",
+            "required": false,
+            "schema": {
+              "default": 120,
+              "maximum": 365,
+              "minimum": 30,
+              "title": "Lookback Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubFactorICResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sub Factor Ic",
         "tags": [
           "diagnostics"
         ]

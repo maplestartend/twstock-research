@@ -13,6 +13,7 @@ from app.scoring.factor_diagnostics import (
     DEFAULT_HORIZONS,
     DEFAULT_LOOKBACK_DAYS,
     compute_factor_ic,
+    compute_subfactor_ic,
 )
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
@@ -64,6 +65,58 @@ def factor_ic(
         for r in results
     ]
     return FactorICResponse(
+        lookback_days=lookback_days,
+        horizons=list(horizons),
+        rows=rows,
+    )
+
+
+class SubFactorICRow(CamelModel):
+    horizon: str
+    factor: str
+    forward_horizon: int
+    ic: float | None
+    ic_ir: float | None
+    top_quintile_return: float | None
+    bot_quintile_return: float | None
+    n_dates: int
+    avg_n_stocks: float
+
+
+class SubFactorICResponse(CamelModel):
+    lookback_days: int
+    horizons: list[int]
+    rows: list[SubFactorICRow]
+
+
+@router.get("/sub-factor-ic", response_model=SubFactorICResponse)
+def sub_factor_ic(
+    lookback_days: int = Query(default=DEFAULT_LOOKBACK_DAYS, ge=30, le=365),
+    db: Database = Depends(get_db),
+) -> SubFactorICResponse:
+    """子因子 IC 拆解：每個 (horizon, factor, forward_horizon) 的預測力。
+
+    回答「短期分數整體 IC ≈ 0，是哪個子因子（rsi / kd / ma_alignment / foreign...）拖累？」。
+    讀 signal_history_factor_parts 表，需先用 backfill_signal_history 寫入分數歷史；
+    舊 schema（沒寫 parts）的 DB 會回空 rows。
+    """
+    horizons = DEFAULT_HORIZONS
+    results = compute_subfactor_ic(db, lookback_days=lookback_days, horizons=horizons)
+    rows = [
+        SubFactorICRow(
+            horizon=r.horizon,
+            factor=r.factor,
+            forward_horizon=r.forward_horizon,
+            ic=r.ic,
+            ic_ir=r.ic_ir,
+            top_quintile_return=r.top_quintile_return,
+            bot_quintile_return=r.bot_quintile_return,
+            n_dates=r.n_dates,
+            avg_n_stocks=r.avg_n_stocks,
+        )
+        for r in results
+    ]
+    return SubFactorICResponse(
         lookback_days=lookback_days,
         horizons=list(horizons),
         rows=rows,

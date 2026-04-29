@@ -154,6 +154,23 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_signal_asof ON signal_history(as_of)",
     "CREATE INDEX IF NOT EXISTS idx_signal_stock ON signal_history(stock_id)",
+    # 子因子分數歷史（給 /diagnostics 算 sub-factor IC 用）。
+    # 長格式：每檔 × 每天 × 每個 horizon × 每個 sub-factor 一列。
+    # short ~10 個 sub-factor + mid 6 + long 5 = 21 個 → 2300 檔 × 21 = ~48k 列/天，
+    # 90 天 ≈ 4.3M 列（SQLite 單表輕鬆）。橫格式（直接擴 signal_history 21 欄）
+    # 也能用，但長格式對「跑遍所有因子算 IC」是 GROUP BY factor 一行 query 解決。
+    """
+    CREATE TABLE IF NOT EXISTS signal_history_factor_parts (
+        as_of TEXT NOT NULL,
+        stock_id TEXT NOT NULL,
+        horizon TEXT NOT NULL,
+        factor TEXT NOT NULL,
+        score REAL,
+        PRIMARY KEY (stock_id, as_of, horizon, factor)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_factor_parts_asof ON signal_history_factor_parts(as_of)",
+    "CREATE INDEX IF NOT EXISTS idx_factor_parts_factor ON signal_history_factor_parts(horizon, factor)",
     """
     CREATE TABLE IF NOT EXISTS adj_event (
         date TEXT NOT NULL,

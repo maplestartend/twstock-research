@@ -231,3 +231,143 @@ def compute_factor_ic(
 
 def to_dict_list(results: list[FactorICResult]) -> list[dict]:
     return [asdict(r) for r in results]
+
+
+# ======================================================================
+# 子因子（sub-factor）IC：拆解 short/mid/long 內部各小項的預測力
+# ======================================================================
+
+@dataclass(frozen=True)
+class SubFactorICResult:
+    """單一 (horizon, factor) 子因子的 IC 結果。
+
+    例：horizon='short', factor='rsi' → RSI 子分數對 5/20/60 日 forward return 的相關性。
+    """
+    horizon: str
+    factor: str
+    forward_horizon: int  # 該 IC 量測的 forward return 天數
+    ic: float | None
+    ic_ir: float | None
+    top_quintile_return: float | None
+    bot_quintile_return: float | None
+    n_dates: int
+    avg_n_stocks: float
+
+
+def _fetch_subfactor_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """讀 signal_history_factor_parts + 對應的 daily_price。
+    參考 _fetch_data 的 lookback 計算。"""
+    today = taipei_today()
+    earliest = (today - timedelta(days=lookback_days + max_horizon + 30)).isoformat()
+    with db.connect() as conn:
+        parts = pd.read_sql_query(
+            "SELECT as_of, stock_id, horizon, factor, score "
+            "FROM signal_history_factor_parts WHERE as_of >= ?",
+            conn, params=[earliest],
+        )
+        prices = pd.read_sql_query(
+            """
+            SELECT p.date, p.stock_id, COALESCE(a.close_adj, p.close) AS close
+            FROM daily_price p
+            LEFT JOIN daily_price_adj a
+              ON a.stock_id = p.stock_id AND a.date = p.date
+            WHERE p.date >= ?
+            """,
+            conn, params=[earliest],
+        )
+    return parts, prices
+
+
+def compute_subfactor_ic(
+    db: Database,
+    *,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+) -> list[SubFactorICResult]:
+    """對 signal_history_factor_parts 內每個 (horizon, factor) 子分數算 IC。
+
+    輸出可拿來回答「短期分數整體 IC ≈ 0，是哪個子因子（RSI / KD / MA / foreign...）拖累？」。
+    """
+    if not horizons:
+        return []
+    parts, prices = _fetch_subfactor_data(db, lookback_days, max(horizons))
+    if parts.empty or prices.empty:
+        logger.info("subfactor_diagnostics: 資料不足 (parts=%d, prices=%d)", len(parts), len(prices))
+        return []
+
+    parts = parts.copy()
+    parts["as_of"] = pd.to_datetime(parts["as_of"])
+    price_wide = _build_price_pivot(prices)
+    if price_wide.empty:
+        return []
+
+    # parts 表可能 ~ 50k row/day × 90 day = 4.5M 列，pivot_table 一次太大 →
+    # 改 groupby (horizon, factor) 拆成 N 個小 pivot，每個 pivot 只用該因子的 row。
+    # 同時把 price_wide 縮到 parts 涵蓋的 stock 集合（剔除權證等）。
+    factor_stocks = parts["stock_id"].unique()
+    common_cols = price_wide.columns.intersection(factor_stocks)
+    if not common_cols.empty:
+        price_wide = price_wide[common_cols]
+
+    out: list[SubFactorICResult] = []
+    forward_returns_by_h: dict[int, pd.DataFrame] = {}
+    for horizon in horizons:
+        forward_close = price_wide.shift(-horizon)
+        forward_returns_by_h[horizon] = (forward_close / price_wide) - 1.0
+
+    for (horizon_name, factor_name), grp in parts.groupby(["horizon", "factor"], sort=False):
+        # pivot 此子因子分數：rows=as_of, cols=stock_id
+        try:
+            factor_pivot = grp.pivot_table(
+                index="as_of", columns="stock_id", values="score", aggfunc="first",
+            )
+        except Exception as e:
+            logger.warning("subfactor pivot 失敗 (%s/%s): %s", horizon_name, factor_name, e)
+            continue
+
+        for fwd_h, forward_returns in forward_returns_by_h.items():
+            ic_per_date: list[float] = []
+            q5_per_date: list[float] = []
+            q1_per_date: list[float] = []
+            n_per_date: list[int] = []
+
+            common_dates = factor_pivot.index.intersection(forward_returns.index)
+            for d in common_dates:
+                x = factor_pivot.loc[d]
+                y = forward_returns.loc[d]
+                ic, q5, q1, n = _ic_and_quintile(x, y)
+                if ic is None:
+                    continue
+                ic_per_date.append(ic)
+                if q5 is not None and q1 is not None:
+                    q5_per_date.append(q5)
+                    q1_per_date.append(q1)
+                n_per_date.append(n)
+
+            if len(ic_per_date) < MIN_DATES_PER_FACTOR:
+                out.append(SubFactorICResult(
+                    horizon=str(horizon_name), factor=str(factor_name), forward_horizon=fwd_h,
+                    ic=None, ic_ir=None,
+                    top_quintile_return=None, bot_quintile_return=None,
+                    n_dates=len(ic_per_date),
+                    avg_n_stocks=float(np.mean(n_per_date)) if n_per_date else 0.0,
+                ))
+                continue
+
+            mean_ic = float(np.mean(ic_per_date))
+            std_ic = float(np.std(ic_per_date, ddof=1)) if len(ic_per_date) > 1 else 0.0
+            ic_ir = mean_ic / std_ic if std_ic > 1e-9 else None
+
+            out.append(SubFactorICResult(
+                horizon=str(horizon_name), factor=str(factor_name), forward_horizon=fwd_h,
+                ic=mean_ic, ic_ir=ic_ir,
+                top_quintile_return=float(np.mean(q5_per_date)) if q5_per_date else None,
+                bot_quintile_return=float(np.mean(q1_per_date)) if q1_per_date else None,
+                n_dates=len(ic_per_date),
+                avg_n_stocks=float(np.mean(n_per_date)),
+            ))
+    return out
+
+
+def subfactor_to_dict_list(results: list[SubFactorICResult]) -> list[dict]:
+    return [asdict(r) for r in results]
