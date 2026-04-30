@@ -24,6 +24,7 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
+from app.data.adjuster import read_close_with_adj_coalesced
 from app.data.clock import taipei_today
 from app.data.db import Database
 
@@ -74,16 +75,7 @@ def _fetch_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.
             f"SELECT as_of, stock_id, {cols} FROM signal_history WHERE as_of >= ?",
             conn, params=[earliest],
         )
-        prices = pd.read_sql_query(
-            """
-            SELECT p.date, p.stock_id, COALESCE(a.close_adj, p.close) AS close
-            FROM daily_price p
-            LEFT JOIN daily_price_adj a
-              ON a.stock_id = p.stock_id AND a.date = p.date
-            WHERE p.date >= ?
-            """,
-            conn, params=[earliest],
-        )
+        prices = read_close_with_adj_coalesced(conn, since=earliest)
     return snap, prices
 
 
@@ -184,6 +176,37 @@ def _rank_frame(df: pd.DataFrame) -> _RankedFrame:
     # pandas .rank(axis=1) 對 NaN 自動回 NaN
     ranks = df.rank(axis=1).to_numpy()
     return _RankedFrame(df.index, df.columns, raw, ranks, valid)
+
+
+def _prepare_factor_pivots(
+    snap: pd.DataFrame, prices: pd.DataFrame
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame] | None:
+    """共用的 setup：snap → 各 factor 的 pivot；price_wide intersect 到 factor 涵蓋的代號集合。
+
+    回 (factor_pivots, price_wide_aligned)；snap/prices 空 / pivot 後空 → None。
+    為 compute_factor_ic 與 compute_rolling_ic_for_horizon 共用，避免兩處 step-by-step 重做。
+    """
+    if snap.empty or prices.empty:
+        return None
+    snap = snap.copy()
+    snap["as_of"] = pd.to_datetime(snap["as_of"])
+    price_wide = _build_price_pivot(prices)
+    if price_wide.empty:
+        return None
+    factor_pivots: dict[str, pd.DataFrame] = {
+        factor: snap.pivot_table(
+            index="as_of", columns="stock_id", values=factor, aggfunc="first"
+        )
+        for factor in FACTORS
+    }
+    # daily_price 表含 22k 個代號（含權證/牛熊證/ETN），但 signal_history 只有 ~2.3k 一般股。
+    # 把 price_wide 縮到 factor_pivot 的代號集合 → forward_return 計算與每日 .loc lookup 都
+    # 從 22k 欄降到 2.3k 欄，本身就 ~10× 加速；後面 _ic_and_quintile 的 dropna 也少很多假 NaN。
+    factor_stocks = factor_pivots[FACTORS[0]].columns
+    common_cols = price_wide.columns.intersection(factor_stocks)
+    if not common_cols.empty:
+        price_wide = price_wide[common_cols]
+    return factor_pivots, price_wide
 
 
 def _newey_west_mean_ci(
@@ -330,28 +353,11 @@ def compute_factor_ic(
     if not horizons:
         return []
     snap, prices = _fetch_data(db, lookback_days, max(horizons))
-    if snap.empty or prices.empty:
+    prepared = _prepare_factor_pivots(snap, prices)
+    if prepared is None:
         logger.info("factor_diagnostics: 資料不足 (snap=%d, prices=%d)", len(snap), len(prices))
         return []
-
-    snap = snap.copy()
-    snap["as_of"] = pd.to_datetime(snap["as_of"])
-    price_wide = _build_price_pivot(prices)
-    if price_wide.empty:
-        return []
-
-    # 把 factor 也預先 pivot 一次（不依賴 horizon，移出迴圈避免 5 × 3 = 15 次重做）
-    factor_pivots: dict[str, pd.DataFrame] = {
-        factor: snap.pivot_table(index="as_of", columns="stock_id", values=factor, aggfunc="first")
-        for factor in FACTORS
-    }
-    # daily_price 表含 22k 個代號（含權證/牛熊證/ETN），但 signal_history 只有 ~2.3k 一般股。
-    # 把 price_wide 縮到 factor_pivot 的代號集合 → forward_return 計算與每日 .loc lookup 都
-    # 從 22k 欄降到 2.3k 欄，本身就 ~10× 加速；後面 _ic_and_quintile 的 dropna 也少很多假 NaN。
-    factor_stocks = factor_pivots[FACTORS[0]].columns
-    common_cols = price_wide.columns.intersection(factor_stocks)
-    if not common_cols.empty:
-        price_wide = price_wide[common_cols]
+    factor_pivots, price_wide = prepared
 
     # 預 rank：每個 factor + 每個 horizon 各一次（共 N + len(horizons) 次），避免內層每次都 rank。
     factor_ranked: dict[str, _RankedFrame] = {
@@ -426,23 +432,10 @@ def compute_rolling_ic_for_horizon(
     「這個因子在 2024 才開始 work / 2022 一直 work / 從來沒 work」。
     """
     snap, prices = _fetch_data(db, lookback_days, horizon)
-    if snap.empty or prices.empty:
+    prepared = _prepare_factor_pivots(snap, prices)
+    if prepared is None:
         return []
-
-    snap = snap.copy()
-    snap["as_of"] = pd.to_datetime(snap["as_of"])
-    price_wide = _build_price_pivot(prices)
-    if price_wide.empty:
-        return []
-
-    factor_pivots = {
-        factor: snap.pivot_table(index="as_of", columns="stock_id", values=factor, aggfunc="first")
-        for factor in FACTORS
-    }
-    factor_stocks = factor_pivots[FACTORS[0]].columns
-    common_cols = price_wide.columns.intersection(factor_stocks)
-    if not common_cols.empty:
-        price_wide = price_wide[common_cols]
+    factor_pivots, price_wide = prepared
 
     forward_close = price_wide.shift(-horizon)
     forward_returns = (forward_close / price_wide) - 1.0
@@ -513,16 +506,7 @@ def _fetch_subfactor_data(db: Database, lookback_days: int, max_horizon: int) ->
             "FROM signal_history_factor_parts WHERE as_of >= ?",
             conn, params=[earliest],
         )
-        prices = pd.read_sql_query(
-            """
-            SELECT p.date, p.stock_id, COALESCE(a.close_adj, p.close) AS close
-            FROM daily_price p
-            LEFT JOIN daily_price_adj a
-              ON a.stock_id = p.stock_id AND a.date = p.date
-            WHERE p.date >= ?
-            """,
-            conn, params=[earliest],
-        )
+        prices = read_close_with_adj_coalesced(conn, since=earliest)
     return parts, prices
 
 

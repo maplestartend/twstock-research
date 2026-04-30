@@ -1,5 +1,11 @@
 """把 TWSE 加權指數歷史補到比 TWSE OpenAPI 更早（2022-01 起）。
 
+⚠️ ONE-SHOT 性質：執行一次補完 2022-01 ~ 今天的 ^TWII 資料即可，往後新日期由
+   `market_update.py` 抓 TWSE OpenAPI 增量更新。完成日期：2026-04-30（commit 95726ce 起）。
+   只在「想往更早回補」（如改 --from 2020-01）時才需要再跑。
+
+
+
 TWSE OpenAPI 的 daily_indices 只回近 ~2.7 年資料，但 yfinance 的 `^TWII` 從 ~1997 起
 都有，且收盤價與 TWSE 官方數值對齊（已比對過：2023-08 起 502 個 overlap 日期完全一致）。
 

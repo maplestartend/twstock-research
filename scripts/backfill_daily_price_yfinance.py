@@ -1,5 +1,11 @@
 """把全市場個股 daily OHLC 用 yfinance 補回 2022-01（TWSE OpenAPI 只給近 2.7 年）。
 
+⚠️ ONE-SHOT 性質：跑一次補完 2022-01 ~ 2024 之間的個股 OHLC。日後新日期由 market_update
+   抓 TWSE OpenAPI 增量。**目前未執行**（2026-04-30 IC 分析顯示 watchlist-only 早期段
+   對 IC 影響小、暫不必跑）。若決定要跑：先 stop.bat 收掉服務，避免併發寫鎖。
+
+
+
 為什麼需要：
 - TWSE / TPEX OpenAPI 只回近 ~2.7 年資料 → daily_price 在 2024-01 之前只有自選股 ~100 檔
 - IC 分析（diagnostics）跨 980 天時，前 700 天只用 100 檔算 cross-sectional → 樣本太小、

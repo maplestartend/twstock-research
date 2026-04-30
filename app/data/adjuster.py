@@ -153,27 +153,93 @@ def update_stock_adjusted(
     return db.upsert_df(adj, "daily_price_adj")
 
 
+def read_ohlc_with_adj(
+    conn,
+    *,
+    stock_id: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    extra_cols: bool = True,
+) -> pd.DataFrame:
+    """讀 daily_price + daily_price_adj 的 LEFT JOIN，回傳 raw OHLC + adj OHLC 各自一欄。
+
+    用 `_swap_to_adjusted` 後處理（engine.py）就能讓技術指標走還原價但 raw 保留給流動性 /
+    漲跌停偵測。caller 自選要不要呼叫 swap。
+
+    參數：
+    - stock_id: 提供 → 過濾單檔；None → 全市場
+    - since / until: SQL `BETWEEN since AND until`（含端點），任一可空
+    - extra_cols=True → 多帶 turnover, spread；False → 8 欄精簡（給 radar bulk 省 I/O）
+
+    這個 helper 取代 4 處重複的 `LEFT JOIN daily_price_adj a ON ...` 拼字串。
+    """
+    cols = "p.date, p.stock_id, p.open, p.high, p.low, p.close, p.volume, p.amount"
+    if extra_cols:
+        cols += ", p.turnover, p.spread"
+    cols += ", a.close_adj, a.open_adj, a.high_adj, a.low_adj"
+    query = (
+        f"SELECT {cols} "
+        "FROM daily_price p "
+        "LEFT JOIN daily_price_adj a ON a.stock_id=p.stock_id AND a.date=p.date "
+        "WHERE 1=1"
+    )
+    params: list = []
+    if stock_id is not None:
+        query += " AND p.stock_id = ?"
+        params.append(stock_id)
+    if since is not None:
+        query += " AND p.date >= ?"
+        params.append(since)
+    if until is not None:
+        query += " AND p.date <= ?"
+        params.append(until)
+    query += " ORDER BY p.date"
+    return pd.read_sql_query(query, conn, params=params)
+
+
+def read_close_with_adj_coalesced(
+    conn,
+    *,
+    stock_id: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> pd.DataFrame:
+    """讀 (date, stock_id, close) — close = COALESCE(adj, raw)，SQL 端直接合併成單一欄。
+
+    用於 IC / forward return / backtest 大盤比較等只需要單一價格序列的場景。比
+    `read_ohlc_with_adj` 輕量（3 欄 vs 14 欄）。
+    """
+    query = (
+        "SELECT p.date, p.stock_id, COALESCE(a.close_adj, p.close) AS close "
+        "FROM daily_price p "
+        "LEFT JOIN daily_price_adj a ON a.stock_id=p.stock_id AND a.date=p.date "
+        "WHERE 1=1"
+    )
+    params: list = []
+    if stock_id is not None:
+        query += " AND p.stock_id = ?"
+        params.append(stock_id)
+    if since is not None:
+        query += " AND p.date >= ?"
+        params.append(since)
+    if until is not None:
+        query += " AND p.date <= ?"
+        params.append(until)
+    query += " ORDER BY p.date"
+    return pd.read_sql_query(query, conn, params=params)
+
+
 def load_adjusted_price(db: Database, stock_id: str, *, as_of: str | None = None) -> pd.DataFrame:
-    """回傳 daily_price + close_adj 合併後的 DataFrame。
+    """回傳 daily_price + close_adj 合併後的 DataFrame（單檔，含 adj 欄、NaN-fillna 後處理）。
 
     as_of: 若提供，僅回傳 `date <= as_of` 的資料，供歷史重播避免 look-ahead。
+
+    與 `read_ohlc_with_adj` 的差別：這個會把 NaN adj 用 raw 補滿（因為呼叫端 score_stock
+    `_swap_to_adjusted` 假設 adj cols 沒有 NaN）。`read_ohlc_with_adj` 不做後處理，留給
+    caller 決定。
     """
-    date_clause = " AND p.date <= ?" if as_of else ""
-    params = [stock_id, as_of] if as_of else [stock_id]
     with db.connect() as conn:
-        df = pd.read_sql_query(
-            """
-            SELECT p.date, p.stock_id, p.open, p.high, p.low, p.close, p.volume,
-                   p.amount, p.turnover, p.spread,
-                   a.close_adj, a.open_adj, a.high_adj, a.low_adj
-            FROM daily_price p
-            LEFT JOIN daily_price_adj a
-              ON a.stock_id = p.stock_id AND a.date = p.date
-            WHERE p.stock_id = ?""" + date_clause + """
-            ORDER BY p.date
-            """,
-            conn, params=params,
-        )
+        df = read_ohlc_with_adj(conn, stock_id=stock_id, until=as_of, extra_cols=True)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
         # 沒還原資料就用原始值

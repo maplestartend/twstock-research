@@ -350,9 +350,31 @@ def industry_yield_z_for_stock(
 # （新交易日進來），舊交易日的 entry 全清掉，因為 per_pbr 已往前推進、舊 z 不再有意義。
 # 並用 lock 保證並發 score_stock / score_all 不會 race（CPython dict 的 __setitem__ 看似
 # atomic 但 cleanup 段需要排他）。
-_yield_z_cache: dict[tuple[str, str | None], tuple[dict[str, float], float, float] | None] = {}
+_yield_z_cache: dict[tuple[str, str | None], dict[str, float] | None] = {}
 _yield_z_cache_lock = threading.Lock()
 _YIELD_Z_CACHE_MAX_KEYS = 64  # 一個交易日 ~30 個產業 → 兩天份就 64 夠用
+
+
+def industry_yield_z_from_yields(yields_by_sid: dict[str, float]) -> dict[str, float]:
+    """共用 helper：給定 {sid -> dividend_yield} 同產業同期樣本 → 回 {sid -> z-score}。
+
+    回空 dict 的情境：peer group 太小（<4）、stdev≈0、輸入空。
+
+    為什麼要抽：score_stock（個股詳情頁，per-stock）跟 score_all（雷達批次，bulk）兩條路徑
+    各自算 z 容易 drift；CLAUDE.md 明確警告這條會讓 detail page 跟 watchlist 看到不同長期分數。
+    這個 helper 把核心數學集中，各 caller 仍各自管 I/O 與快取策略。
+    """
+    if len(yields_by_sid) < 4:
+        return {}
+    ys = list(yields_by_sid.values())
+    mean = statistics.mean(ys)
+    try:
+        std = statistics.stdev(ys)
+    except statistics.StatisticsError:
+        return {}
+    if std <= 1e-9:
+        return {}
+    return {sid: (y - mean) / std for sid, y in yields_by_sid.items()}
 
 
 def _industry_yield_z_with_conn(conn, stock_id: str, *, as_of: str | None = None) -> Optional[float]:
@@ -378,10 +400,10 @@ def _industry_yield_z_with_conn(conn, stock_id: str, *, as_of: str | None = None
     with _yield_z_cache_lock:
         cached = _yield_z_cache.get(cache_key)
         cache_present = cache_key in _yield_z_cache
-    if cached is None and not cache_present:
+    if not cache_present:
+        # 抓「該產業每檔最新 (在 as_of 之前) 的 dividend_yield」
         if as_of:
-            rows = conn.execute(
-                """
+            sql = """
                 SELECT p.stock_id, p.dividend_yield FROM per_pbr p
                 INNER JOIN (
                     SELECT stock_id, MAX(date) AS mx
@@ -391,48 +413,32 @@ def _industry_yield_z_with_conn(conn, stock_id: str, *, as_of: str | None = None
                 ) m ON p.stock_id = m.stock_id AND p.date = m.mx
                 INNER JOIN stock_info i ON i.stock_id = p.stock_id
                 WHERE i.industry_category = ? AND p.dividend_yield IS NOT NULL
-                """,
-                (as_of, industry),
-            ).fetchall()
-        else:
-            rows = conn.execute(
                 """
+            args = (as_of, industry)
+        else:
+            sql = """
                 SELECT p.stock_id, p.dividend_yield FROM per_pbr p
                 INNER JOIN (
                     SELECT stock_id, MAX(date) AS mx FROM per_pbr GROUP BY stock_id
                 ) m ON p.stock_id = m.stock_id AND p.date = m.mx
                 INNER JOIN stock_info i ON i.stock_id = p.stock_id
                 WHERE i.industry_category = ? AND p.dividend_yield IS NOT NULL
-                """,
-                (industry,),
-            ).fetchall()
+                """
+            args = (industry,)
+        rows = conn.execute(sql, args).fetchall()
         yields_by_sid = {r["stock_id"]: float(r["dividend_yield"]) for r in rows}
-        new_value: tuple[dict[str, float], float, float] | None
-        if len(yields_by_sid) < 4:
-            new_value = None
-        else:
-            ys = list(yields_by_sid.values())
-            mean = statistics.mean(ys)
-            try:
-                std = statistics.stdev(ys)
-            except statistics.StatisticsError:
-                new_value = None
-            else:
-                new_value = (yields_by_sid, mean, std) if std > 1e-9 else None
+        # 算整個產業的 z map（共用 helper，與 radar 同步）；空 dict = peer group 無效
+        z_map = industry_yield_z_from_yields(yields_by_sid)
+        cached = z_map if z_map else None
         with _yield_z_cache_lock:
-            # FIFO 清理：當 cache_key (industry, latest_per_pbr_date) 改變、且 dict 滿了，
-            # 就把舊日期的 entry 一併清掉，避免長期 process 下記憶體累積
+            # FIFO 清理：當 cache 滿就清掉（key 已經依 (industry, latest_per_pbr_date) 切，
+            # 同一日新交易日進來時所有舊 entry 都不會再命中，清光成本可忽略）
             if len(_yield_z_cache) >= _YIELD_Z_CACHE_MAX_KEYS:
                 _yield_z_cache.clear()
-            _yield_z_cache[cache_key] = new_value
-        cached = new_value
+            _yield_z_cache[cache_key] = cached
     if cached is None:
         return None
-    yields_by_sid, mean, std = cached
-    target = yields_by_sid.get(stock_id)
-    if target is None:
-        return None
-    return (target - mean) / std
+    return cached.get(stock_id)
 
 
 def _load_stock_bundle(conn, stock_id: str, *, as_of: str | None = None) -> dict[str, pd.DataFrame]:

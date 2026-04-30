@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from app.data.adjuster import load_adjusted_price
+from app.data.adjuster import load_adjusted_price, read_close_with_adj_coalesced
 from app.data.db import Database
 from app.indicators import chips as chip_ind
 from app.indicators import technical as tech
@@ -560,14 +560,10 @@ def benchmark_return(
             ).fetchall()
         else:
             # 優先用還原價（處理分割/除權息），退而求其次用原始收盤
-            row = conn.execute(
-                "SELECT p.date AS date, COALESCE(a.close_adj, p.close) AS close "
-                "FROM daily_price p "
-                "LEFT JOIN daily_price_adj a ON a.stock_id=p.stock_id AND a.date=p.date "
-                "WHERE p.stock_id=? AND p.date BETWEEN ? AND ? "
-                "ORDER BY p.date",
-                (source, start_date, end_date),
-            ).fetchall()
+            df = read_close_with_adj_coalesced(
+                conn, stock_id=source, since=start_date, until=end_date,
+            )
+            row = df.to_dict("records")
     if len(row) < 2:
         return None
     first = float(row[0]["close"])

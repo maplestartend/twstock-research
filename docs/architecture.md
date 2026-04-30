@@ -170,99 +170,74 @@ DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 
 
    **IC cache 失效規則**：cache key = `({IC_ALGO_VERSION}:{MAX(signal_history.as_of)}, scope, lookback_days)`。改演算法（factor 公式、forward return 邏輯、HAC lag、quintile 切法）時 bump [`factor_diagnostics.IC_ALGO_VERSION`](../app/scoring/factor_diagnostics.py)；資料變動時 `MAX(as_of)` 自然推進、不需要 bump。
 
-   ### v3 weights @ 980-day baseline（2026-04-30 量測，2022-04-08 ~ 2026-04-29，**舊版 VR×MACD 因子數據**）
+   ### v4 weights @ 980-day baseline（2026-04-30 量測，純 VR 因子 + bug 修補後 R3 backfill）
 
-   ⚠️ 此表為純 VR 因子改造（commit adaf53f）+ `eps_cagr_3y` 修補（2026-04-30 P0 fix）**之前**的量測結果。重跑後的數字會放在「v4 baseline」段。
+   2026-04-30 一次性修補 3 條 bug 鏈讓 `eps_cagr_3y` 真正能算（之前 derived path 全 null）：
+   1. `_fill_from_quarterly_derived` 漏算 CAGR / PEG / 單季 YoY
+   2. radar.py bulk path 財報視窗 3 年 → 5 年（CAGR 需 16 季 = 4 年）
+   3. `financials_quarterly_derived` 由 17 季回補到 33 季（2018Q1 起，覆蓋 backfill 全期）
 
-   index_daily 經 yfinance 補到 2022-01 後可全期回放，這是目前最 robust 的因子量測。
+   結果：`eps_cagr_3y` 在 factor_parts 從 0% 非 null → 52% 非 null（1741 檔有 ≥16 季 EPS）。
 
-   | 因子 | 5 日 IC | 20 日 IC | 60 日 IC | n | 結論 |
+   #### Aggregate IC（forward return 走還原價，HAC 95% CI）
+
+   | 因子 | 5 日 IC [CI] | 20 日 IC [CI] | 60 日 IC [CI] | n | 結論 |
    |---|---|---|---|---|---|
-   | 綜合 | +0.017 | +0.024 | +0.038 | 920 | 跨 4 年 IC 仍正向但已從近期 +0.146 縮到 +0.038 |
-   | 中期 | +0.012 | +0.020 | +0.029 | 920 | 與 composite 接近、是訊號主力 |
-   | 長期 | +0.016 | +0.017 | **+0.032** | 895 | **較近期 (-0.003) 翻正**，dividend + valuation 撐住 |
-   | 短期 | -0.008 | -0.003 | +0.006 | 920 | 全期接近噪音 |
-   | VR×MACD | +0.001 | -0.002 | -0.025 | 920 | 從近期 -0.072 收斂，反向訊號弱化 |
+   | 綜合 | +0.031 [+0.016, +0.046] | +0.053 [+0.021, +0.084] | +0.051 [+0.016, +0.086] | 713/698/658 | **三個 horizon CI 都不過 0** — 統計上顯著正向 |
+   | 中期 | +0.020 | +0.036 | +0.028 [-0.015, +0.071] | 同上 | 60d CI 過 0 但點估計穩定 |
+   | 長期 | +0.032 [+0.020, +0.044] | +0.044 [+0.017, +0.071] | +0.055 [+0.002, +0.108] | 同上 | **三個 horizon CI 都不過 0** — 與 v3 相比 60d 略降但 CI 收緊 |
+   | 短期 | -0.005 | +0.005 | +0.016 [+0.001, +0.032] | 同上 | 5d/20d 接近 0、60d 才有顯著正 |
+   | 純 VR | -0.008 [-0.014, -0.001] | -0.015 [-0.028, -0.002] | -0.015 [-0.033, +0.003] | 同上 | 5d/20d 反向顯著（量爆 → 均值回歸）；60d CI 過 0 |
 
-   ### Sub-factor 全期觀察
+   #### Long sub-factor IC（v4 權重決策的依據）
 
-   - **dividend** 5/20/60d 都 +0.035 — 全系統最 stable，但**獨立 reviewer 警告可能是殖利率變動極慢造成的自相關偽穩定**，不是真訊號穩定
-   - **valuation** 5/20/60d 都 +0.017 — 同樣 stable，全期翻正（近期是 -0.030）
-   - **margin_quality** 60d +0.024
-   - **mid trend** 60d 從近期 +0.137 大幅縮到 +0.036 — 純 momentum regime 訊號
-   - **short ma_alignment** 60d +0.034 — 短期內唯一持續有訊號的子因子
-   - **short rsi/bollinger/kd** 60d -0.039/-0.027/-0.031 — 反向但比近期樣本和緩
-   - **roe** 只 15 樣本算得出（資料深度不夠）
-   - **eps_cagr_3y** 全 null —— ⚠️ **這是程式 bug 不是資料問題**：[`_fill_from_quarterly_derived`](../app/indicators/fundamentals.py) 漏算 `eps_cagr_3y`。實際資料庫有 17 季 × 1947 檔有 EPS、1741 檔 ≥16 季可算 CAGR。2026-04-30 已修，下次 backfill 後此欄會跑出真實 IC、`peg`（受 CAGR 連動）也會生效。
+   | factor | 5d | 20d | 60d | IR(60d) | CI(60d) 過 0? |
+   |---|---|---|---|---|---|
+   | dividend | +0.038 | +0.038 | +0.046 | +0.40 | ✓ [-0.009, +0.101] |
+   | **eps_cagr_3y** | **+0.017** | **+0.030** | **+0.031** | **+0.45** | **✗ [+0.004, +0.058]（唯一顯著）** |
+   | margin_quality | +0.023 | +0.034 | +0.045 | +0.37 | ✓ |
+   | valuation | +0.021 | +0.023 | +0.033 | +0.41 | ✓ |
+   | roe | +0.091 | — | — | +2.05 | ⚠ 只 15 dates 稀少（金融保險業缺 equity） |
 
-   ### v4 權重決策（2026-04-30）：**維持 v3，不調**
+   ### v4 權重決策（2026-04-30）：**改 LONG_TERM_WEIGHTS、保留 SHORT/MID/COMPOSITE**
 
-   兩位 agent 對 980 天結果的看法：
-   - quant 分析師提案大幅 rebalance（COMPOSITE long 0.20→0.40、dividend 0.15→0.35、valuation 0.10→0.30）
-   - 獨立 reviewer 三點挑刺：
-     1. **有效獨立樣本 ≈ 15**（60d forward window 重疊：N=920 / 60 ≈ 15），IC_IR 0.37 在 N=15 下 t-stat~1.4，跨不過顯著性門檻
-     2. **dividend 跨 horizon 全 +0.035 太完美** — 可能是 yield 變動極慢造成的自相關偽穩定
-     3. **valuation sign flip** 是 2022-23 vs 2024-26 兩個相反 regime 平均，不是因子變有用
+   - `roe` 0.40 → 0.40（不動，5d 最強單因子但稀少）
+   - `margin_quality` 0.30 → **0.20**（CI 過 0、顯著性不足）
+   - `eps_cagr_3y` 0.05 → **0.20**（bug 修完是 long 裡唯一 60d CI 不過 0 的因子）
+   - `dividend` 0.15 → **0.10**（CI 過 0 + reviewer 警告 yield 自相關偽穩定）
+   - `valuation` 0.10 → 0.10（不動）
 
-   結論：**全期 IC 已縮水到接近噪音底，v3 在這份資料上沒搞砸（long IC 翻正、composite 仍正），就現有統計信賴度不足以支持任何方向的權重大改**。下一輪該先做 **HAC CI**（給每個 IC 加 95% 區間，已上線：Newey-West 取代原計劃的 naive bootstrap）+ **rolling 60d IC 折線圖**（已上線，看 regime 切換），而不是繼續調權重。
+   v4 vs v3 weights 結果（兩者都是 980 天 backfill）：
+   - composite 60d IC: +0.052 → +0.051（-0.001，不動如山）
+   - long 60d IC: +0.060 → +0.055（-0.005 點估計微降，但 CI 從 [-0.002, +0.123] 收緊到 [+0.002, +0.108] — **從 borderline 變顯著**）
 
-   **2026-04-30 後續：** v4 第一版草案（純 VR 因子 + LONG_TERM eps_cagr_3y 0.25→0.05、dividend 0.05→0.15、roe/margin +0.05）已 ship，但因為發現 `eps_cagr_3y` 全 null 是 derived path 的程式 bug（已修），原本「砍 eps_cagr_3y 權重」的決策前提失效。修補完跑下一輪 980 天 backfill 後重新檢視 v4 是否合理。
+   **解讀**：v4 沒換到更高 in-sample IC，但統計可信度提升（用唯一 60d 顯著的 eps_cagr_3y 取代 CI 過 0 的 margin/dividend）。在現有 980 天樣本（有效獨立 N≈15）下，這是「robustness over point estimate」的選擇。
+
+   #### Short / Mid sub-factor 觀察
+
+   - **mid trend** 60d +0.041 — 中期最強單因子
+   - **short ma_alignment** 60d +0.046 [CI +0.008, +0.085] — 短期唯一顯著正向
+   - **short kd** 60d -0.041、**short rsi** 60d -0.046、**short bollinger** 60d -0.040 — 反向訊號穩定（量價超買 → 均值回歸）
+   - **mid revenue_growth** 60d -0.038 [CI -0.072, -0.003] — 反向顯著（短線追業績的散戶逆向指標？）
+   - **mid eps_growth** 60d +0.009、**mid foreign_cum** 60d +0.016 — 不顯著
 
    ### 重新跑此分析的方法
 
    ```bash
    # 改 scoring 後跑（清舊算法 + 重算 + 預熱 IC cache）
-   python -m scripts.backfill_signal_history --days 100 --clear --workers 4
+   python -m scripts.backfill_signal_history --days 100 --clear --workers 6
 
-   # 全期回放（要 ~3-4 小時，含 yfinance ^TWII 補老 index）
-   python -m scripts.backfill_index_yfinance --from 2022-01-01
-   python -m scripts.backfill_signal_history --days 1000 --clear --workers 4
+   # 全期回放（i5-13400F + workers=6 約 100 分鐘）
+   python -m scripts.backfill_signal_history --days 1000 --clear --workers 6
    ```
-
-   ### 100 → 600 → 980 day IC 演進對照
-
-   | composite IC | 100 天 | 600 天 | 980 天 |
-   |---|---|---|---|
-   | 5d | +0.055 | +0.045 | +0.017 |
-   | 20d | +0.098 | +0.075 | +0.024 |
-   | 60d | +0.146 | +0.100 | +0.038 |
-
-   小樣本 IC 普遍偏高 = regime artifact 確認。**任何權重調整都應參考 980 天 baseline 而非 100 天**。
-
-   ### v3 baseline（已 deprecated，僅供歷史對照，2026-04-30 量測，100 天樣本 2025-11-25 ~ 2026-04-29，**舊版 VR×MACD 因子數據**）
-
-   | 因子 | 5 日 IC | 20 日 IC | 60 日 IC | 結論 |
-   |---|---|---|---|---|
-   | 綜合 | +0.040 | +0.086 | **+0.126** | 主排序依據，IC 隨 horizon 遞增 |
-   | 中期 | +0.031 | +0.081 | +0.124 | 與綜合幾乎一致，是主力訊號 |
-   | 短期 | -0.014 | +0.009 | +0.036 | 5d 仍弱負、60d 略正（小樣本） |
-   | 長期 | +0.017 | -0.003 | -0.023 | 60d 仍負（待 eps_cagr_3y data 修好＋valuation regime 換證） |
-   | VR×MACD（舊） | -0.008 | -0.017 | -0.048 | 全 horizon 反向（量價爆衝→均值回歸），已於 commit adaf53f 改成純 VR |
-
-   ### Sub-factor 觀察（v3 樣本）
-
-   - **mid trend** 60d IC +0.155、Q5-Q1 +21.05% — 全系統最強訊號
-   - **short ma_alignment** 60d IC +0.101 — 短期唯一持續有預測力的子因子
-   - **long roe** 5d IC +0.091（IR 2.05）— 長期最強單因子
-   - **short rsi** 60d IC -0.101、Q5-Q1 -11.86%；**bollinger** 60d -0.087；**kd** 60d -0.068 — 短期動量/超買超賣類在台股近 5 個月明顯反向
-   - **long valuation** 60d IC -0.030、Q5-Q1 -13.17% — 樣本期偏向 AI 主題股（成長），便宜股反而跌；獨立 reviewer 認為是 regime artifact 非真實 alpha
-   - **long eps_cagr_3y** 全 horizon null — 需要 16 季 EPS，全市場資料不足
-
-   ### v2→v3 變化解讀
-
-   v2（85 天）composite IC 為 +0.055/+0.098/+0.146，v3（100 天）為 +0.040/+0.086/+0.126，全 horizon 下跌。但 sub-factor IC（與權重無關）也同步下跌（mid trend 60d 從 +0.183→+0.155、ma_alignment 從 +0.119→+0.101）→ **變化 100% 來自樣本擴展（多 15 天 11-12 月，AI 行情前的 regime），非權重變糟**。v3 權重每條改動方向都有 sub-factor IC 證據支持。
 
    ### 樣本量對結果的可信度警告
 
-   60d horizon 只有 40 個 IC 點（5d 95、20d 80），且這 40 個 forward window 互相高度相關（有效獨立樣本 ~10-15）。IC_IR > 3 的數字含相當統計幻覺成分。**做下一輪權重調整前建議先 backfill 到 ≥ 200 天（一次完整熊牛轉換）**，現有 100 天結論宜當「方向參考」非「最終答案」。
+   60d horizon 在 980 天樣本下 ~658 個 IC 點，但這些 forward window 互相高度重疊（有效獨立樣本 ≈ 920 / 60 ≈ 15）。HAC CI 已修正自相關，但 N=15 仍是真實統計門檻 — 點估計 +0.055 看起來不錯但 t-stat 仍接近顯著性邊界。**繼續調權重前建議先補 yfinance 個股 OHLC（目前 2022-2023 早期段只 ~100 watchlist 檔評分），讓全期樣本一致**。
 
-   ### 重新跑此分析的方法
+   ### 歷史 baselines（已 deprecated，僅供對照）
 
-   ```bash
-   # 改 scoring 後跑一次（清舊算法 + 重算 + 預熱 IC cache）
-   python -m scripts.backfill_signal_history --days 100 --clear --workers 4
-   ```
-   完成後開 [/diagnostics](http://localhost:3000/diagnostics) 即看到結果（warm cache <100ms）。
+   早期版本（v2/v3 weights、舊版 VR×MACD 因子、100 天樣本）已棄用。當時數字：composite 60d 從 +0.146 縮到 +0.038 (980 天)，long 60d 從 -0.023 翻正到 +0.032 — 但都基於有 bug 的 `eps_cagr_3y` (全 null)。git log 可查 commit `95726ce`、`3ad737d`、`843546b` 各版本的數字。
 
 ### ⚠️ 程式面
 

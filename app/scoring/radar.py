@@ -12,6 +12,7 @@ from typing import Callable
 
 import pandas as pd
 
+from app.data.adjuster import read_ohlc_with_adj
 from app.data.clock import taipei_today
 from app.data.db import Database
 from app.indicators import chips as chip_ind
@@ -87,8 +88,8 @@ def _industry_yield_z_map(per_all: pd.DataFrame, industry_by_sid: dict[str, str 
     用絕對閾值會讓殖利率高的產業全部得高分、殖利率低的產業全部得低分，跨產業不公平。
     用同產業 z-score 評分，高出產業平均 1σ 的就算前段班，跟產業類型無關。
 
-    產業內樣本數 < 4 就跳過該產業（避免極端值主宰 z）。回傳的 dict 只包含可算 z 的股票，
-    其他股票在 score_dividend 會走絕對閾值 fallback。
+    Z-score 數學共用 `engine.industry_yield_z_from_yields`（避免 detail page vs radar drift）。
+    產業內樣本數 < 4 / stdev≈0 → 整個產業跳過。
     """
     if per_all.empty or "dividend_yield" not in per_all.columns:
         return {}
@@ -101,24 +102,16 @@ def _industry_yield_z_map(per_all: pd.DataFrame, industry_by_sid: dict[str, str 
             continue
         sid_to_yield[sid] = float(y)
 
-    by_industry: dict[str, list[tuple[str, float]]] = {}
+    by_industry: dict[str, dict[str, float]] = {}
     for sid, y in sid_to_yield.items():
         ind = industry_by_sid.get(sid)
         if not ind:
             continue
-        by_industry.setdefault(ind, []).append((sid, y))
+        by_industry.setdefault(ind, {})[sid] = y
 
     result: dict[str, float] = {}
-    for ind, lst in by_industry.items():
-        if len(lst) < 4:
-            continue
-        ys = pd.Series([y for _, y in lst])
-        mean = float(ys.mean())
-        std = float(ys.std(ddof=1))
-        if std <= 1e-9:
-            continue
-        for sid, y in lst:
-            result[sid] = (y - mean) / std
+    for yields_in_ind in by_industry.values():
+        result.update(eng.industry_yield_z_from_yields(yields_in_ind))
     return result
 
 
@@ -181,16 +174,9 @@ def score_all(
     per_since = (as_of_d - timedelta(days=400)).isoformat()
     # 用 LEFT JOIN 帶上 daily_price_adj，技術指標就能用還原價（除權息/分割不誤導）
     with db.connect() as conn:
-        price_all = pd.read_sql_query(
-            """
-            SELECT p.date, p.stock_id, p.open, p.high, p.low, p.close, p.volume, p.amount,
-                   a.close_adj, a.open_adj, a.high_adj, a.low_adj
-            FROM daily_price p
-            LEFT JOIN daily_price_adj a
-              ON a.stock_id = p.stock_id AND a.date = p.date
-            WHERE p.date BETWEEN ? AND ?
-            """,
-            conn, params=[price_since, as_of_str],
+        # extra_cols=False 省 turnover/spread（radar 不用），少 ~10% I/O
+        price_all = read_ohlc_with_adj(
+            conn, since=price_since, until=as_of_str, extra_cols=False,
         )
         # 在還原價覆寫前，用「原始 close」算流動性與當日漲跌（限漲跌停偵測要的是真實價格漲跌，
         # 還原價在除權息/分割日會讓 pct_change 看起來不對 → 漏掉限制鎖死訊號）
