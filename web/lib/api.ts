@@ -138,6 +138,10 @@ export type SnapshotStatus = {
   snapshotAsOf: string | null;
   dailyPriceAsOf: string | null;
   isStale: boolean;
+  datasetsSynced?: boolean;
+  datasetDates?: Record<string, string | null>;
+  staleReason?: string;
+  canRefresh?: boolean;
 };
 
 export type RefreshSnapshotResponse = {
@@ -278,7 +282,7 @@ export type RadarHit = {
   stockId: string; stockName: string;
   close: number | null;
   short: number | null; mid: number | null; long: number | null; composite: number | null;
-  vrMacd: number | null;    // VR(26) × MACD 柱複合分；給「量能動能」策略當主要排序依據
+  vrMacd: number | null;    // VR(26) 量能分數；給「量能動能」策略當主要排序依據
   recommendation: string | null;
   strategies: string | null;
   market?: string | null;   // "上市" | "上櫃" | "ETF" | "其他"
@@ -616,13 +620,16 @@ export type FactorICRow = {
   botQuintileReturn: number | null;
   nDates: number;
   avgNStocks: number;
-  icCiLo: number | null;  // 95% bootstrap CI 下界
+  icCiLo: number | null;  // 95% CI 下界（Newey-West HAC）
   icCiHi: number | null;
 };
 
 export type FactorICResponse = {
   lookbackDays: number;
   horizons: number[];
+  forwardReturnBasis: string;
+  executionAssumption: string;
+  icCiMethod: string;
   rows: FactorICRow[];
 };
 
@@ -643,6 +650,9 @@ export type SubFactorICRow = {
 export type SubFactorICResponse = {
   lookbackDays: number;
   horizons: number[];
+  forwardReturnBasis: string;
+  executionAssumption: string;
+  icCiMethod: string;
   rows: SubFactorICRow[];
 };
 

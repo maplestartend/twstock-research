@@ -415,7 +415,7 @@
   - **short keys**：`ma_alignment, kd, macd, rsi, bollinger, volume, vr_macd, foreign, trust, margin_change`
   - **mid keys**：`trend, foreign_cum, trust_cum, eps_growth, revenue_growth, vr_macd`
   - **long keys**：`roe, margin_quality, eps_cagr_3y, dividend, valuation`
-  - `vr_macd`：VR26（成交量比率，台股 26 日慣用）✕ MACD 柱複合分數，用 11 條 decision rule 在「低量谷底+動能反轉=黃金底」與「高量噴出+動能反轉=高檔警示」間給差異化分數，其餘走 zone-only fallback。short 權重 0.08、mid 權重 0.04（mid 端較小，主要當動能 confirmation）。
+  - `vr_macd`：純 VR26（成交量比率，台股 26 日慣用）分數，先依 VR 區間給 baseline，再依 VR 是否較前一日上升/下降做微調。short 權重 0.08、mid 權重 0.04。
 
 #### StockScoreView (StockRef)
 - `as_of: str`、`close: float`
@@ -433,7 +433,7 @@
 
 #### RadarHit (StockRef)
 - `close, short, mid, long, composite: float | None`
-- `vr_macd: float | None`（VR26 ✕ MACD 柱複合分；「量能動能」策略依此排序）
+- `vr_macd: float | None`（VR26 純量能分；「量能動能」策略依此排序）
 - `recommendation: str | None`、`strategies: str | None`
 - `market: str | None`（"上市" / "上櫃" / "ETF" / "其他"）
 

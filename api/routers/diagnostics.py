@@ -20,6 +20,13 @@ from app.scoring.factor_diagnostics import (
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
+FORWARD_RETURN_BASIS = "close_to_close_adj"
+EXECUTION_ASSUMPTION = (
+    "因子值使用 as_of 當日收盤後可得資訊；forward return 以還原價 close-to-close 計算，"
+    "未扣交易成本與滑價。"
+)
+IC_CI_METHOD = "newey_west_hac_lag_h_minus_1"
+
 
 class FactorICRow(CamelModel):
     factor: str
@@ -30,13 +37,16 @@ class FactorICRow(CamelModel):
     bot_quintile_return: float | None
     n_dates: int
     avg_n_stocks: float
-    ic_ci_lo: float | None = None  # 95% bootstrap CI
+    ic_ci_lo: float | None = None  # 95% CI（Newey-West HAC）
     ic_ci_hi: float | None = None
 
 
 class FactorICResponse(CamelModel):
     lookback_days: int
     horizons: list[int]
+    forward_return_basis: str
+    execution_assumption: str
+    ic_ci_method: str
     rows: list[FactorICRow]
 
 
@@ -73,6 +83,9 @@ def factor_ic(
     return FactorICResponse(
         lookback_days=lookback_days,
         horizons=list(horizons),
+        forward_return_basis=FORWARD_RETURN_BASIS,
+        execution_assumption=EXECUTION_ASSUMPTION,
+        ic_ci_method=IC_CI_METHOD,
         rows=rows,
     )
 
@@ -94,6 +107,9 @@ class SubFactorICRow(CamelModel):
 class SubFactorICResponse(CamelModel):
     lookback_days: int
     horizons: list[int]
+    forward_return_basis: str
+    execution_assumption: str
+    ic_ci_method: str
     rows: list[SubFactorICRow]
 
 
@@ -129,6 +145,9 @@ def sub_factor_ic(
     return SubFactorICResponse(
         lookback_days=lookback_days,
         horizons=list(horizons),
+        forward_return_basis=FORWARD_RETURN_BASIS,
+        execution_assumption=EXECUTION_ASSUMPTION,
+        ic_ci_method=IC_CI_METHOD,
         rows=rows,
     )
 

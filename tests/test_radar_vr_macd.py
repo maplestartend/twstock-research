@@ -87,22 +87,19 @@ class TestStratVrMacdFilter:
         out = _strat_vr_macd(df)
         assert set(out["stock_id"]) == {"A", "E"}
 
-    def test_filter_with_full_indicators_applies_vr150_and_red_macd(self):
-        """使用者硬條件：vr26 > 150 + macd_hist > 0（紅柱）必須同時成立。"""
+    def test_filter_with_full_indicators_applies_vr150_gate(self):
+        """純 VR 版本：使用者硬條件僅保留 vr26 > 150。"""
         df = pd.DataFrame([
-            # 全部 vr_macd>=60 且 fresh，差別只在 vr26 / macd_hist
-            {"stock_id": "PASS",       "vr_macd": 72.0, "is_stale": 0, "vr26": 200.0, "macd_hist":  0.5},
-            {"stock_id": "VR_LOW",     "vr_macd": 88.0, "is_stale": 0, "vr26": 100.0, "macd_hist":  0.5},
-            {"stock_id": "VR_BOUNDARY","vr_macd": 70.0, "is_stale": 0, "vr26": 150.0, "macd_hist":  0.5},  # ==150 不算 > 150
-            {"stock_id": "MACD_GREEN", "vr_macd": 78.0, "is_stale": 0, "vr26": 300.0, "macd_hist": -0.1},
-            {"stock_id": "MACD_ZERO",  "vr_macd": 78.0, "is_stale": 0, "vr26": 300.0, "macd_hist":  0.0},
-            {"stock_id": "VR_HIGH_RED","vr_macd": 62.0, "is_stale": 0, "vr26": 480.0, "macd_hist":  0.3},
-            {"stock_id": "VR_NAN",     "vr_macd": 80.0, "is_stale": 0, "vr26": np.nan, "macd_hist": 0.5},
-            {"stock_id": "MACD_NAN",   "vr_macd": 80.0, "is_stale": 0, "vr26": 200.0, "macd_hist": np.nan},
+            # 全部 vr_macd>=60 且 fresh，差別只在 vr26
+            {"stock_id": "PASS",       "vr_macd": 72.0, "is_stale": 0, "vr26": 200.0},
+            {"stock_id": "VR_LOW",     "vr_macd": 88.0, "is_stale": 0, "vr26": 100.0},
+            {"stock_id": "VR_BOUNDARY","vr_macd": 70.0, "is_stale": 0, "vr26": 150.0},  # ==150 不算 > 150
+            {"stock_id": "VR_HIGH",    "vr_macd": 62.0, "is_stale": 0, "vr26": 480.0},
+            {"stock_id": "VR_NAN",     "vr_macd": 80.0, "is_stale": 0, "vr26": np.nan},
         ])
         out = _strat_vr_macd(df)
-        assert set(out["stock_id"]) == {"PASS", "VR_HIGH_RED"}, (
-            f"VR>150 + MACD 紅柱 + vr_macd>=60 + fresh 才能進；實際: {set(out['stock_id'])}"
+        assert set(out["stock_id"]) == {"PASS", "VR_HIGH"}, (
+            f"VR>150 + vr_macd>=60 + fresh 才能進；實際: {set(out['stock_id'])}"
         )
 
     def test_filter_returns_empty_if_no_vr_macd_column(self):
@@ -121,7 +118,7 @@ class TestStrategyRegistration:
         assert s.sort_by == "vr_macd"
         assert s.stocks_only is False
         assert s.ascending is False
-        assert "VR" in s.description or "MACD" in s.description
+        assert "VR" in s.description
 
     def test_radar_queries_mapping(self):
         assert _STRATEGY_SORT_COLUMN.get("量能動能") == "vr_macd"

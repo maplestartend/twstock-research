@@ -153,8 +153,13 @@ def update_stock_adjusted(
     return db.upsert_df(adj, "daily_price_adj")
 
 
-def load_adjusted_price(db: Database, stock_id: str) -> pd.DataFrame:
-    """回傳 daily_price + close_adj 等欄位合併後的 DataFrame。若沒還原資料，close_adj = close。"""
+def load_adjusted_price(db: Database, stock_id: str, *, as_of: str | None = None) -> pd.DataFrame:
+    """回傳 daily_price + close_adj 合併後的 DataFrame。
+
+    as_of: 若提供，僅回傳 `date <= as_of` 的資料，供歷史重播避免 look-ahead。
+    """
+    date_clause = " AND p.date <= ?" if as_of else ""
+    params = [stock_id, as_of] if as_of else [stock_id]
     with db.connect() as conn:
         df = pd.read_sql_query(
             """
@@ -164,10 +169,10 @@ def load_adjusted_price(db: Database, stock_id: str) -> pd.DataFrame:
             FROM daily_price p
             LEFT JOIN daily_price_adj a
               ON a.stock_id = p.stock_id AND a.date = p.date
-            WHERE p.stock_id = ?
+            WHERE p.stock_id = ?""" + date_clause + """
             ORDER BY p.date
             """,
-            conn, params=[stock_id],
+            conn, params=params,
         )
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])

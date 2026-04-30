@@ -14,6 +14,13 @@ type Tool = {
 
 const TOOLS: Tool[] = [
   {
+    href: "/diagnostics",
+    icon: "insights",
+    title: "因子檢定",
+    description: "先看 IC、穩定度與分層 spread，確認哪些因子真的有預測力再調權重。",
+    hint: "適合：公式調整前先做證據檢查",
+  },
+  {
     href: "/backtest",
     icon: "replay",
     title: "策略回測",
@@ -62,7 +69,7 @@ export default function LabHub() {
       <section className="rounded-xl bg-[var(--info-bg)] border border-[var(--info-border)] px-4 py-3 text-sm text-[var(--info-fg)] flex items-start gap-2">
         <Icon name="info" size={16} filled className="mt-0.5 shrink-0" />
         <p className="leading-relaxed">
-          策略 → 投組 → 參數 → 權重，是常見研究流程。先確認單檔可行 → 再放到投組池 → 找最佳參數 → 反推權重。
+          因子檢定 → 策略 → 投組 → 參數 → 權重，是常見研究流程。先確認因子有預測力，再做回測與參數微調，最後固化權重。
         </p>
       </section>
 

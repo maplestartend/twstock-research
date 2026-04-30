@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/primitives/EmptyState";
 import { Th, Td } from "@/components/primitives/Table";
 import { TableContainer } from "@/components/primitives/TableContainer";
 import { RollingICChart } from "@/components/charts/RollingICChart";
+import { NextStepCards } from "@/components/primitives/NextStepCard";
 
 // 6-week TTL：IC 算一次 ~5-30s，沒必要每次重算（資料每天才寫一次）。
 // 真要強制重算就 ?lookback=N，會 bypass cache。
@@ -21,7 +22,7 @@ const FACTOR_LABEL: Record<string, string> = {
   mid: "中期分數",
   long: "長期分數",
   composite: "綜合分",
-  vr_macd: "VR×MACD 量能動能",
+  vr_macd: "VR 量能因子",
 };
 
 const FACTORS = ["short", "mid", "long", "composite", "vr_macd"] as const;
@@ -35,7 +36,8 @@ const SUBFACTOR_LABEL: Record<string, string> = {
   rsi: "RSI",
   bollinger: "布林通道",
   volume: "量能",
-  vr_macd: "VR×MACD",
+  // 保留 key 名稱 vr_macd 以維持 API 相容，語意已改為純 VR。
+  vr_macd: "VR",
   foreign: "外資 (短)",
   trust: "投信 (短)",
   margin_change: "融資變動",
@@ -67,7 +69,11 @@ type Cell = {
   avgN: number;
 };
 
-function ICColor({ ic }: { ic: number | null }) {
+function ciSpansZero(lo: number | null | undefined, hi: number | null | undefined) {
+  return lo != null && hi != null && lo <= 0 && hi >= 0;
+}
+
+function ICColor({ ic, muted = false }: { ic: number | null; muted?: boolean }) {
   if (ic == null) return null;
   // 紅漲綠跌：正 IC = 預測力佳 = 紅；負 IC = 反向 = 綠
   // 強度分三級：|ic| < 0.05 灰、0.05–0.10 中、> 0.10 強
@@ -88,7 +94,7 @@ function ICColor({ ic }: { ic: number | null }) {
           ? "bg-[var(--color-up-bg)] text-[var(--color-up)] font-bold border border-[var(--color-up-border)]"
           : "bg-[var(--color-down-bg)] text-[var(--color-down)] font-bold border border-[var(--color-down-border)]";
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded numeric ${cls}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded numeric ${cls} ${muted ? "opacity-55" : ""}`}>
       {ic >= 0 ? "+" : ""}{ic.toFixed(3)}
     </span>
   );
@@ -144,6 +150,10 @@ export default async function DiagnosticsPage() {
         description="對 signal_history 的歷史快照算 forward-return Information Coefficient（Spearman），檢驗每個分數對 5 / 20 / 60 日後的報酬率有沒有預測力。"
         extra={`回看視窗 ${data.lookbackDays} 天 · 紅 = 正向預測（IC > 0）· 綠 = 反向（IC < 0）· 灰 = 無訊號`}
       />
+      <section className="rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)] p-3 text-xs text-[var(--info-fg)] leading-relaxed">
+        <strong>檢定假設：</strong>{data.executionAssumption}
+        <span className="ml-2">CI 方法：{data.icCiMethod}</span>
+      </section>
 
       {allEmpty ? (
         <EmptyState>
@@ -235,11 +245,10 @@ export default async function DiagnosticsPage() {
                         ? r.topQuintileReturn - r.botQuintileReturn
                         : null;
                     // 顯著性：CI 不跨 0 才算顯著
-                    const ciSpansZero =
-                      r.icCiLo != null && r.icCiHi != null && r.icCiLo <= 0 && r.icCiHi >= 0;
+                    const ciCrossZero = ciSpansZero(r.icCiLo, r.icCiHi);
                     const icCellCls = r.ic == null
                       ? ""
-                      : ciSpansZero
+                      : ciCrossZero
                         ? "text-[var(--text-tertiary)]"  // CI 跨 0 → 統計上跟噪音區分不開，淡化顯示
                         : r.ic > 0
                           ? "text-[var(--color-up)] font-semibold"
@@ -259,7 +268,7 @@ export default async function DiagnosticsPage() {
                           {r.icCiLo == null || r.icCiHi == null ? (
                             <span className="text-[var(--text-tertiary)]">—</span>
                           ) : (
-                            <span className={ciSpansZero ? "text-[var(--text-tertiary)]" : "text-[var(--text-secondary)]"} title={ciSpansZero ? "CI 跨 0 → 不顯著（與隨機難區分）" : "CI 不跨 0 → 顯著"}>
+                            <span className={ciCrossZero ? "text-[var(--text-tertiary)]" : "text-[var(--text-secondary)]"} title={ciCrossZero ? "CI 跨 0 → 不顯著（與隨機難區分）" : "CI 不跨 0 → 顯著"}>
                               [{r.icCiLo >= 0 ? "+" : ""}{r.icCiLo.toFixed(3)}, {r.icCiHi >= 0 ? "+" : ""}{r.icCiHi.toFixed(3)}]
                             </span>
                           )}
@@ -306,6 +315,7 @@ export default async function DiagnosticsPage() {
                 <div className="mt-2 text-[11px] text-[var(--text-tertiary)]">
                   Y 軸 = cross-sectional Spearman IC 的 {rollingData.window} 日滾動平均。
                   虛線 = ±0.05（IC 顯著閾值）。0 線上下擺盪 = regime-dependent 因子；單向遠離 0 = 持續訊號。
+                  參數：lookback {rollingData.lookbackDays} 日、forward {rollingData.horizon} 日、window {rollingData.window} 日。
                 </div>
               </div>
             </section>
@@ -331,8 +341,28 @@ export default async function DiagnosticsPage() {
             IC_IR &gt; 0.5 代表跨期穩定；&lt; 0.3 代表時好時壞要小心過擬合。
             Q5−Q1 spread 是「買最強 20%、賣最弱 20%」的多空組合在該 horizon 的平均報酬。
             樣本不足（單日 &lt; 30 檔 / 全期 &lt; 5 個 IC 點）會回 — 而非假數字。
-            CI 用 1000 次 naive bootstrap，未對 forward window 重疊做 block correction，所以是「樂觀的下界」。
+            CI 採 Newey-West HAC（lag ≈ horizon−1）修正重疊持有期自相關，避免傳統 naive bootstrap 過度樂觀。
           </p>
+          <NextStepCards items={[
+            {
+              href: "/weight-tuner",
+              icon: "tune",
+              title: "依因子證據調整權重",
+              description: "先看顯著且穩定的因子，再到權重頁做精調。",
+            },
+            {
+              href: "/portfolio-backtest",
+              icon: "verified",
+              title: "驗證調整後實戰績效",
+              description: "用投組回測檢查報酬、回撤與勝率是否同步改善。",
+            },
+            {
+              href: "/lab",
+              icon: "science",
+              title: "回測工具室完整流程",
+              description: "從策略、參數到權重，完整跑完研究閉環。",
+            },
+          ]} />
         </>
       )}
     </div>
@@ -366,6 +396,9 @@ function SubFactorSection({ subData }: { subData: SubFactorICResponse }) {
         </h2>
         <span className="text-[11px] text-[var(--text-tertiary)]">
           當「短期分數整體 IC ≈ 0」時，這裡能看出是哪幾個子因子互相抵銷
+        </span>
+        <span className="text-[11px] text-[var(--text-tertiary)]">
+          淡化色塊 = 95% CI 跨 0（統計上與噪音難區分）。
         </span>
       </div>
 
@@ -402,9 +435,15 @@ function SubFactorSection({ subData }: { subData: SubFactorICResponse }) {
                         </Td>
                         {subData.horizons.map((fh) => {
                           const c = factorCells[fh];
+                          const muted = ciSpansZero(c?.icCiLo, c?.icCiHi);
                           return (
                             <Td key={fh} align="center">
-                              {c?.ic != null ? <ICColor ic={c.ic} /> : <span className="text-[var(--text-tertiary)]">—</span>}
+                              {c?.ic != null ? (
+                                <ICColor
+                                  ic={c.ic}
+                                  muted={muted}
+                                />
+                              ) : <span className="text-[var(--text-tertiary)]">—</span>}
                             </Td>
                           );
                         })}

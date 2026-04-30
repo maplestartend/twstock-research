@@ -61,6 +61,7 @@ export function WeightTunerClient({
   const [mode, setMode] = useState<Mode>("advanced");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [copyMsg, setCopyMsg] = useState<string | null>(null);
 
   // 載入儲存的 mode 偏好
   useEffect(() => {
@@ -112,6 +113,26 @@ export function WeightTunerClient({
       setErr(humanizeApiError(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const copyWeightsJson = async () => {
+    const payload = JSON.stringify(
+      {
+        short: shortW,
+        mid: midW,
+        long: longW,
+      },
+      null,
+      2,
+    );
+    try {
+      await navigator.clipboard.writeText(payload);
+      setCopyMsg("已複製權重 JSON");
+      window.setTimeout(() => setCopyMsg(null), 1600);
+    } catch {
+      setCopyMsg("複製失敗，請改手動複製");
+      window.setTimeout(() => setCopyMsg(null), 1600);
     }
   };
 
@@ -186,10 +207,14 @@ export function WeightTunerClient({
         <button onClick={resetAll} className={btnSecondary} disabled={busy}>
           <Icon name="refresh" size={16} />全部重設為預設
         </button>
+        <button onClick={copyWeightsJson} className={btnSecondary} disabled={busy}>
+          <Icon name="content_copy" size={16} />複製權重 JSON
+        </button>
         <button onClick={savePreset} className={btnPrimary} disabled={busy}>
           <Icon name="bookmark_add" size={16} />儲存為我的 Preset
         </button>
         {err && <span className="text-xs text-[var(--color-down)]">{err}</span>}
+        {copyMsg && <span className="text-xs text-[var(--text-tertiary)]">{copyMsg}</span>}
       </div>
 
       {/* 對比表 */}

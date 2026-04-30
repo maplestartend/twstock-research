@@ -106,6 +106,7 @@ def score(
     stock_id: str,
     live: int = 0,
     override_price: float | None = None,
+    as_of: str | None = None,
     db: Database = Depends(get_db),
 ) -> StockScoreView:
     """個股短/中/長期評分。
@@ -123,6 +124,15 @@ def score(
     name = r["stock_name"] if r and r["stock_name"] else stock_id
     market_type = r["type"] if r else None
 
+    as_of_value: str | None = None
+    if as_of is not None:
+        try:
+            as_of_value = date.fromisoformat(as_of).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="as_of 格式必須為 YYYY-MM-DD")
+    if as_of_value and (live or (override_price is not None and override_price > 0)):
+        raise HTTPException(status_code=422, detail="as_of 與 live/override_price 不能同時使用")
+
     live_price: float | None = None
     if override_price is not None and override_price > 0:
         live_price = float(override_price)
@@ -131,7 +141,10 @@ def score(
         if q is not None and q.is_live and q.price > 0:
             live_price = q.price
 
-    s = score_stock(db, stock_id, name, live_price=live_price)
+    try:
+        s = score_stock(db, stock_id, name, live_price=live_price, as_of=as_of_value)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     if s is None:
         # score_stock 返回 None 的情況：無 daily_price 或不滿 60 日；
         # 用 404 而非 422 比較貼合語意（resource not available）

@@ -372,7 +372,7 @@ def score_all(
                         "factor": factor_name,
                         "score": factor_score,
                     })
-            # vr26 / macd_hist 原始值給 _strat_vr_macd 做更嚴格的 filter（VR>150 + MACD 紅柱）
+            # vr26 原始值給 _strat_vr_macd 做更嚴格的 filter（VR>150）
             last_row = price.iloc[-1]
             vr26_val = float(last_row["vr26"]) if pd.notna(last_row.get("vr26")) else None
             macd_hist_val = float(last_row["macd_hist"]) if pd.notna(last_row.get("macd_hist")) else None
@@ -513,23 +513,20 @@ def _strat_revenue_hot_streak(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _strat_vr_macd(df: pd.DataFrame) -> pd.DataFrame:
-    """量能動能榜：vr_macd >= 60、未過時、且額外要求 VR26 > 150 + MACD 紅柱（hist > 0）。
+    """量能動能榜：vr_macd >= 60、未過時、且額外要求 VR26 > 150。
 
-    後兩條是使用者指定的硬篩選：要量能進入「活躍以上」區間（VR>150）且
-    動能向上（MACD 柱站上 0 軸 = 紅柱）。少了任一個都不算「量能 × 動能」共振。
-    score_vr_macd 內已部分覆蓋這些情況（rule D/C/B 等），但複合分數裡 K-fallback
-    路徑可能讓 vr26<150 但 macd_hist 正向的 row 也得 60+，這裡再過一次硬條件。
+    因子已調整為純 VR 評分，因此策略硬條件也同步改為量能條件，
+    避免前後語意不一致。
     """
     if "vr_macd" not in df.columns:
         return df.head(0)
-    if "vr26" not in df.columns or "macd_hist" not in df.columns:
+    if "vr26" not in df.columns:
         # 沒有原始指標欄位（例如只 seed signal_history 跑單元測試）就退回基本篩選
         return df[(df["vr_macd"].fillna(-1) >= 60) & (df["is_stale"].fillna(0) == 0)]
     return df[
         (df["vr_macd"].fillna(-1) >= 60)
         & (df["is_stale"].fillna(0) == 0)
         & (df["vr26"].fillna(-1) > 150)
-        & (df["macd_hist"].fillna(-1) > 0)
     ]
 
 
@@ -601,7 +598,7 @@ STRATEGIES: dict[str, Strategy] = {
     ),
     "量能動能": Strategy(
         name="量能動能",
-        description="VR26 > 150 + MACD 紅柱 + 複合分≥60，依 vr_macd 排序",
+        description="VR26 > 150 + 量能分數≥60，依 vr_macd 排序",
         filter_fn=_strat_vr_macd,
         sort_by="vr_macd",
         stocks_only=False,  # ETF 同樣有量能訊號

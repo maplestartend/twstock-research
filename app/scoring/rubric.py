@@ -141,7 +141,7 @@ def score_bollinger(last_row: pd.Series) -> Optional[float]:
 
 
 def _vr_zone_score(vr_val: float) -> float:
-    """VR 26 分區的 baseline 分數（不看 MACD 時的中性參考）。
+    """VR 26 分區的 baseline 分數（純 VR 版本）。
     台股慣例：< 40 為超低量谷底（反彈機會）、40-80 為偏低（健康整理）、
     80-150 為均衡（多空拉鋸）、150-250 為熱絡、250-450 為過熱、>= 450 為極端噴量。
     """
@@ -154,61 +154,40 @@ def _vr_zone_score(vr_val: float) -> float:
 
 
 def score_vr_macd(last_row: pd.Series, prev_row: pd.Series | None = None) -> Optional[float]:
-    """成交量比率 (VR26) ✕ MACD 柱複合評分。
+    """純 VR 因子評分（保留函式名 `score_vr_macd` 以維持相容）。
 
-    透過 VR 分區判斷量能位置（低量谷底 / 健康量 / 過熱），再用 MACD 柱方向確認動能。
-    rule A 最嚴格（VR 低量+rising+MACD turning up）→ 88 分（黃金底訊號）；
-    rule G 最危險（VR 噴量+MACD turning down）→ 10 分（高檔反轉警示）。
-
-    缺 prev_row 時走 zone-only fallback (rule K)：用 VR 分區基礎分 ±5（看 MACD 是否為正）。
+    設計：
+    1) 先用 VR 分區決定 baseline（_vr_zone_score）。
+    2) 再用「VR 與前一日相比」做微調：
+       - 低量區( <80 )量能回升：加分（可能由谷底轉強）
+       - 常態區(80~250)量能回升：小幅加分（量價配合）
+       - 過熱區(>=250)續升：扣分（追價風險）
+       - 過熱區回落：加分（降溫、風險下降）
     """
     vr_val = last_row.get("vr26")
-    hist = last_row.get("macd_hist")
-    if _is_missing(vr_val) or _is_missing(hist):
+    if _is_missing(vr_val):
         return None
 
-    # prev_row 缺失（DataFrame 第 1 筆）→ zone-only fallback ±5
+    zone = _vr_zone_score(float(vr_val))
     if prev_row is None:
-        zone = _vr_zone_score(vr_val)
-        return _clip(zone + (5 if hist > 0 else -5))
-
+        return zone
     vr_prev = prev_row.get("vr26")
-    hist_prev = prev_row.get("macd_hist")
-    if _is_missing(vr_prev) or _is_missing(hist_prev):
-        # prev row 有但欄位缺 → 同樣走 fallback
-        zone = _vr_zone_score(vr_val)
-        return _clip(zone + (5 if hist > 0 else -5))
+    if _is_missing(vr_prev):
+        return zone
 
-    vr_rising = vr_val > vr_prev
-    hist_pos = hist > 0
-    hist_growing = hist > hist_prev
-    hist_turning_up = (hist > hist_prev) and (hist_prev <= 0)
-    hist_turning_down = (hist < hist_prev) and (hist_prev >= 0)
-
-    # Decision matrix — first match wins
-    if vr_val < 80 and vr_rising and hist_turning_up:           # A
-        return 88.0
-    if vr_val < 40 and hist_turning_up:                          # I
-        return 75.0
-    if vr_val < 80 and vr_rising and hist_pos:                   # B
-        return 78.0
-    if vr_val < 40 and not hist_pos:                             # J
-        return 35.0
-    if 80 <= vr_val < 150 and hist_pos and hist_growing:         # C
-        return 72.0
-    if 150 <= vr_val < 250 and hist_pos:                         # D
-        return 62.0
-    if 250 <= vr_val < 450 and hist_growing:                     # E
-        return 40.0
-    if 250 <= vr_val < 450 and hist_turning_down:                # F
-        return 20.0
-    if vr_val >= 450 and hist_turning_down:                      # G
-        return 10.0
-    if vr_val >= 450 and hist_pos:                               # H
-        return 25.0
-    # K fallback：zone-only ±5
-    zone = _vr_zone_score(vr_val)
-    return _clip(zone + (5 if hist_pos else -5))
+    if vr_val > vr_prev:
+        if vr_val < 80:
+            return _clip(zone + 8.0)
+        if vr_val < 250:
+            return _clip(zone + 5.0)
+        return _clip(zone - 5.0)
+    if vr_val < vr_prev:
+        if vr_val < 80:
+            return _clip(zone - 10.0)
+        if vr_val < 250:
+            return _clip(zone - 5.0)
+        return _clip(zone + 8.0)
+    return zone
 
 
 def score_volume(last_row: pd.Series) -> Optional[float]:
@@ -484,27 +463,27 @@ def score_valuation(fund: dict) -> Optional[float]:
 # 權重設定
 # ======================================================================
 SHORT_TERM_WEIGHTS = {
-    # v3：依 5d / 20d IC 共識做小幅再平衡（保守版，不依賴小樣本 60d 結論）
+    # v4（第一版草案）：VR×MACD 改純 VR 後，短期提高量能權重、法人權重小幅下修。
     "ma_alignment": 0.18,   # +0.03 — 60d IC +0.119 唯一強訊號，5d/20d 弱故只小幅上調
     "kd": 0.10,             # -0.02 — 5d/20d 一致弱負
     "macd": 0.04,
     "rsi": 0.07,            # -0.01 — 一致弱負，小砍
     "bollinger": 0.06,      # -0.01
-    "volume": 0.08,
-    "vr_macd": 0.06,        # -0.02 — 全 horizon 反向，但 60d 樣本太少，保留小權重以防 regime switch
-    "foreign": 0.20,        # 結構性訊號保留
-    "trust": 0.13,          # +0.03 — Q5-Q1 spread 60d +11.29% 雖然 IC 弱
+    "volume": 0.10,
+    "vr_macd": 0.08,        # 純 VR：回歸量能位置與轉折，先上調做第一版驗證
+    "foreign": 0.18,
+    "trust": 0.11,
     "margin_change": 0.08,
 }
 
 MID_TERM_WEIGHTS = {
-    # v3：trend 仍是最強信號，trust_cum 升、eps_growth/revenue_growth 微降
+    # v4（第一版草案）：中期仍以趨勢/基本面為主，VR 僅做輔助確認。
     "trend": 0.32,          # +0.02 — 5d/20d/60d 全 horizon 一致正
     "foreign_cum": 0.20,
-    "trust_cum": 0.17,      # +0.02 — 5d/20d 一致正且 spread 大
+    "trust_cum": 0.16,
     "eps_growth": 0.18,     # -0.02 — 仍正但讓出給更強因子
     "revenue_growth": 0.10, # -0.01
-    "vr_macd": 0.03,        # -0.01 — short/mid 同方向反向，小幅修剪
+    "vr_macd": 0.04,        # 純 VR 在中期只小幅配置，避免噪音主導
 }
 
 LONG_TERM_WEIGHTS = {

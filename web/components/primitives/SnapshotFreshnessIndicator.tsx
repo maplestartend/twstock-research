@@ -24,6 +24,7 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
   if (!status) return null;
 
   const stale = status.isStale;
+  const staleReason = status.staleReason;
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -35,6 +36,8 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
         ...status,
         snapshotAsOf: status.dailyPriceAsOf,
         isStale: false,
+        staleReason: "up_to_date",
+        canRefresh: false,
       });
       startTransition(() => router.refresh());
       console.info(`snapshot refreshed: ${res.rowsWritten} rows`);
@@ -55,6 +58,17 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
   }
 
   if (!stale) {
+    if (staleReason === "waiting_for_dataset_sync") {
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--warning-bg)] text-[var(--warning-fg)]"
+          title="日線已更新，但法人/融資/估值尚未同步到同日，暫時沿用舊快照避免混資料。"
+        >
+          <Icon name="hourglass_empty" size={14} />
+          <span className="hidden sm:inline">等待資料同步</span>
+        </span>
+      );
+    }
     return (
       <span
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--color-down-bg)] text-[var(--color-down)]"
@@ -62,6 +76,18 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
       >
         <Icon name="check_circle" size={14} filled />
         <span className="hidden sm:inline">快照最新</span>
+      </span>
+    );
+  }
+
+  if (!status.canRefresh) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--warning-bg)] text-[var(--warning-fg)]"
+        title={`快照狀態：${staleReason ?? "unknown"}`}
+      >
+        <Icon name="warning" size={14} filled />
+        <span className="hidden sm:inline">快照待更新</span>
       </span>
     );
   }

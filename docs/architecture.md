@@ -133,17 +133,17 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - 進場 65 分、出場 40 分，很多行情會錯過
    - 建議用權重調優頁找出符合自己直覺的參數
 
-5. **目前預設權重（v3，2026-04-30 依 sub-factor IC 細調）**
+5. **目前預設權重（v4 草案，2026-04-30；VR×MACD 改為純 VR）**
    - `COMPOSITE_WEIGHTS`：short/mid/long = **0.20 / 0.60 / 0.20**（不動 — reviewer 警告：mid IC ≈ composite IC 不足以推到 0.70/0.15/0.15）
    - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.40 / 0.30 / 0.05 / 0.15 / 0.10**
      - **`eps_cagr_3y` 從 0.25 砍到 0.05**：需 16 季 EPS（4 年）才算得出，全市場 `financials_quarterly_derived` 只 backfill 5 季 → 全 null。屬 **data quality 問題**，非因子問題；補完 4 年財報後可回升。
      - **`dividend` 從 0.05 拉到 0.15**：是 long term 最穩定訊號（5/20/60 日 IC 都 ~+0.03、IR 1.86）。
      - **`roe` / `margin_quality` 各 +0.05**：吸收 eps_cagr_3y 釋出的 0.20。`roe` 5d IC +0.091、IR 2.05 是長期最強單因子。
      - **`valuation` 不動**：60 日 IC -0.048 看似反向但 reviewer 認為是 2026Q1 regime artifact（年底+農曆年+AI 主題股輾傳產），保留 0.10 防 regime switch。
-   - `SHORT_TERM_WEIGHTS`：ma_alignment 0.18 / kd 0.10 / macd 0.04 / rsi 0.07 / bollinger 0.06 / volume 0.08 / vr_macd 0.06 / foreign 0.20 / trust 0.13 / margin_change 0.08
-     - 改動原則：只動 5d/20d 都同向且樣本夠的訊號，不依賴小樣本 60d horizon 做大改。`rsi`/`bollinger`/`kd`/`vr_macd` 各 -0.01~0.02（一致弱反向），`ma_alignment` +0.03（60d 唯一強訊號）、`trust` +0.03（Q5-Q1 spread 大）。
-   - `MID_TERM_WEIGHTS`：trend 0.32 / foreign_cum 0.20 / trust_cum 0.17 / eps_growth 0.18 / revenue_growth 0.10 / vr_macd 0.03
-     - `trend` +0.02（全 horizon 一致正、Q5-Q1 spread 大）、`trust_cum` +0.02、`vr_macd` -0.01（mid 內也反向）。
+  - `SHORT_TERM_WEIGHTS`：ma_alignment 0.18 / kd 0.10 / macd 0.04 / rsi 0.07 / bollinger 0.06 / volume 0.10 / vr_macd 0.08 / foreign 0.18 / trust 0.11 / margin_change 0.08
+    - 第一版草案：因子語意改成純 VR 後，短期把量能（`volume` + `vr_macd`）上調，法人短線權重小幅下修。
+  - `MID_TERM_WEIGHTS`：trend 0.32 / foreign_cum 0.20 / trust_cum 0.16 / eps_growth 0.18 / revenue_growth 0.10 / vr_macd 0.04
+    - 中期仍由趨勢/基本面主導，純 VR 只做小權重輔助確認。
 
 6. **雷達掃描不含基本面（預設）**
    - 勾「含基本面」會變慢但長期分數比較準

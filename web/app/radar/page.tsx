@@ -90,7 +90,7 @@ export default async function RadarPage({
     return <BackendDownError error={e} pageTitle="雷達掃描" />;
   }
 
-  // 「量能動能」策略：依 vr_macd 排序，UI 多顯示一個 VR×MACD 欄
+  // 「量能動能」策略：依 vr_macd 排序，UI 多顯示一個 VR 欄
   const showVrMacdCol = activeStrategy === "量能動能";
 
   // Client-side 50/頁分頁
@@ -266,7 +266,7 @@ export default async function RadarPage({
                   <Th align="center" className="w-[88px]">中期</Th>
                   {typeTab !== "etf" && <Th align="center" className="w-[88px]">長期</Th>}
                   <Th align="center" className="w-[88px]">綜合</Th>
-                  {showVrMacdCol && <Th align="center" className="w-[96px]"><span title="VR(26) × MACD 柱複合分">VR×MACD</span></Th>}
+                  {showVrMacdCol && <Th align="center" className="w-[96px]"><span title="VR(26) 量能分數">VR</span></Th>}
                   <Th align="center" className="w-[108px]">建議</Th>
                   <Th>命中策略</Th>
                 </tr>
@@ -360,7 +360,7 @@ const RADAR_CSV_HEADERS = [
 
 const RADAR_CSV_HEADERS_VR = [
   "代號", "名稱", "市場", "收盤",
-  "短期", "中期", "長期", "綜合", "VR×MACD",
+  "短期", "中期", "長期", "綜合", "VR",
   "建議", "命中策略",
 ];
 

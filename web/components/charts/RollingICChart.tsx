@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import type { RollingICRow } from "@/lib/api";
 
@@ -9,7 +10,7 @@ const LABEL: Record<SeriesKey, string> = {
   mid: "中期",
   long: "長期",
   composite: "綜合",
-  vrMacd: "VR×MACD",
+  vrMacd: "VR",
 };
 const COLOR: Record<SeriesKey, string> = {
   short:     "var(--chart-series-short)",
@@ -33,6 +34,20 @@ export function RollingICChart({ data, height = 300 }: { data: RollingICRow[]; h
       </div>
     );
   }
+  const yDomain = useMemo(() => {
+    const vals: number[] = [];
+    for (const row of data) {
+      for (const k of ["short", "mid", "long", "composite", "vrMacd"] as const) {
+        const v = row[k];
+        if (typeof v === "number" && Number.isFinite(v)) vals.push(Math.abs(v));
+      }
+    }
+    const maxAbs = vals.length ? Math.max(...vals) : 0.1;
+    // 對稱刻度避免視覺誇大，並限制上界不超過 0.40（IC 在實務上極少超出）。
+    const bound = Math.max(0.1, Math.min(0.4, Math.ceil(maxAbs * 20) / 20));
+    return [-bound, bound] as [number, number];
+  }, [data]);
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
@@ -49,7 +64,7 @@ export function RollingICChart({ data, height = 300 }: { data: RollingICRow[]; h
           tickLine={false}
           width={48}
           tickFormatter={(v: number) => v.toFixed(2)}
-          domain={["auto", "auto"]}
+          domain={yDomain}
         />
         {/* IC = 0 是噪音線；IC > 0.05 通常算有訊號 */}
         <ReferenceLine y={0} stroke="var(--chart-grid)" />

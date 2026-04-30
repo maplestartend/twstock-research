@@ -46,9 +46,8 @@ class FactorICResult:
     bot_quintile_return: float | None  # Q1 平均 forward return（前 20%→Q1 == 因子最低）
     n_dates: int  # 真正參與計算的日期數（過濾 min_samples 後）
     avg_n_stocks: float  # 各日期樣本數平均
-    # 95% bootstrap CI on mean IC（None = n_dates < 5 不算）。
-    # Naive bootstrap：未對 forward window 重疊做 block correction，因此區間略窄；
-    # 對「IC 是否顯著 > 0」這種定性判斷仍夠用。
+    # 95% CI on mean IC（Newey-West HAC, lag≈horizon-1；None = n_dates < 5）。
+    # 修正 forward window 重疊造成的自相關，避免 naive bootstrap 區間過窄。
     ic_ci_lo: float | None = None
     ic_ci_hi: float | None = None
 
@@ -180,22 +179,34 @@ def _rank_frame(df: pd.DataFrame) -> _RankedFrame:
     return _RankedFrame(df.index, df.columns, raw, ranks, valid)
 
 
-def _bootstrap_ic_ci(
-    ic_per_date: list[float], *, n_samples: int = 1000, seed: int = 42,
+def _newey_west_mean_ci(
+    ic_per_date: list[float],
+    *,
+    lag: int,
 ) -> tuple[float | None, float | None]:
-    """Naive bootstrap 95% CI for mean IC across dates.
-
-    限制：未對 60d forward window 重疊做 block correction → CI 略窄於真實值。對「IC 顯著
-    > 0 嗎」的定性判斷仍夠用；要嚴格 inference 需 Newey-West / circular block bootstrap。
-    """
+    """用 Newey-West HAC 估平均 IC 的 95% CI（處理序列自相關）。"""
     if len(ic_per_date) < 5:
         return None, None
-    rng = np.random.default_rng(seed)
     arr = np.asarray(ic_per_date, dtype="float64")
     n = len(arr)
-    indices = rng.integers(0, n, size=(n_samples, n))
-    means = arr[indices].mean(axis=1)
-    return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
+    if n < 2:
+        return None, None
+    lag = max(1, min(int(lag), n - 1))
+    mean_ic = float(arr.mean())
+    resid = arr - mean_ic
+
+    gamma0 = float(np.dot(resid, resid) / n)
+    long_run_var = gamma0
+    for l in range(1, lag + 1):
+        cov = float(np.dot(resid[l:], resid[:-l]) / n)
+        weight = 1.0 - (l / (lag + 1.0))
+        long_run_var += 2.0 * weight * cov
+    var_mean = long_run_var / n
+    if not np.isfinite(var_mean) or var_mean <= 0:
+        return None, None
+    se = float(np.sqrt(var_mean))
+    z = 1.96
+    return mean_ic - z * se, mean_ic + z * se
 
 
 def _per_date_ic_full(
@@ -366,7 +377,7 @@ def compute_factor_ic(
             mean_ic = float(np.mean(ic_per_date))
             std_ic = float(np.std(ic_per_date, ddof=1)) if len(ic_per_date) > 1 else 0.0
             ic_ir = mean_ic / std_ic if std_ic > 1e-9 else None
-            ci_lo, ci_hi = _bootstrap_ic_ci(ic_per_date)
+            ci_lo, ci_hi = _newey_west_mean_ci(ic_per_date, lag=max(1, horizon - 1))
 
             out.append(FactorICResult(
                 factor=factor, horizon=horizon,
@@ -480,7 +491,7 @@ class SubFactorICResult:
     bot_quintile_return: float | None
     n_dates: int
     avg_n_stocks: float
-    ic_ci_lo: float | None = None  # 95% bootstrap CI（同上）
+    ic_ci_lo: float | None = None  # 95% CI（Newey-West HAC）
     ic_ci_hi: float | None = None
 
 
@@ -580,7 +591,7 @@ def compute_subfactor_ic(
             mean_ic = float(np.mean(ic_per_date))
             std_ic = float(np.std(ic_per_date, ddof=1)) if len(ic_per_date) > 1 else 0.0
             ic_ir = mean_ic / std_ic if std_ic > 1e-9 else None
-            ci_lo, ci_hi = _bootstrap_ic_ci(ic_per_date)
+            ci_lo, ci_hi = _newey_west_mean_ci(ic_per_date, lag=max(1, fwd_h - 1))
 
             out.append(SubFactorICResult(
                 horizon=str(horizon_name), factor=str(factor_name), forward_horizon=fwd_h,

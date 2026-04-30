@@ -31,6 +31,19 @@ def test_health_ok():
     assert r.json()["status"] == "ok"
 
 
+def test_snapshot_status_includes_reason_fields():
+    r = client.get("/api/system/snapshot-status")
+    assert r.status_code == 200
+    data = r.json()
+    assert "snapshotAsOf" in data
+    assert "dailyPriceAsOf" in data
+    assert "isStale" in data
+    assert "datasetsSynced" in data
+    assert "datasetDates" in data
+    assert "staleReason" in data
+    assert "canRefresh" in data
+
+
 def test_market_type_classify_0050_is_etf():
     """0050 是 4 碼 ETF，過去因 len < 5 漏判。確認分類正確。"""
     from app.data.market_type import classify_market, is_etf
@@ -71,6 +84,15 @@ def test_radar_hits_with_strategy_filter():
     assert r.status_code == 200
     for h in r.json():
         assert "短線強勢" in (h.get("strategies") or "")
+
+
+def test_factor_ic_response_contains_assumptions():
+    r = client.get("/api/diagnostics/factor-ic")
+    assert r.status_code == 200
+    data = r.json()
+    assert "forwardReturnBasis" in data
+    assert "executionAssumption" in data
+    assert "icCiMethod" in data
 
 
 def test_dashboard_radar_hits_excludes_etf_by_default():
@@ -151,6 +173,18 @@ def test_etf_score_long_is_none():
         pytest.skip("0050 無足夠資料")
     assert s.long.total is None
     assert s.long.completeness == 0.0
+
+
+def test_stock_score_asof_rejects_live_override_mix():
+    r = client.get("/api/stocks/2330/score", params={"as_of": "2025-01-01", "live": 1})
+    assert r.status_code == 422
+    assert "不能同時使用" in r.json()["detail"]
+
+
+def test_stock_score_invalid_asof_format():
+    r = client.get("/api/stocks/2330/score", params={"as_of": "2025/01/01"})
+    assert r.status_code == 422
+    assert "YYYY-MM-DD" in r.json()["detail"]
 
 
 def test_taipei_today_returns_date():

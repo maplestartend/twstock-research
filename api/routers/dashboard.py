@@ -1,6 +1,7 @@
 """/api/dashboard/* — 今日戰情室聚合資料。"""
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
@@ -15,6 +16,7 @@ from app.data.db import Database
 from app.scoring.radar_queries import query_radar_hits
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/radar-hits", response_model=list[RadarHit])
@@ -322,7 +324,7 @@ def data_freshness(db: Database = Depends(get_db)) -> list[DataFreshness]:
             for r in conn.execute(sql).fetchall():
                 mx_by_table[r["t"]] = r["mx"]
     except Exception:
-        pass
+        logger.exception("dashboard.data_freshness: 查詢最新日期失敗")
 
     from datetime import datetime
     out: list[DataFreshness] = []
@@ -342,7 +344,11 @@ def data_freshness(db: Database = Depends(get_db)) -> list[DataFreshness]:
                 else:
                     tone = "error"
             except Exception:
-                pass
+                logger.warning(
+                    "dashboard.data_freshness: 無法解析日期 table=%s latest=%s",
+                    table,
+                    mx,
+                )
         out.append(DataFreshness(
             table=table,
             label=label,

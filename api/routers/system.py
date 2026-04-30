@@ -34,16 +34,17 @@ class SnapshotStatus(CamelModel):
     snapshot_as_of: str | None
     daily_price_as_of: str | None
     is_stale: bool
+    datasets_synced: bool = False
+    dataset_dates: dict[str, str | None] = {}
+    stale_reason: str = "up_to_date"
+    can_refresh: bool = False
 
 
 @router.get("/snapshot-status", response_model=SnapshotStatus)
 def snapshot_status(db: Database = Depends(get_db)) -> SnapshotStatus:
     """signal_history 最新日 vs daily_price 最新日；is_stale=true 代表列表頁下次查詢時會自動補跑。"""
-    return SnapshotStatus(
-        snapshot_as_of=snap_fresh._latest_snapshot_date(db),
-        daily_price_as_of=snap_fresh._latest_price_date(db),
-        is_stale=snap_fresh.is_stale(db),
-    )
+    status = snap_fresh.freshness_status(db)
+    return SnapshotStatus(**status)
 
 
 class NarrativeStatus(CamelModel):

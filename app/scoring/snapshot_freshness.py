@@ -66,20 +66,47 @@ def all_datasets_synced(db: Database) -> bool:
     return max(dates) == min(dates)  # type: ignore[type-var]
 
 
+def freshness_status(db: Database) -> dict[str, object]:
+    """回傳 snapshot 新鮮度完整狀態，供 API/前端顯示明確 stale 原因。"""
+    price = _latest_price_date(db)
+    snap = _latest_snapshot_date(db)
+    dataset_dates = latest_dataset_dates(db)
+    values = list(dataset_dates.values())
+    datasets_synced = bool(values) and all(v is not None for v in values) and (max(values) == min(values))
+
+    stale_reason = "up_to_date"
+    is_stale_now = False
+    can_refresh = False
+
+    if not price:
+        stale_reason = "no_price_data"
+    elif snap and snap >= price:
+        stale_reason = "up_to_date"
+    elif not datasets_synced:
+        stale_reason = "waiting_for_dataset_sync"
+    else:
+        is_stale_now = True
+        can_refresh = True
+        stale_reason = "snapshot_missing" if snap is None else "snapshot_behind"
+
+    return {
+        "snapshot_as_of": snap,
+        "daily_price_as_of": price,
+        "is_stale": is_stale_now,
+        "datasets_synced": datasets_synced,
+        "dataset_dates": dataset_dates,
+        "stale_reason": stale_reason,
+        "can_refresh": can_refresh,
+    }
+
+
 def is_stale(db: Database) -> bool:
     """snapshot 落後 daily_price → True，且僅在四張核心表同步時才會觸發重算。
 
     早盤盤後資料分批進 DB（OHLCV 先到、法人/融資/per_pbr 後到）。若只看 daily_price 就重算 snapshot，
     會用「今日 OHLCV + 昨日法人」混雜算分；改成「四張同步」才允許重算，未同步時暫時用舊 snapshot。
     """
-    price = _latest_price_date(db)
-    if not price:
-        return False
-    snap = _latest_snapshot_date(db)
-    if snap and snap >= price:
-        return False
-    # 落後了，但只有四張表都同步才能放心重算（否則重算結果反而錯）
-    return all_datasets_synced(db)
+    return bool(freshness_status(db)["is_stale"])
 
 
 def ensure_fresh(db: Database) -> bool:

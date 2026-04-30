@@ -321,6 +321,8 @@ def industry_yield_z_for_stock(
     db: Database,
     stock_id: str,
     conn=None,
+    *,
+    as_of: str | None = None,
 ) -> Optional[float]:
     """單股版的同產業殖利率 z-score，邏輯與 radar._industry_yield_z_map 對齊。
 
@@ -336,8 +338,8 @@ def industry_yield_z_for_stock(
     """
     if conn is None:
         with db.connect() as c:
-            return _industry_yield_z_with_conn(c, stock_id)
-    return _industry_yield_z_with_conn(conn, stock_id)
+            return _industry_yield_z_with_conn(c, stock_id, as_of=as_of)
+    return _industry_yield_z_with_conn(conn, stock_id, as_of=as_of)
 
 
 # 同產業殖利率 z-score 的小型快取：key=(industry, per_pbr 最新日期)。
@@ -353,7 +355,7 @@ _yield_z_cache_lock = threading.Lock()
 _YIELD_Z_CACHE_MAX_KEYS = 64  # 一個交易日 ~30 個產業 → 兩天份就 64 夠用
 
 
-def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
+def _industry_yield_z_with_conn(conn, stock_id: str, *, as_of: str | None = None) -> Optional[float]:
     ind_row = conn.execute(
         "SELECT industry_category FROM stock_info WHERE stock_id=?", (stock_id,)
     ).fetchone()
@@ -361,25 +363,49 @@ def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
         return None
     industry = ind_row["industry_category"]
 
-    # cache key：用 per_pbr 最新一筆日期（cheap MAX 查詢，<1ms）
-    mx_row = conn.execute("SELECT MAX(date) AS mx FROM per_pbr").fetchone()
+    # cache key：用 per_pbr 在 as_of 以前的最新日期，避免歷史重播吃到未來資料。
+    if as_of:
+        mx_row = conn.execute(
+            "SELECT MAX(date) AS mx FROM per_pbr WHERE date <= ?",
+            (as_of,),
+        ).fetchone()
+    else:
+        mx_row = conn.execute("SELECT MAX(date) AS mx FROM per_pbr").fetchone()
+    if not mx_row or not mx_row["mx"]:
+        return None
     cache_key = (industry, mx_row["mx"] if mx_row else None)
 
     with _yield_z_cache_lock:
         cached = _yield_z_cache.get(cache_key)
         cache_present = cache_key in _yield_z_cache
     if cached is None and not cache_present:
-        rows = conn.execute(
-            """
-            SELECT p.stock_id, p.dividend_yield FROM per_pbr p
-            INNER JOIN (
-                SELECT stock_id, MAX(date) AS mx FROM per_pbr GROUP BY stock_id
-            ) m ON p.stock_id = m.stock_id AND p.date = m.mx
-            INNER JOIN stock_info i ON i.stock_id = p.stock_id
-            WHERE i.industry_category = ? AND p.dividend_yield IS NOT NULL
-            """,
-            (industry,),
-        ).fetchall()
+        if as_of:
+            rows = conn.execute(
+                """
+                SELECT p.stock_id, p.dividend_yield FROM per_pbr p
+                INNER JOIN (
+                    SELECT stock_id, MAX(date) AS mx
+                    FROM per_pbr
+                    WHERE date <= ?
+                    GROUP BY stock_id
+                ) m ON p.stock_id = m.stock_id AND p.date = m.mx
+                INNER JOIN stock_info i ON i.stock_id = p.stock_id
+                WHERE i.industry_category = ? AND p.dividend_yield IS NOT NULL
+                """,
+                (as_of, industry),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT p.stock_id, p.dividend_yield FROM per_pbr p
+                INNER JOIN (
+                    SELECT stock_id, MAX(date) AS mx FROM per_pbr GROUP BY stock_id
+                ) m ON p.stock_id = m.stock_id AND p.date = m.mx
+                INNER JOIN stock_info i ON i.stock_id = p.stock_id
+                WHERE i.industry_category = ? AND p.dividend_yield IS NOT NULL
+                """,
+                (industry,),
+            ).fetchall()
         yields_by_sid = {r["stock_id"]: float(r["dividend_yield"]) for r in rows}
         new_value: tuple[dict[str, float], float, float] | None
         if len(yields_by_sid) < 4:
@@ -409,26 +435,47 @@ def _industry_yield_z_with_conn(conn, stock_id: str) -> Optional[float]:
     return (target - mean) / std
 
 
-def _load_stock_bundle(conn, stock_id: str) -> dict[str, pd.DataFrame]:
+def _load_stock_bundle(conn, stock_id: str, *, as_of: str | None = None) -> dict[str, pd.DataFrame]:
     """一次抓 5 張表（margin / per_pbr / financials / financials_cumulative / financials_quarterly_derived）。
     共用同一個 conn，避免 score_stock 每次 open / close 五次連線。"""
+    date_clause = " AND date <= ?" if as_of else ""
+    params = [stock_id, as_of] if as_of else [stock_id]
+    fin_cum_sql = "SELECT * FROM financials_cumulative WHERE stock_id=?"
+    fin_derived_sql = "SELECT * FROM financials_quarterly_derived WHERE stock_id=?"
+    fin_cum_params = [stock_id]
+    fin_derived_params = [stock_id]
+    if as_of:
+        fin_cum_sql += " AND date <= ? AND COALESCE(publish_date, date) <= ?"
+        fin_derived_sql += " AND date <= ? AND COALESCE(publish_date, date) <= ?"
+        fin_cum_params.extend([as_of, as_of])
+        fin_derived_params.extend([as_of, as_of])
+    fin_cum_sql += " ORDER BY date"
+    fin_derived_sql += " ORDER BY date"
     return {
         "margin": pd.read_sql_query(
-            "SELECT * FROM margin WHERE stock_id=? ORDER BY date", conn, params=[stock_id]
+            "SELECT * FROM margin WHERE stock_id=?" + date_clause + " ORDER BY date",
+            conn,
+            params=params,
         ),
         "per_pbr": pd.read_sql_query(
-            "SELECT * FROM per_pbr WHERE stock_id=? ORDER BY date", conn, params=[stock_id]
+            "SELECT * FROM per_pbr WHERE stock_id=?" + date_clause + " ORDER BY date",
+            conn,
+            params=params,
         ),
         "fin": pd.read_sql_query(
-            "SELECT * FROM financials WHERE stock_id=? ORDER BY date", conn, params=[stock_id]
+            "SELECT * FROM financials WHERE stock_id=?" + date_clause + " ORDER BY date",
+            conn,
+            params=params,
         ),
         "fin_cum": pd.read_sql_query(
-            "SELECT * FROM financials_cumulative WHERE stock_id=? ORDER BY date",
-            conn, params=[stock_id],
+            fin_cum_sql,
+            conn,
+            params=fin_cum_params,
         ),
         "fin_derived": pd.read_sql_query(
-            "SELECT * FROM financials_quarterly_derived WHERE stock_id=? ORDER BY date",
-            conn, params=[stock_id],
+            fin_derived_sql,
+            conn,
+            params=fin_derived_params,
         ),
     }
 
@@ -466,6 +513,7 @@ def score_stock(
     stock_name: str = "",
     *,
     live_price: float | None = None,
+    as_of: str | date | None = None,
 ) -> StockScore | None:
     """從 DB 讀資料、計算指標、產出評分。
     技術指標用「還原價」計算，避免除權息或分割造成 MA / KD 等指標失真。
@@ -473,8 +521,19 @@ def score_stock(
     live_price: 若給定（盤中即時報價或 what-if 假設值），覆寫最後一筆 close 後再算技術指標。
     短期 / 中期分數會反映新 close；長期分數（ROE/EPS/股利）不受影響。回傳的 close 欄位
     為覆寫後的數值，signals 內會多塞 `live_price_used=True` 讓 UI 顯示「盤中估算」標記。
+    as_of: 歷史重播基準日（YYYY-MM-DD/date）。提供後僅使用 `date <= as_of` 且
+    `publish_date <= as_of` 的資料，語意與 score_all(as_of) 對齊。
     """
-    price = load_adjusted_price(db, stock_id)
+    as_of_str: str | None = None
+    if isinstance(as_of, str):
+        as_of_str = date.fromisoformat(as_of).isoformat()
+    elif isinstance(as_of, date):
+        as_of_str = as_of.isoformat()
+
+    if as_of_str and live_price is not None and live_price > 0:
+        raise ValueError("as_of 與 live_price 不能同時使用")
+
+    price = load_adjusted_price(db, stock_id, as_of=as_of_str)
     if price.empty or len(price) < 60:
         return None
 
@@ -483,11 +542,13 @@ def score_stock(
         price = _override_last_close(price, float(live_price))
     price = tech.enrich(price)
     inst = db.load_institutional(stock_id)
+    if as_of_str and not inst.empty and "date" in inst.columns:
+        inst = inst[pd.to_datetime(inst["date"]) <= pd.Timestamp(as_of_str)].reset_index(drop=True)
 
     # 全部 read_sql + industry_yield_z 共用一個 conn，省下重複 open / close。
     with db.connect() as conn:
-        bundle = _load_stock_bundle(conn, stock_id)
-        z = industry_yield_z_for_stock(db, stock_id, conn=conn)
+        bundle = _load_stock_bundle(conn, stock_id, as_of=as_of_str)
+        z = industry_yield_z_for_stock(db, stock_id, conn=conn, as_of=as_of_str)
     margin = bundle["margin"]
     per_pbr = bundle["per_pbr"]
     fin = bundle["fin"]

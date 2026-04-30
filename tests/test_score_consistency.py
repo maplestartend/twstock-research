@@ -137,3 +137,36 @@ class TestScoreConsistency:
         assert _close(live_mid, snap_mid), f"mid mismatch: live={live_mid} snapshot={snap_mid}"
         assert _close(live_long, snap_long), f"long mismatch: live={live_long} snapshot={snap_long}"
         assert _close(live_comp, snap_comp), f"composite mismatch: live={live_comp} snapshot={snap_comp}"
+
+    def test_score_stock_asof_matches_score_all_asof(self, tmp_path):
+        """歷史重播語意：score_stock(as_of) 應與 score_all(as_of) 同步。"""
+        db = Database(tmp_path / "consistency_asof.db")
+        sid = "2330"
+        _seed_minimal(db, sid)
+        price = db.load_daily_price(sid)
+        assert len(price) >= 80
+        as_of = str(price.iloc[-30]["date"].date())
+
+        rows = radar.score_all(
+            db,
+            min_days=60,
+            include_fundamentals=True,
+            as_of=as_of,
+            candidate_stocks=[(sid, "台積電")],
+        )
+        assert not rows.empty
+        snap = rows.iloc[0]
+        live = score_stock(db, sid, "台積電", as_of=as_of)
+        assert live is not None
+
+        def _close(a, b):
+            if (a is None or (isinstance(a, float) and np.isnan(a))) and (b is None):
+                return True
+            if (a is None or (isinstance(a, float) and np.isnan(a))) or b is None:
+                return False
+            return abs(float(a) - float(b)) <= 1.5
+
+        assert _close(snap.get("short"), live.short.total)
+        assert _close(snap.get("mid"), live.mid.total)
+        assert _close(snap.get("long"), live.long.total)
+        assert _close(snap.get("composite"), live.signals.get("composite_score"))
