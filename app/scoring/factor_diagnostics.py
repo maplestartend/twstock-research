@@ -198,52 +198,38 @@ def _bootstrap_ic_ci(
     return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
 
-def _vectorized_ic_metrics(
-    factor_pivot: pd.DataFrame, forward_returns: pd.DataFrame,
-    *, factor_ranked: _RankedFrame | None = None, fwd_ranked: _RankedFrame | None = None,
-) -> tuple[list[float], list[float], list[float], list[int]]:
-    """全部日期一次算完 IC + Q5/Q1，避免 per-date Python loop。
+def _per_date_ic_full(
+    factor_ranked: _RankedFrame, fwd_ranked: _RankedFrame,
+) -> tuple[pd.Index, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """共用核心：對每個 date 同時算 IC、Q5、Q1、樣本數。
 
-    Cross-sectional：每一天（每一 row）獨立排序後算相關。NaN 自動排除。
+    回傳 (common_dates, ic_array, q5_array, q1_array, n_array, enough_mask)。
+    NaN 表示該日樣本不足 / 排不出。array 長度都等於 common_dates 長度。
 
-    回傳 (ic_per_date, q5_per_date, q1_per_date, n_per_date)，list 長度等於 dates 數
-    （每天可能因樣本不足被略過 → 不一定等於 factor_pivot.index 長度）。
-
-    可預先 rank 兩個 input（factor_ranked / fwd_ranked），caller 跨多個 (factor, horizon)
-    組合時只需 rank 21 次 + 3 次而非 63 次，sub-factor IC 由此再 ~3× 加速。
+    用作兩個 caller 的共用 plumbing：
+    - `_vectorized_ic_metrics`（過濾 NaN 後做 list 統計）
+    - `compute_rolling_ic_for_horizon`（保留 NaN，做 pandas rolling mean）
     """
-    if factor_ranked is None:
-        factor_ranked = _rank_frame(factor_pivot)
-    if fwd_ranked is None:
-        fwd_ranked = _rank_frame(forward_returns)
-
     common_dates = factor_ranked.dates.intersection(fwd_ranked.dates)
     if common_dates.empty or len(factor_ranked.columns) == 0 or len(fwd_ranked.columns) == 0:
-        return [], [], [], []
+        empty = np.array([])
+        return common_dates, empty, empty, empty, empty.astype(int), empty.astype(bool)
 
-    # row alignment：把兩者按 common_dates 取對應 row index
     fr_idx = factor_ranked.dates.get_indexer(common_dates)
     yr_idx = fwd_ranked.dates.get_indexer(common_dates)
-    # column alignment：取交集
     common_cols = factor_ranked.columns.intersection(fwd_ranked.columns)
     if common_cols.empty:
-        return [], [], [], []
+        empty = np.array([])
+        return common_dates, empty, empty, empty, empty.astype(int), empty.astype(bool)
     fr_col_idx = factor_ranked.columns.get_indexer(common_cols)
     yr_col_idx = fwd_ranked.columns.get_indexer(common_cols)
 
-    # 抽出對齊後的子陣列
     rx_full = factor_ranked.rank[np.ix_(fr_idx, fr_col_idx)]
     ry_full = fwd_ranked.rank[np.ix_(yr_idx, yr_col_idx)]
     valid_x = factor_ranked.valid[np.ix_(fr_idx, fr_col_idx)]
     valid_y = fwd_ranked.valid[np.ix_(yr_idx, yr_col_idx)]
     valid = valid_x & valid_y
-    # 注意：原 rank 是「整行 rank」，但 valid 重新交集後的「子 row」想要 IC 應重 rank。
-    # 為了同時受益於預 rank 又保正確：drop 兩邊都 NaN 的 column 後，rank 即仍正確
-    # （原 rank 無重複後 / 在 valid 子集上 rank 順序不變）。實測差異 < 1e-9，可接受。
-
-    # raw y for quintile mean
     y_raw = fwd_ranked.raw[np.ix_(yr_idx, yr_col_idx)]
-    # 把 invalid 位置設 NaN（避免污染 sum）
     rx = np.where(valid, rx_full, 0.0)
     ry = np.where(valid, ry_full, 0.0)
 
@@ -264,7 +250,6 @@ def _vectorized_ic_metrics(
     with np.errstate(invalid="ignore", divide="ignore"):
         ic_row = np.where((denom > 1e-12) & enough, cov / denom, np.nan)
 
-    # Quintile spread：按 cross-sectional rank percentile 切前/後 20%
     pct = rx_full / np.where(n_per_row[:, None] > 0, n_per_row[:, None], 1)
     top_mask = (pct >= 0.8) & valid
     bot_mask = (pct <= 0.2) & valid
@@ -275,6 +260,32 @@ def _vectorized_ic_metrics(
     with np.errstate(invalid="ignore", divide="ignore"):
         q5 = np.where((top_n > 0) & enough, y_for_top.sum(axis=1) / np.maximum(top_n, 1), np.nan)
         q1 = np.where((bot_n > 0) & enough, y_for_bot.sum(axis=1) / np.maximum(bot_n, 1), np.nan)
+
+    return common_dates, ic_row, q5, q1, n_per_row, enough
+
+
+def _vectorized_ic_metrics(
+    factor_pivot: pd.DataFrame, forward_returns: pd.DataFrame,
+    *, factor_ranked: _RankedFrame | None = None, fwd_ranked: _RankedFrame | None = None,
+) -> tuple[list[float], list[float], list[float], list[int]]:
+    """全部日期一次算完 IC + Q5/Q1，避免 per-date Python loop。
+
+    Cross-sectional：每一天（每一 row）獨立排序後算相關。NaN 自動排除。
+
+    回傳 (ic_per_date, q5_per_date, q1_per_date, n_per_date)，list 長度等於 dates 數
+    （每天可能因樣本不足被略過 → 不一定等於 factor_pivot.index 長度）。
+
+    可預先 rank 兩個 input（factor_ranked / fwd_ranked），caller 跨多個 (factor, horizon)
+    組合時只需 rank 21 次 + 3 次而非 63 次，sub-factor IC 由此再 ~3× 加速。
+    """
+    if factor_ranked is None:
+        factor_ranked = _rank_frame(factor_pivot)
+    if fwd_ranked is None:
+        fwd_ranked = _rank_frame(forward_returns)
+
+    common_dates, ic_row, q5, q1, n_per_row, enough = _per_date_ic_full(factor_ranked, fwd_ranked)
+    if len(common_dates) == 0:
+        return [], [], [], []
 
     ic_list: list[float] = []
     q5_list: list[float] = []
@@ -372,6 +383,82 @@ def compute_factor_ic(
 
 def to_dict_list(results: list[FactorICResult]) -> list[dict]:
     return [asdict(r) for r in results]
+
+
+# ======================================================================
+# Rolling IC：每日的 cross-sectional IC 跑 N 日 rolling mean，給 regime detection 用
+# ======================================================================
+
+DEFAULT_ROLLING_WINDOW = 30  # 30 trading days ≈ 1.5 calendar months
+
+
+def compute_rolling_ic_for_horizon(
+    db: Database,
+    *,
+    horizon: int = 20,
+    window: int = DEFAULT_ROLLING_WINDOW,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+) -> list[dict]:
+    """每個 aggregate factor 在指定 horizon 下的 per-date IC，做 N-day rolling mean。
+
+    回傳 wide-format：[{date: 'YYYY-MM-DD', short: ..., mid: ..., long: ..., composite: ..., vr_macd: ...}, ...]
+    None 代表該日 rolling window 內樣本不足或缺值。
+
+    用途：在 /diagnostics 折線圖看 IC 跨 regime 的演進，比 mean IC 單一數字更能揭露
+    「這個因子在 2024 才開始 work / 2022 一直 work / 從來沒 work」。
+    """
+    snap, prices = _fetch_data(db, lookback_days, horizon)
+    if snap.empty or prices.empty:
+        return []
+
+    snap = snap.copy()
+    snap["as_of"] = pd.to_datetime(snap["as_of"])
+    price_wide = _build_price_pivot(prices)
+    if price_wide.empty:
+        return []
+
+    factor_pivots = {
+        factor: snap.pivot_table(index="as_of", columns="stock_id", values=factor, aggfunc="first")
+        for factor in FACTORS
+    }
+    factor_stocks = factor_pivots[FACTORS[0]].columns
+    common_cols = price_wide.columns.intersection(factor_stocks)
+    if not common_cols.empty:
+        price_wide = price_wide[common_cols]
+
+    forward_close = price_wide.shift(-horizon)
+    forward_returns = (forward_close / price_wide) - 1.0
+    fwd_ranked = _rank_frame(forward_returns)
+
+    series_by_factor: dict[str, pd.Series] = {}
+    union_dates: pd.Index | None = None
+    for factor in FACTORS:
+        factor_ranked = _rank_frame(factor_pivots[factor])
+        dates, ic_row, _q5, _q1, _n, _enough = _per_date_ic_full(factor_ranked, fwd_ranked)
+        if len(dates) == 0:
+            continue
+        s = pd.Series(ic_row, index=dates)
+        # min_periods 半窗口起算，避免一開始全 NaN
+        s_rolled = s.rolling(window=window, min_periods=max(5, window // 2)).mean()
+        series_by_factor[factor] = s_rolled
+        union_dates = s_rolled.index if union_dates is None else union_dates.union(s_rolled.index)
+
+    if not series_by_factor or union_dates is None:
+        return []
+
+    union_dates = union_dates.sort_values()
+    rows: list[dict] = []
+    for d in union_dates:
+        row: dict = {"date": d.strftime("%Y-%m-%d")}
+        for factor in FACTORS:
+            s = series_by_factor.get(factor)
+            if s is None:
+                row[factor] = None
+                continue
+            v = s.get(d)
+            row[factor] = float(v) if v is not None and pd.notna(v) else None
+        rows.append(row)
+    return rows
 
 
 # ======================================================================

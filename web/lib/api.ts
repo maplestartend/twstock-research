@@ -646,6 +646,22 @@ export type SubFactorICResponse = {
   rows: SubFactorICRow[];
 };
 
+export type RollingICRow = {
+  date: string;                    // YYYY-MM-DD
+  short: number | null;
+  mid: number | null;
+  long: number | null;
+  composite: number | null;
+  vrMacd: number | null;
+};
+
+export type RollingICResponse = {
+  horizon: number;                 // forward horizon (天)
+  window: number;                  // rolling window 大小
+  lookbackDays: number;
+  rows: RollingICRow[];
+};
+
 export type StockMeta = {
   stockId: string; stockName: string;
   industry: string | null; marketType: string | null;

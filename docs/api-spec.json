@@ -3787,6 +3787,105 @@
         "title": "RiskAlert",
         "type": "object"
       },
+      "RollingICResponse": {
+        "properties": {
+          "horizon": {
+            "title": "Horizon",
+            "type": "integer"
+          },
+          "lookbackDays": {
+            "title": "Lookbackdays",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RollingICRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "window": {
+            "title": "Window",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "horizon",
+          "window",
+          "lookbackDays",
+          "rows"
+        ],
+        "title": "RollingICResponse",
+        "type": "object"
+      },
+      "RollingICRow": {
+        "properties": {
+          "composite": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composite"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "long": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long"
+          },
+          "mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mid"
+          },
+          "short": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Short"
+          },
+          "vrMacd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vrmacd"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "RollingICRow",
+        "type": "object"
+      },
       "RunLogRow": {
         "properties": {
           "durationSec": {
@@ -6323,6 +6422,76 @@
           }
         },
         "summary": "Factor Ic",
+        "tags": [
+          "diagnostics"
+        ]
+      }
+    },
+    "/api/diagnostics/rolling-ic": {
+      "get": {
+        "description": "每個 aggregate factor 在指定 horizon 下的 N-day rolling cross-sectional IC。\n\n用於 /diagnostics 折線圖檢測 regime shift：例如 mid trend 在 2024 才開始 work / 持續 work / 從未 work。\n\nhorizon 預設 20 日（5d 受微結構雜訊大、60d window 重疊嚴重），window 預設 30 日。",
+        "operationId": "rolling_ic_api_diagnostics_rolling_ic_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "horizon",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 120,
+              "minimum": 1,
+              "title": "Horizon",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 120,
+              "minimum": 5,
+              "title": "Window",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lookback_days",
+            "required": false,
+            "schema": {
+              "default": 120,
+              "maximum": 2000,
+              "minimum": 30,
+              "title": "Lookback Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RollingICResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rolling Ic",
         "tags": [
           "diagnostics"
         ]

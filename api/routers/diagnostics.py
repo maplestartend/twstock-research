@@ -12,6 +12,8 @@ from app.data.db import Database
 from app.scoring.factor_diagnostics import (
     DEFAULT_HORIZONS,
     DEFAULT_LOOKBACK_DAYS,
+    DEFAULT_ROLLING_WINDOW,
+    compute_rolling_ic_for_horizon,
     get_factor_ic_cached,
     get_subfactor_ic_cached,
 )
@@ -128,4 +130,56 @@ def sub_factor_ic(
         lookback_days=lookback_days,
         horizons=list(horizons),
         rows=rows,
+    )
+
+
+# ======================================================================
+# Rolling IC：跨 regime 的 IC 演進折線圖用
+# ======================================================================
+
+class RollingICRow(CamelModel):
+    date: str  # YYYY-MM-DD
+    short: float | None = None
+    mid: float | None = None
+    long: float | None = None
+    composite: float | None = None
+    vr_macd: float | None = None
+
+
+class RollingICResponse(CamelModel):
+    horizon: int
+    window: int
+    lookback_days: int
+    rows: list[RollingICRow]
+
+
+@router.get("/rolling-ic", response_model=RollingICResponse)
+def rolling_ic(
+    horizon: int = Query(default=20, ge=1, le=120),
+    window: int = Query(default=DEFAULT_ROLLING_WINDOW, ge=5, le=120),
+    lookback_days: int = Query(default=DEFAULT_LOOKBACK_DAYS, ge=30, le=2000),
+    db: Database = Depends(get_db),
+) -> RollingICResponse:
+    """每個 aggregate factor 在指定 horizon 下的 N-day rolling cross-sectional IC。
+
+    用於 /diagnostics 折線圖檢測 regime shift：例如 mid trend 在 2024 才開始 work / 持續 work / 從未 work。
+
+    horizon 預設 20 日（5d 受微結構雜訊大、60d window 重疊嚴重），window 預設 30 日。
+    """
+    rows_data = compute_rolling_ic_for_horizon(
+        db, horizon=horizon, window=window, lookback_days=lookback_days,
+    )
+    rows = [
+        RollingICRow(
+            date=r["date"],
+            short=r.get("short"),
+            mid=r.get("mid"),
+            long=r.get("long"),
+            composite=r.get("composite"),
+            vr_macd=r.get("vr_macd"),
+        )
+        for r in rows_data
+    ]
+    return RollingICResponse(
+        horizon=horizon, window=window, lookback_days=lookback_days, rows=rows,
     )

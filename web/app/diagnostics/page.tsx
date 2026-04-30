@@ -3,12 +3,14 @@ import {
   apiGetOptional,
   type FactorICResponse,
   type SubFactorICResponse,
+  type RollingICResponse,
 } from "@/lib/api";
 import { PageHeader } from "@/components/primitives/PageHeader";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { Th, Td } from "@/components/primitives/Table";
 import { TableContainer } from "@/components/primitives/TableContainer";
+import { RollingICChart } from "@/components/charts/RollingICChart";
 
 // 6-week TTL：IC 算一次 ~5-30s，沒必要每次重算（資料每天才寫一次）。
 // 真要強制重算就 ?lookback=N，會 bypass cache。
@@ -95,6 +97,7 @@ function ICColor({ ic }: { ic: number | null }) {
 export default async function DiagnosticsPage() {
   let data: FactorICResponse;
   let subData: SubFactorICResponse | null = null;
+  let rollingData: RollingICResponse | null = null;
   try {
     // IC 計算每次 ~3-5 秒（cross-sectional Spearman × 5 factors × 3 horizons），
     // 但結果只在 daily-update 寫新 snapshot 時才會變 → revalidate 1 小時夠用，
@@ -103,9 +106,12 @@ export default async function DiagnosticsPage() {
       apiGet<FactorICResponse>("/api/diagnostics/factor-ic", { revalidate: 3600 }),
       // sub-factor 表可能還沒寫（舊 schema 或未跑新 backfill）→ 容錯
       apiGetOptional<SubFactorICResponse>("/api/diagnostics/sub-factor-ic", { revalidate: 3600 }),
+      // rolling IC：horizon=20、window=30、lookback 拉到 1500 天用全部資料
+      apiGetOptional<RollingICResponse>("/api/diagnostics/rolling-ic?horizon=20&window=30&lookback_days=1500", { revalidate: 3600 }),
     ]);
     data = results[0];
     subData = results[1];
+    rollingData = results[2];
   } catch (e) {
     return <BackendDownError error={e} pageTitle="因子檢定" />;
   }
@@ -283,6 +289,27 @@ export default async function DiagnosticsPage() {
               </table>
             </TableContainer>
           </section>
+
+          {/* Rolling IC：跨時間看每個 factor 的 IC 演進，揪 regime artifact */}
+          {rollingData && rollingData.rows.length > 0 ? (
+            <section className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)] inline-flex items-center gap-2">
+                  Rolling IC 趨勢（{rollingData.window} 日 rolling × {rollingData.horizon} 日 forward）
+                </h2>
+                <span className="text-[11px] text-[var(--text-tertiary)]">
+                  揪 regime artifact 用：mean IC = +0.04 但折線跨期符號翻轉，代表是兩個 regime 平均出來的、不是穩定 alpha
+                </span>
+              </div>
+              <div className="rounded-xl border border-[var(--border-default)] bg-surface p-4">
+                <RollingICChart data={rollingData.rows} height={320} />
+                <div className="mt-2 text-[11px] text-[var(--text-tertiary)]">
+                  Y 軸 = cross-sectional Spearman IC 的 {rollingData.window} 日滾動平均。
+                  虛線 = ±0.05（IC 顯著閾值）。0 線上下擺盪 = regime-dependent 因子；單向遠離 0 = 持續訊號。
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           {/* 子因子 IC 拆解：當「短期 IC ≈ 0」時揪出哪個子分數拖累 */}
           {subData && subData.rows.length > 0 && subData.rows.some((r) => r.ic != null) ? (
