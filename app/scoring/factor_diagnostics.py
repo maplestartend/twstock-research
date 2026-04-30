@@ -46,6 +46,11 @@ class FactorICResult:
     bot_quintile_return: float | None  # Q1 平均 forward return（前 20%→Q1 == 因子最低）
     n_dates: int  # 真正參與計算的日期數（過濾 min_samples 後）
     avg_n_stocks: float  # 各日期樣本數平均
+    # 95% bootstrap CI on mean IC（None = n_dates < 5 不算）。
+    # Naive bootstrap：未對 forward window 重疊做 block correction，因此區間略窄；
+    # 對「IC 是否顯著 > 0」這種定性判斷仍夠用。
+    ic_ci_lo: float | None = None
+    ic_ci_hi: float | None = None
 
 
 def _fetch_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -173,6 +178,24 @@ def _rank_frame(df: pd.DataFrame) -> _RankedFrame:
     # pandas .rank(axis=1) 對 NaN 自動回 NaN
     ranks = df.rank(axis=1).to_numpy()
     return _RankedFrame(df.index, df.columns, raw, ranks, valid)
+
+
+def _bootstrap_ic_ci(
+    ic_per_date: list[float], *, n_samples: int = 1000, seed: int = 42,
+) -> tuple[float | None, float | None]:
+    """Naive bootstrap 95% CI for mean IC across dates.
+
+    限制：未對 60d forward window 重疊做 block correction → CI 略窄於真實值。對「IC 顯著
+    > 0 嗎」的定性判斷仍夠用；要嚴格 inference 需 Newey-West / circular block bootstrap。
+    """
+    if len(ic_per_date) < 5:
+        return None, None
+    rng = np.random.default_rng(seed)
+    arr = np.asarray(ic_per_date, dtype="float64")
+    n = len(arr)
+    indices = rng.integers(0, n, size=(n_samples, n))
+    means = arr[indices].mean(axis=1)
+    return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
 
 def _vectorized_ic_metrics(
@@ -332,6 +355,7 @@ def compute_factor_ic(
             mean_ic = float(np.mean(ic_per_date))
             std_ic = float(np.std(ic_per_date, ddof=1)) if len(ic_per_date) > 1 else 0.0
             ic_ir = mean_ic / std_ic if std_ic > 1e-9 else None
+            ci_lo, ci_hi = _bootstrap_ic_ci(ic_per_date)
 
             out.append(FactorICResult(
                 factor=factor, horizon=horizon,
@@ -340,6 +364,7 @@ def compute_factor_ic(
                 bot_quintile_return=float(np.mean(q1_per_date)) if q1_per_date else None,
                 n_dates=len(ic_per_date),
                 avg_n_stocks=float(np.mean(n_per_date)),
+                ic_ci_lo=ci_lo, ic_ci_hi=ci_hi,
             ))
 
     return out
@@ -368,6 +393,8 @@ class SubFactorICResult:
     bot_quintile_return: float | None
     n_dates: int
     avg_n_stocks: float
+    ic_ci_lo: float | None = None  # 95% bootstrap CI（同上）
+    ic_ci_hi: float | None = None
 
 
 def _fetch_subfactor_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -466,6 +493,7 @@ def compute_subfactor_ic(
             mean_ic = float(np.mean(ic_per_date))
             std_ic = float(np.std(ic_per_date, ddof=1)) if len(ic_per_date) > 1 else 0.0
             ic_ir = mean_ic / std_ic if std_ic > 1e-9 else None
+            ci_lo, ci_hi = _bootstrap_ic_ci(ic_per_date)
 
             out.append(SubFactorICResult(
                 horizon=str(horizon_name), factor=str(factor_name), forward_horizon=fwd_h,
@@ -474,6 +502,7 @@ def compute_subfactor_ic(
                 bot_quintile_return=float(np.mean(q1_per_date)) if q1_per_date else None,
                 n_dates=len(ic_per_date),
                 avg_n_stocks=float(np.mean(n_per_date)),
+                ic_ci_lo=ci_lo, ic_ci_hi=ci_hi,
             ))
     return out
 
@@ -500,7 +529,7 @@ def _cache_read(
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT horizon, factor, forward_horizon, ic, ic_ir, top_quintile_return, "
-            "       bot_quintile_return, n_dates, avg_n_stocks "
+            "       bot_quintile_return, n_dates, avg_n_stocks, ic_ci_lo, ic_ci_hi "
             "FROM factor_ic_cache "
             "WHERE scope=? AND snapshot_max_as_of=? AND lookback_days=?",
             (scope, snapshot_max_as_of, lookback_days),
@@ -518,6 +547,8 @@ def _cache_read(
             "bot_quintile_return": r["bot_quintile_return"],
             "n_dates": r["n_dates"],
             "avg_n_stocks": r["avg_n_stocks"],
+            "ic_ci_lo": r["ic_ci_lo"],
+            "ic_ci_hi": r["ic_ci_hi"],
         }
         for r in rows
     ]
@@ -537,8 +568,9 @@ def _cache_write(
         conn.executemany(
             "INSERT OR REPLACE INTO factor_ic_cache "
             "(scope, snapshot_max_as_of, lookback_days, horizon, factor, forward_horizon, "
-            " ic, ic_ir, top_quintile_return, bot_quintile_return, n_dates, avg_n_stocks, computed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ic, ic_ir, top_quintile_return, bot_quintile_return, n_dates, avg_n_stocks, "
+            " ic_ci_lo, ic_ci_hi, computed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     scope, snapshot_max_as_of, lookback_days,
@@ -546,6 +578,7 @@ def _cache_write(
                     r.get("ic"), r.get("ic_ir"),
                     r.get("top_quintile_return"), r.get("bot_quintile_return"),
                     r.get("n_dates", 0), r.get("avg_n_stocks", 0.0),
+                    r.get("ic_ci_lo"), r.get("ic_ci_hi"),
                     now,
                 )
                 for r in rows
@@ -575,6 +608,7 @@ def get_factor_ic_cached(
                 top_quintile_return=r["top_quintile_return"],
                 bot_quintile_return=r["bot_quintile_return"],
                 n_dates=r["n_dates"], avg_n_stocks=r["avg_n_stocks"],
+                ic_ci_lo=r.get("ic_ci_lo"), ic_ci_hi=r.get("ic_ci_hi"),
             )
             for r in cached
         ]
@@ -590,6 +624,7 @@ def get_factor_ic_cached(
             "top_quintile_return": r.top_quintile_return,
             "bot_quintile_return": r.bot_quintile_return,
             "n_dates": r.n_dates, "avg_n_stocks": r.avg_n_stocks,
+            "ic_ci_lo": r.ic_ci_lo, "ic_ci_hi": r.ic_ci_hi,
         }
         for r in results
     ]
@@ -615,6 +650,7 @@ def get_subfactor_ic_cached(
                 top_quintile_return=r["top_quintile_return"],
                 bot_quintile_return=r["bot_quintile_return"],
                 n_dates=r["n_dates"], avg_n_stocks=r["avg_n_stocks"],
+                ic_ci_lo=r.get("ic_ci_lo"), ic_ci_hi=r.get("ic_ci_hi"),
             )
             for r in cached
         ]
@@ -627,6 +663,7 @@ def get_subfactor_ic_cached(
             "top_quintile_return": r.top_quintile_return,
             "bot_quintile_return": r.bot_quintile_return,
             "n_dates": r.n_dates, "avg_n_stocks": r.avg_n_stocks,
+            "ic_ci_lo": r.ic_ci_lo, "ic_ci_hi": r.ic_ci_hi,
         }
         for r in results
     ]

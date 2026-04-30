@@ -1443,6 +1443,28 @@
             ],
             "title": "Ic"
           },
+          "icCiHi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iccihi"
+          },
+          "icCiLo": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iccilo"
+          },
           "icIr": {
             "anyOf": [
               {
@@ -4673,6 +4695,28 @@
               }
             ],
             "title": "Ic"
+          },
+          "icCiHi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iccihi"
+          },
+          "icCiLo": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iccilo"
           },
           "icIr": {
             "anyOf": [

@@ -188,6 +188,8 @@ SCHEMA = [
         bot_quintile_return REAL,
         n_dates INTEGER,
         avg_n_stocks REAL,
+        ic_ci_lo REAL,                      -- 95% bootstrap CI 下界
+        ic_ci_hi REAL,                      -- 95% bootstrap CI 上界
         computed_at TEXT NOT NULL,
         PRIMARY KEY (scope, snapshot_max_as_of, lookback_days, horizon, factor, forward_horizon)
     )
@@ -377,6 +379,9 @@ class Database:
             # 給 /api/portfolio/journal-stats 算每個 tag 的勝率。retroactive 加最有效，預設 NULL。
             ("trade_log", "entry_reason", "TEXT"),
             ("trade_log", "tags", "TEXT"),
+            # IC 95% bootstrap CI（從 2026-04-30 起加，舊 cache 會在下次計算時被填上）
+            ("factor_ic_cache", "ic_ci_lo", "REAL"),
+            ("factor_ic_cache", "ic_ci_hi", "REAL"),
         ]
         for table, col, ddl in migrations:
             cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}

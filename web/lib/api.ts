@@ -616,6 +616,8 @@ export type FactorICRow = {
   botQuintileReturn: number | null;
   nDates: number;
   avgNStocks: number;
+  icCiLo: number | null;  // 95% bootstrap CI 下界
+  icCiHi: number | null;
 };
 
 export type FactorICResponse = {
@@ -634,6 +636,8 @@ export type SubFactorICRow = {
   botQuintileReturn: number | null;
   nDates: number;
   avgNStocks: number;
+  icCiLo: number | null;
+  icCiHi: number | null;
 };
 
 export type SubFactorICResponse = {

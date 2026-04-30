@@ -28,6 +28,8 @@ class FactorICRow(CamelModel):
     bot_quintile_return: float | None
     n_dates: int
     avg_n_stocks: float
+    ic_ci_lo: float | None = None  # 95% bootstrap CI
+    ic_ci_hi: float | None = None
 
 
 class FactorICResponse(CamelModel):
@@ -61,6 +63,8 @@ def factor_ic(
             bot_quintile_return=r.bot_quintile_return,
             n_dates=r.n_dates,
             avg_n_stocks=r.avg_n_stocks,
+            ic_ci_lo=r.ic_ci_lo,
+            ic_ci_hi=r.ic_ci_hi,
         )
         for r in results
     ]
@@ -81,6 +85,8 @@ class SubFactorICRow(CamelModel):
     bot_quintile_return: float | None
     n_dates: int
     avg_n_stocks: float
+    ic_ci_lo: float | None = None
+    ic_ci_hi: float | None = None
 
 
 class SubFactorICResponse(CamelModel):
@@ -113,6 +119,8 @@ def sub_factor_ic(
             bot_quintile_return=r.bot_quintile_return,
             n_dates=r.n_dates,
             avg_n_stocks=r.avg_n_stocks,
+            ic_ci_lo=r.ic_ci_lo,
+            ic_ci_hi=r.ic_ci_hi,
         )
         for r in results
     ]

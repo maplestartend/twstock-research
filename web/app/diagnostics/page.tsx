@@ -203,20 +203,23 @@ export default async function DiagnosticsPage() {
             </TableContainer>
           </section>
 
-          {/* 細項：IC_IR + quintile spread */}
+          {/* 細項：IC + 95% bootstrap CI + IC_IR + quintile spread */}
           <section className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-[var(--text-primary)]">穩定度（IC_IR）與 Q5−Q1 spread</h2>
+            <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+              穩定度（IC_IR + 95% CI）與 Q5−Q1 spread
+            </h2>
             <TableContainer>
-              <table className="w-full text-[15px] min-w-[800px]">
+              <table className="w-full text-[15px] min-w-[940px]">
                 <thead className="bg-subtle">
                   <tr>
                     <Th sticky className="w-[180px]">因子</Th>
-                    <Th align="center" className="w-[100px]">horizon</Th>
-                    <Th align="right" className="w-[100px]">IC</Th>
-                    <Th align="right" className="w-[100px]">IC_IR</Th>
-                    <Th align="right" className="w-[140px]">Q5 平均報酬</Th>
-                    <Th align="right" className="w-[140px]">Q1 平均報酬</Th>
-                    <Th align="right" className="w-[140px]">Q5 − Q1 spread</Th>
+                    <Th align="center" className="w-[80px]">horizon</Th>
+                    <Th align="right" className="w-[90px]">IC</Th>
+                    <Th align="center" className="w-[160px]">95% CI</Th>
+                    <Th align="right" className="w-[80px]">IC_IR</Th>
+                    <Th align="right" className="w-[120px]">Q5 報酬</Th>
+                    <Th align="right" className="w-[120px]">Q1 報酬</Th>
+                    <Th align="right" className="w-[120px]">Q5 − Q1</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -225,6 +228,16 @@ export default async function DiagnosticsPage() {
                       r.topQuintileReturn != null && r.botQuintileReturn != null
                         ? r.topQuintileReturn - r.botQuintileReturn
                         : null;
+                    // 顯著性：CI 不跨 0 才算顯著
+                    const ciSpansZero =
+                      r.icCiLo != null && r.icCiHi != null && r.icCiLo <= 0 && r.icCiHi >= 0;
+                    const icCellCls = r.ic == null
+                      ? ""
+                      : ciSpansZero
+                        ? "text-[var(--text-tertiary)]"  // CI 跨 0 → 統計上跟噪音區分不開，淡化顯示
+                        : r.ic > 0
+                          ? "text-[var(--color-up)] font-semibold"
+                          : "text-[var(--color-down)] font-semibold";
                     return (
                       <tr key={`${r.factor}-${r.horizon}`} className="border-t border-[var(--border-default)]">
                         <Td sticky>
@@ -232,7 +245,18 @@ export default async function DiagnosticsPage() {
                         </Td>
                         <Td align="center" numeric>{r.horizon} 日</Td>
                         <Td align="right" numeric>
-                          {r.ic == null ? "—" : `${r.ic >= 0 ? "+" : ""}${r.ic.toFixed(3)}`}
+                          <span className={icCellCls}>
+                            {r.ic == null ? "—" : `${r.ic >= 0 ? "+" : ""}${r.ic.toFixed(3)}`}
+                          </span>
+                        </Td>
+                        <Td align="center" numeric>
+                          {r.icCiLo == null || r.icCiHi == null ? (
+                            <span className="text-[var(--text-tertiary)]">—</span>
+                          ) : (
+                            <span className={ciSpansZero ? "text-[var(--text-tertiary)]" : "text-[var(--text-secondary)]"} title={ciSpansZero ? "CI 跨 0 → 不顯著（與隨機難區分）" : "CI 不跨 0 → 顯著"}>
+                              [{r.icCiLo >= 0 ? "+" : ""}{r.icCiLo.toFixed(3)}, {r.icCiHi >= 0 ? "+" : ""}{r.icCiHi.toFixed(3)}]
+                            </span>
+                          )}
                         </Td>
                         <Td align="right" numeric>
                           {r.icIr == null ? "—" : `${r.icIr >= 0 ? "+" : ""}${r.icIr.toFixed(2)}`}
@@ -275,9 +299,12 @@ export default async function DiagnosticsPage() {
             <strong>怎麼讀：</strong>
             IC 反映每個交易日的 cross-sectional 排序對齊度，平均後在 ±0.1 之間都很正常；
             台股訊號 |IC| &gt; 0.05 通常算有預測力，&gt; 0.10 算強。
-            IC_IR &gt; 0.5 代表跨期穩定，可以放心當權重；&lt; 0.3 代表時好時壞，要小心過擬合。
-            Q5−Q1 spread 是「買最強 20%、賣最弱 20%」的多空組合在該 horizon 的平均報酬，正值代表因子有區分能力。
+            <strong className="text-[var(--text-primary)]"> 95% CI 跨 0 的 IC 值會淡化顯示</strong>
+            — 那種訊號統計上跟隨機難區分，調權重前最好等更多樣本。
+            IC_IR &gt; 0.5 代表跨期穩定；&lt; 0.3 代表時好時壞要小心過擬合。
+            Q5−Q1 spread 是「買最強 20%、賣最弱 20%」的多空組合在該 horizon 的平均報酬。
             樣本不足（單日 &lt; 30 檔 / 全期 &lt; 5 個 IC 點）會回 — 而非假數字。
+            CI 用 1000 次 naive bootstrap，未對 forward window 重疊做 block correction，所以是「樂觀的下界」。
           </p>
         </>
       )}
