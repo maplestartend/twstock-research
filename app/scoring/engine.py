@@ -438,17 +438,25 @@ def _industry_yield_z_with_conn(conn, stock_id: str, *, as_of: str | None = None
 def _load_stock_bundle(conn, stock_id: str, *, as_of: str | None = None) -> dict[str, pd.DataFrame]:
     """一次抓 5 張表（margin / per_pbr / financials / financials_cumulative / financials_quarterly_derived）。
     共用同一個 conn，避免 score_stock 每次 open / close 五次連線。"""
+    # margin / per_pbr 是逐日 row，date 即觀測日，沒有公告 lag 概念，date <= as_of 即可。
+    # 三張財報表 (fin / fin_cum / fin_derived) 都有 publish_date：date 是季末日（事件日），
+    # 但實際法定公告日落在季末後 6-12 週 → 用 COALESCE(publish_date, date) <= as_of 才不會 look-ahead。
     date_clause = " AND date <= ?" if as_of else ""
     params = [stock_id, as_of] if as_of else [stock_id]
+    fin_sql = "SELECT * FROM financials WHERE stock_id=?"
     fin_cum_sql = "SELECT * FROM financials_cumulative WHERE stock_id=?"
     fin_derived_sql = "SELECT * FROM financials_quarterly_derived WHERE stock_id=?"
+    fin_params = [stock_id]
     fin_cum_params = [stock_id]
     fin_derived_params = [stock_id]
     if as_of:
+        fin_sql += " AND date <= ? AND COALESCE(publish_date, date) <= ?"
         fin_cum_sql += " AND date <= ? AND COALESCE(publish_date, date) <= ?"
         fin_derived_sql += " AND date <= ? AND COALESCE(publish_date, date) <= ?"
+        fin_params.extend([as_of, as_of])
         fin_cum_params.extend([as_of, as_of])
         fin_derived_params.extend([as_of, as_of])
+    fin_sql += " ORDER BY date"
     fin_cum_sql += " ORDER BY date"
     fin_derived_sql += " ORDER BY date"
     return {
@@ -463,9 +471,9 @@ def _load_stock_bundle(conn, stock_id: str, *, as_of: str | None = None) -> dict
             params=params,
         ),
         "fin": pd.read_sql_query(
-            "SELECT * FROM financials WHERE stock_id=?" + date_clause + " ORDER BY date",
+            fin_sql,
             conn,
-            params=params,
+            params=fin_params,
         ),
         "fin_cum": pd.read_sql_query(
             fin_cum_sql,
@@ -541,9 +549,7 @@ def score_stock(
     if live_price is not None and live_price > 0:
         price = _override_last_close(price, float(live_price))
     price = tech.enrich(price)
-    inst = db.load_institutional(stock_id)
-    if as_of_str and not inst.empty and "date" in inst.columns:
-        inst = inst[pd.to_datetime(inst["date"]) <= pd.Timestamp(as_of_str)].reset_index(drop=True)
+    inst = db.load_institutional(stock_id, as_of=as_of_str)
 
     # 全部 read_sql + industry_yield_z 共用一個 conn，省下重複 open / close。
     with db.connect() as conn:

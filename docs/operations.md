@@ -73,16 +73,20 @@ python -m scripts.run_stats --show-errors  # 只看錯誤
 ```bash
 pip install pytest
 python -m pytest tests/ -q
-# 324 passed in ~11s
+# 402 passed in ~11s (2026-04-30)
 ```
 
-覆蓋：
+覆蓋（重點）：
 - `tests/test_risk.py`：ATR、部位計算、集中度
 - `tests/test_adjuster.py`：還原價因子鏈
 - `tests/test_rubric.py`：評分上下界、缺資料處理、方向性
-- `tests/test_preset.py`：權重 preset CRUD
+- `tests/test_preset.py` / `test_preset_invariants.py`：權重 preset CRUD + 各 preset 加權和 = 1.0
 - `tests/test_routers.py`：FastAPI router 整合（用 TestClient + 合成 SQLite），含 holdings ATR 欄位 schema 檢查
 - `tests/test_backtest_engine.py`：策略迴圈純邏輯——漲跌停跳過 / 切片 flat-reset / Sharpe / 盤中暫態
+- `tests/test_score_consistency.py`：score_stock 與 score_all 結果必須對齊（避免 fund_snap 路徑不同步）
+- `tests/test_fundamentals_derived_path.py`：derived path 必須算 `eps_cagr_3y` / `peg` / 單季 YoY（防 2026-04-30 P0 bug regression）
+- `tests/test_financials_publish_date.py`：FinMind 季財報法定下限 stamp + look-ahead 過濾
+- `tests/test_market_updater_warrant_filter.py`：MarketUpdater 不再把 5 碼權證寫進 daily_price/institutional
 
 改 `app/risk.py`、`app/data/adjuster.py`、`app/scoring/rubric.py`、`app/backtest/engine.py`、`api/routers/*` 時先跑一次測試再 commit，可以避免 regression。
 

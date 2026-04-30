@@ -5,6 +5,8 @@ PyYAML>=6.0
 python-dateutil>=2.9
 pandas-ta>=0.4           # 0.4 系列開始支援 numpy 2
 pyarrow>=14              # 雷達磁碟快取 (parquet)
+yfinance>=0.2.40         # 補 ^TWII 大盤指數歷史 (scripts/backfill_index_yfinance.py) +
+                         # 個股 OHLC 2022-2023 補洞 (scripts/backfill_daily_price_yfinance.py)
 
 # UI 後端（Next.js 前端的 API 層，見 api/）
 fastapi>=0.115

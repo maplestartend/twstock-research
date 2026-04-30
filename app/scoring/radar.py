@@ -19,7 +19,6 @@ from app.indicators import fundamentals as fund_ind
 from app.indicators import market_context as mkt_ctx
 from app.indicators import technical as tech
 from app.scoring import engine as eng
-from app.scoring.engine import score_stock
 
 logger = logging.getLogger(__name__)
 
@@ -223,13 +222,20 @@ def score_all(
     margin_all = _bulk_load(db, "margin", chip_since, until=as_of_str)
     per_all = _bulk_load(db, "per_pbr", per_since, until=as_of_str)
 
-    # 若需要基本面，載入所有財報（只載近 3 年）
+    # 若需要基本面，載入所有財報。
+    # 視窗 5 年：eps_cagr_3y 需 16 季（tail(4) + iloc[-16:-12]）= 4 年最低，5 年給點 buffer
+    # 避免日期邊界導致 16 季差 1 筆就拉空。3 年視窗會讓 score_all 拿不到 cagr，與 score_stock
+    # （load 全表）出現「同股、長期分數不同」的 invariant 違反。
     if include_fundamentals:
-        fin_since = (as_of_d - timedelta(days=365 * 3)).isoformat()
+        fin_since = (as_of_d - timedelta(days=365 * 5)).isoformat()
         with db.connect() as conn:
+            # FinMind 單季財報：用 publish_date 過濾避免 backtest 看到尚未公告的季報。
+            # COALESCE 給尚未 backfill 的舊 row 兜底（NULL → 用 quarter-end 較保守、會少看到資料）。
             fin_all = pd.read_sql_query(
-                "SELECT * FROM financials WHERE date BETWEEN ? AND ?",
-                conn, params=[fin_since, as_of_str],
+                "SELECT * FROM financials "
+                "WHERE date BETWEEN ? AND ? "
+                "  AND COALESCE(publish_date, date) <= ?",
+                conn, params=[fin_since, as_of_str, as_of_str],
             )
             # 全市場累計財報（TWSE/TPEX OpenAPI），用於 fundamentals 的 fallback。
             # 用 publish_date 過濾 → 避免 backtest（as_of 在過去時）看到尚未公告的當季財報。

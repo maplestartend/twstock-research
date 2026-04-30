@@ -52,7 +52,7 @@ class FactorICResponse(CamelModel):
 
 @router.get("/factor-ic", response_model=FactorICResponse)
 def factor_ic(
-    lookback_days: int = Query(default=DEFAULT_LOOKBACK_DAYS, ge=30, le=365),
+    lookback_days: int = Query(default=DEFAULT_LOOKBACK_DAYS, ge=30, le=2000),
     db: Database = Depends(get_db),
 ) -> FactorICResponse:
     """每個 (factor, horizon) 的 forward-return Information Coefficient + IC_IR + quintile spread。
@@ -115,7 +115,7 @@ class SubFactorICResponse(CamelModel):
 
 @router.get("/sub-factor-ic", response_model=SubFactorICResponse)
 def sub_factor_ic(
-    lookback_days: int = Query(default=DEFAULT_LOOKBACK_DAYS, ge=30, le=365),
+    lookback_days: int = Query(default=DEFAULT_LOOKBACK_DAYS, ge=30, le=2000),
     db: Database = Depends(get_db),
 ) -> SubFactorICResponse:
     """子因子 IC 拆解：每個 (horizon, factor, forward_horizon) 的預測力。

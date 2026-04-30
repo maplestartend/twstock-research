@@ -258,8 +258,10 @@ python -m scripts.backfill_financials_history --quarters 8
 | `python -m scripts.dq_check` / `--push` | 資料品質檢查 | ~1 秒 |
 | `python -m scripts.run_stats` / `--tail 20` / `--show-errors` | 執行統計 | ~1 秒 |
 | `python -m scripts.prune_signals` / `--dry-run` / `--keep 60` | signal_history 壓縮（近 90 天逐日 + 之前只留週一），偶爾跑控制 DB 體積 | ~1 秒 |
-| `python -m scripts.backfill_signal_history --days 60` | 把 signal_history 回填 60 個交易日（給「因子檢定」頁吃）；改過 scoring 邏輯後加 `--clear` 先清舊算法的快照再重算。可搭配 `--skip-existing`（只補缺）或 `--no-fundamentals`（加速） | 含財報約 40~60 秒/天；`--no-fundamentals` 約 30~45 秒/天 |
+| `python -m scripts.backfill_signal_history --days 60` | 把 signal_history 回填 60 個交易日（給「因子檢定」頁吃）；改過 scoring 邏輯後加 `--clear` 先清舊算法的快照再重算。可搭配 `--skip-existing`（只補缺）或 `--no-fundamentals`（加速）；`--workers N` 並行（預設 4，i5-13400F 建議 6） | 含財報約 40~60 秒/天；workers=6 1000 天約 ~100 分鐘 |
 | `python -m scripts.backfill_index_yfinance --from 2022-01-01` | 用 yfinance `^TWII` 補 TWSE 加權指數歷史（TWSE OpenAPI 只回 ~2.7 年，要更早只能靠 yfinance）。預設 `--skip-existing` 不覆寫，給 mid factor RS 因子用 | ~30 秒 |
+| `python -m scripts.backfill_daily_price_yfinance` / `--apply` | 🆕 用 yfinance 補個股 OHLC 2022-2023（TWSE OpenAPI 同樣只回 ~2.7 年）。`--from 2022-01-01` 預設、`--skip-existing` 預設（只補比現有 MIN(date) 早的）；可指定 `--stocks 2330,2454,5483` debug | ~1-2 小時跑全市場 |
+| `python -m scripts.prune_warrants` / `--apply` | 🆕 一次性清掉 daily_price/institutional/margin 裡的權證 + 孤兒列（白名單語意：留 stock_info.is_tradable=1 的）；`--apply` 才會真刪 + VACUUM。**VACUUM 需 exclusive lock，先 stop.bat 收掉服務** | DELETE 5-10 分、VACUUM 1-2 分 |
 
 > `--push-line` 舊旗標仍相容（等同 `--push`），LINE Notify 已停服。
 

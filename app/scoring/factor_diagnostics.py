@@ -35,6 +35,13 @@ DEFAULT_LOOKBACK_DAYS = 120
 MIN_SAMPLES_PER_DATE = 30
 MIN_DATES_PER_FACTOR = 5
 
+# 改 IC 計算邏輯（forward return / Spearman / Newey-West / quintile / 子因子定義）**或**
+# 改 scoring 權重 (LONG/SHORT/MID/COMPOSITE_WEIGHTS、子因子公式) 時把這裡 bump，
+# cache 會自動失效不再回舊版結果。bump 範例：v3 → v4-yyyy-mm-dd。
+# 純資料補回（重跑 backfill_signal_history --clear）不需要 bump — `--clear` 已 DELETE cache，
+# 但**沒帶 --clear** 的情境（如 daily_update 推進 MAX(as_of)）若沒 bump 就會混 v3/v4 分數。
+IC_ALGO_VERSION = "v3-2026-04-30"  # v4 LONG weights (eps_cagr_3y 0.05→0.20、margin 0.30→0.20、dividend 0.15→0.10)
+
 
 @dataclass(frozen=True)
 class FactorICResult:
@@ -614,9 +621,25 @@ def subfactor_to_dict_list(results: list[SubFactorICResult]) -> list[dict]:
 # ======================================================================
 
 def _signal_history_max_as_of(db: Database) -> str | None:
+    """回傳 cache key 用的 snapshot 鍵：`{IC_ALGO_VERSION}:{MAX(as_of)}:n{COUNT(DISTINCT as_of)}`。
+
+    為什麼 key 也要含 distinct count：並行 backfill 可能先寫最新一天再倒著補舊資料。
+    若 cache 只看 MAX(as_of)，會在 backfill 中途的 /diagnostics 請求觸發 IC 算「最新日 +
+    部分舊日」並 cache 起來；後面更多舊日 backfill 完，MAX 沒變、cache key 沒變、cache hit
+    回舊結果 → 永遠拿不到完整資料的 IC（2026-04-30 backfill 時實際踩到）。
+
+    把 algo 版本 prefix 進去 → 改演算法 bump IC_ALGO_VERSION 就會讓 cache 命中失敗。
+    舊版 row 不會回收（極小，DB 影響可忽略）。
+    """
     with db.connect() as conn:
-        row = conn.execute("SELECT MAX(as_of) FROM signal_history").fetchone()
-    return row[0] if row and row[0] else None
+        row = conn.execute(
+            "SELECT MAX(as_of) AS mx, COUNT(DISTINCT as_of) AS n FROM signal_history"
+        ).fetchone()
+    raw = row[0] if row and row[0] else None
+    if raw is None:
+        return None
+    n = int(row[1] or 0)
+    return f"{IC_ALGO_VERSION}:{raw}:n{n}"
 
 
 def _cache_read(

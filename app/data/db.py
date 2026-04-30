@@ -358,6 +358,7 @@ class Database:
             self._migrate_monthly_revenue_publish_date(conn)
             self._migrate_stock_info_is_tradable(conn)
             self._migrate_financials_cumulative_publish_date(conn)
+            self._migrate_financials_publish_date(conn)
             self._migrate_stock_info_last_seen_date(conn)
             conn.commit()
 
@@ -372,6 +373,10 @@ class Database:
             ("signal_history", "vr_macd", "REAL"),
             ("financials_cumulative", "publish_date", "TEXT"),
             ("financials_quarterly_derived", "publish_date", "TEXT"),
+            # FinMind 單季財報原本只有 quarter-end 的 date 欄、無公告日 → backtest 用 date 過濾會
+            # 在 Q4 報表「公告前 3 個月」就看到 → look-ahead bias。新增 publish_date，
+            # _migrate_financials_publish_date 依日期 (Q1/Q2/Q3/Q4) 套法定下限回填。
+            ("financials", "publish_date", "TEXT"),
             # last_seen_date：每次 daily_price 抓到該 sid 就更新；
             # 用於 backtest survivorship 防呆（之前 universe 是固定 yaml，回測不會排除已下市股票）
             ("stock_info", "last_seen_date", "TEXT"),
@@ -510,6 +515,41 @@ class Database:
                 logger.warning("%s.publish_date migration skipped: %s", table, e)
 
     @staticmethod
+    def _migrate_financials_publish_date(conn: sqlite3.Connection) -> None:
+        """回填 `financials`（FinMind 單季）的 publish_date。
+
+        FinMind 表的 schema = (date, stock_id, type, value, origin_name)，date = 季末日：
+            03-31 → Q1, 06-30 → Q2, 09-30 → Q3, 12-31 → Q4
+        套法定下限：Q1=該年 05-15、Q2=該年 08-14、Q3=該年 11-14、Q4=次年 03-31。
+        idempotent：只填 publish_date IS NULL 的列。
+        """
+        try:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='financials'"
+            ).fetchall()}
+            if "financials" not in tables:
+                return
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(financials)").fetchall()}
+            if "publish_date" not in cols:
+                return  # _migrate_add_columns 還沒跑或 schema 異常
+            cur = conn.execute("""
+                UPDATE financials
+                SET publish_date = CASE substr(date, 6, 5)
+                    WHEN '03-31' THEN substr(date, 1, 4) || '-05-15'
+                    WHEN '06-30' THEN substr(date, 1, 4) || '-08-14'
+                    WHEN '09-30' THEN substr(date, 1, 4) || '-11-14'
+                    WHEN '12-31' THEN (CAST(substr(date, 1, 4) AS INTEGER) + 1) || '-03-31'
+                END
+                WHERE publish_date IS NULL
+                  AND substr(date, 6, 5) IN ('03-31','06-30','09-30','12-31')
+            """)
+            if cur.rowcount > 0:
+                logger.info("financials: backfilled publish_date for %d rows", cur.rowcount)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_financials_publish ON financials(publish_date)")
+        except sqlite3.Error as e:
+            logger.warning("financials.publish_date migration skipped: %s", e)
+
+    @staticmethod
     def _migrate_monthly_revenue_publish_date(conn: sqlite3.Connection) -> None:
         """一次性：把舊版「次月 1 號」的月營收 publish date 推到「次月 10 號」（實際公告下限）。
 
@@ -623,12 +663,25 @@ class Database:
             df["date"] = pd.to_datetime(df["date"])
         return df
 
-    def load_institutional(self, stock_id: str, start: str | None = None) -> pd.DataFrame:
+    def load_institutional(
+        self,
+        stock_id: str,
+        start: str | None = None,
+        *,
+        as_of: str | None = None,
+    ) -> pd.DataFrame:
+        """institutional 三大法人買賣超。
+        as_of：歷史重播時提供，SQL 直接 trim 到 as_of 之前；不提供時拉全量。
+        在 SQL 端 trim 比之前在 Python 端 reset_index 來得快（10 年資料 vs 1 段）。
+        """
         query = "SELECT * FROM institutional WHERE stock_id = ?"
         params: list = [stock_id]
         if start:
             query += " AND date >= ?"
             params.append(start)
+        if as_of:
+            query += " AND date <= ?"
+            params.append(as_of)
         query += " ORDER BY date"
         with self.connect() as conn:
             df = pd.read_sql_query(query, conn, params=params)

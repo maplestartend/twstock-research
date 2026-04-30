@@ -72,6 +72,12 @@ class MarketUpdater:
             # daily_price 丟掉 stock_name
             price_frames.append(df.drop(columns=["stock_name"]))
 
+        # 「可交易」白名單：TWSE/TPEX OpenAPI 的 ALLBUT0999 端點會把權證 / 牛熊證 (5 碼)
+        # 一併回傳，原本只在 stock_info.is_tradable 標 0、daily_price/institutional/margin/per_pbr
+        # 卻照寫不誤 → DB 變肥（權證 row 占 daily_price 82%、institutional 87%）。
+        # 這裡先在 stock_info 標好 is_tradable，再拿同一份 stock_id 集合過濾下游 4 張表。
+        trading_ids: set[str] | None = None
+
         if info_frames:
             info_all = pd.concat(info_frames, ignore_index=True).drop_duplicates("stock_id")
             # 用 UPSERT 更新 stock_name / type / is_tradable / last_seen_date
@@ -104,9 +110,26 @@ class MarketUpdater:
                     ],
                 )
                 conn.commit()
+            trading_ids = {
+                sid for sid in info_all["stock_id"].astype(str)
+                if _STOCK_PATTERN.match(sid)
+            }
+
+        def _filter_tradable(df: pd.DataFrame) -> pd.DataFrame:
+            """把非可交易股票（權證 / 牛熊證等）的列剔除。trading_ids 為 None 時 (info 沒抓到)
+            走保守路徑：直接放行，避免破壞「OHLCV 失敗但其他 dataset 還是能寫」的退化情境。"""
+            if trading_ids is None or df.empty or "stock_id" not in df.columns:
+                return df
+            mask = df["stock_id"].astype(str).isin(trading_ids)
+            dropped = len(df) - int(mask.sum())
+            if dropped:
+                logger.debug("filtered out %d non-tradable rows", dropped)
+            return df[mask].reset_index(drop=True)
+
         if price_frames:
-            price_all = pd.concat(price_frames, ignore_index=True)
-            results["daily_price"] = self.db.upsert_df(price_all, "daily_price")
+            price_all = _filter_tradable(pd.concat(price_frames, ignore_index=True))
+            if not price_all.empty:
+                results["daily_price"] = self.db.upsert_df(price_all, "daily_price")
 
         # 其他三個 dataset
         for label, twse_fn, tpex_fn, table in [
@@ -120,8 +143,9 @@ class MarketUpdater:
                 if not df.empty:
                     frames.append(df)
             if frames:
-                combined = pd.concat(frames, ignore_index=True)
-                results[table] = self.db.upsert_df(combined, table)
+                combined = _filter_tradable(pd.concat(frames, ignore_index=True))
+                if not combined.empty:
+                    results[table] = self.db.upsert_df(combined, table)
 
         return results
 

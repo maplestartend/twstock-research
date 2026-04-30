@@ -171,12 +171,19 @@ def main() -> int:
 
     # 預熱 factor_ic_cache：snapshot 剛推進，第一個進 /diagnostics 的人會等 ~17s。
     # 這裡跑完算好寫進去，使用者第一次進就是秒回。失敗只 log，不影響主任務。
+    #
+    # 必須先 DELETE cache：backfill 期間若有 UI 請求觸發 /diagnostics，會在 signal_history
+    # 還沒寫滿時就用 partial data 算出空 IC、寫進 cache（key 在 worker 寫第一筆 2026-04-29
+    # 時就 lock 住）。預熱時若不清掉，會吃到那批 stale row 而不是真正算一次。
     try:
         from app.scoring.factor_diagnostics import (
             DEFAULT_LOOKBACK_DAYS,
             get_factor_ic_cached,
             get_subfactor_ic_cached,
         )
+        with db.connect() as conn:
+            conn.execute("DELETE FROM factor_ic_cache")
+            conn.commit()
         t_cache = time.time()
         agg = get_factor_ic_cached(db, lookback_days=DEFAULT_LOOKBACK_DAYS)
         sub = get_subfactor_ic_cached(db, lookback_days=DEFAULT_LOOKBACK_DAYS)

@@ -35,8 +35,9 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 ## 跑測試
 
 ```bash
-python -m pytest tests/ -q     # 324 passed
-                                # 新增覆蓋：backtest router 5 endpoint + score_stock vs score_all invariant
+python -m pytest tests/ -q     # 402 passed (2026-04-30)
+                                # 新增覆蓋：fundamentals derived path (eps_cagr_3y/peg/yoy 對齊)、
+                                # financials.publish_date 法定下限、market_updater 權證過濾
 cd web && npx tsc --noEmit     # frontend type check
 ```
 

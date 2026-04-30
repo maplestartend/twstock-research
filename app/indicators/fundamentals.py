@@ -41,6 +41,13 @@ def _yoy_from_cumulative(cum_df: pd.DataFrame, type_name: str) -> float | None:
 
     要求 cum_df 至少有「最新一季 + 去年同季」這兩筆。
     EPS / Revenue 累計比較 = 同期累計成長，比單季差分更穩定（避開單季波動）。
+
+    ⚠️ 與「單季 YoY」（_single_q_yoy_from_derived）語意不同：
+        - 累計 YoY = YTD-Qn vs 去年 YTD-Qn（吃整個半年/三季的平均訊號）
+        - 單季 YoY = Qn 單季 vs 去年 Qn 單季（單一時點訊號）
+    score_eps_growth / score_revenue_growth 假設拿到單季 YoY（與主路徑一致）；
+    derived path 已改走 _single_q_yoy_from_derived 以對齊。本函式只剩 _fill_from_cumulative
+    (沒 derived 的最後 fallback) 在用 — 那條路徑沒單季資料，只能用累計 YoY。
     """
     sub = cum_df[cum_df["type"] == type_name]
     if sub.empty:
@@ -68,17 +75,114 @@ def _yoy_from_cumulative(cum_df: pd.DataFrame, type_name: str) -> float | None:
     return (latest_v - prev_v) / abs(prev_v)
 
 
+def _single_q_yoy_from_derived(
+    derived_df: pd.DataFrame, type_name: str
+) -> float | None:
+    """從 derived 單季資料算「單季 YoY」：最新一季 vs 去年同季的單季比較。
+
+    與主路徑（fundamental_snapshot 主體）的 YoY 語意對齊。為什麼不用 iloc[-5]：
+    若該檔某季缺報（年/季 row 不連續），iloc 偏移會錯位 → 改用 (year-1, quarter)
+    顯式比對更安全。
+    """
+    sub = derived_df[derived_df["type"] == type_name]
+    if sub.empty:
+        return None
+    sub = sub.sort_values("date")
+    latest = sub.iloc[-1]
+    try:
+        latest_year = int(latest["year"])
+        latest_q = int(latest["quarter"])
+        cur = float(latest["value"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    if pd.isna(cur):
+        return None
+    prev = sub[(sub["year"] == latest_year - 1) & (sub["quarter"] == latest_q)]
+    if prev.empty:
+        return None
+    try:
+        prev_v = float(prev.iloc[0]["value"])
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(prev_v) or prev_v == 0:
+        return None
+    return (cur - prev_v) / abs(prev_v)
+
+
+def _eps_cagr_3y(eps_series: pd.Series) -> float | None:
+    """3 年 EPS CAGR = (TTM_now / TTM_3y_ago) ** (1/3) - 1。
+
+    需要 16 個有值的單季 EPS（最後 4 個當 now、再前 12 個的最初 4 個當 3 年前 = iloc[-16:-12]）。
+    若 TTM_now 或 TTM_3y_ago 為非正數（EPS 衰退到 0/負）則 CAGR 沒幾何意義 → None。
+
+    抽出共用 helper 避免 main path 與 derived path 兩處 16-季公式 drift。
+    """
+    s = eps_series.dropna() if hasattr(eps_series, "dropna") else eps_series
+    if len(s) < 16:
+        return None
+    try:
+        ttm_now = float(s.tail(4).sum())
+        ttm_3y_ago = float(s.iloc[-16:-12].sum())
+    except (TypeError, ValueError):
+        return None
+    if ttm_now <= 0 or ttm_3y_ago <= 0:
+        return None
+    return float((ttm_now / ttm_3y_ago) ** (1 / 3) - 1)
+
+
+def _ttm_rolling_from_cumulative(
+    cum_df: pd.DataFrame, type_name: str
+) -> float | None:
+    """從累計資料算 rolling TTM：(本期 YTD) + (去年全年) − (去年同期 YTD)。
+
+    例：本期 = 2025 Q3 累計 = 9 個月 → TTM = 2025 Q3 YTD + 2024 Q4 YTD − 2024 Q3 YTD
+    （2024 Q4 = 2024 全年；扣掉 2024 Q3 YTD = 加回 2024 Q4 單季）。
+
+    若本期已是 Q4 → 直接 = 本期 YTD（即全年），不需要 rolling 公式。
+    需要三筆資料：本期 / 去年同季 / 去年 Q4。任一缺則 None。
+    """
+    sub = cum_df[cum_df["type"] == type_name]
+    if sub.empty:
+        return None
+    sub = sub.sort_values("date")
+    latest = sub.iloc[-1]
+    try:
+        cur_year = int(latest["year"])
+        cur_q = int(latest["quarter"])
+        cur_ytd = float(latest["value"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    if pd.isna(cur_ytd):
+        return None
+    if cur_q == 4:
+        return cur_ytd  # Q4 累計 = 全年 = TTM
+    prev_year_q4 = sub[(sub["year"] == cur_year - 1) & (sub["quarter"] == 4)]
+    prev_year_same = sub[(sub["year"] == cur_year - 1) & (sub["quarter"] == cur_q)]
+    if prev_year_q4.empty or prev_year_same.empty:
+        return None
+    try:
+        py_q4 = float(prev_year_q4.iloc[0]["value"])
+        py_same = float(prev_year_same.iloc[0]["value"])
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(py_q4) or pd.isna(py_same):
+        return None
+    return cur_ytd + py_q4 - py_same
+
+
 def _fill_from_quarterly_derived(
     snap: dict,
     derived_df: pd.DataFrame,
     cum_df: pd.DataFrame,
 ) -> None:
-    """從 derived（差分後單季值）+ cumulative（YoY 用）填齊：TTM、ROE、YoY、margin。
+    """從 derived（差分後單季值）+ cumulative（equity 用）填齊：TTM、ROE、YoY、CAGR、PEG、margin。
 
     優先於 _fill_from_cumulative；只要 derived 有 ≥4 季就走這條。
     - TTM = 最近 4 個單季的加總（Revenue / IncomeAfterTaxes / EPS）
-    - ROE = TTM net income / 最新累計 equity
-    - YoY 從 cum_df 算（更穩定）
+    - ROE = TTM net income / 最新累計 equity（cum_df）
+    - YoY = 單季 Qn vs 去年同季 Qn（與主路徑語意對齊；用 derived 直接比，不走累計）
+    - CAGR_3y = (TTM_now / TTM_3y_ago) ^ (1/3) − 1，需 ≥16 季
+    - PEG = PER / (CAGR×100)，需 PER（per_pbr stanza 已先設）+ 正 CAGR
     - margin 從最新單季算（避免累計平均稀釋）
     """
     if derived_df.empty:
@@ -136,6 +240,18 @@ def _fill_from_quarterly_derived(
     if ttm_eps is not None:
         snap["eps_ttm"] = ttm_eps
 
+    # 3 年 EPS CAGR — 共用 helper 與主路徑一致
+    eps_all = derived_df[derived_df["type"] == "EPS"].dropna(subset=["value"])
+    cagr = _eps_cagr_3y(eps_all["value"]) if not eps_all.empty else None
+    if cagr is not None:
+        snap["eps_cagr_3y"] = cagr
+
+    # PEG：PER 來自 per_pbr stanza（已在 fundamental_snapshot 開頭執行），CAGR 來自上一段
+    per_val = snap.get("per")
+    cagr_val = snap.get("eps_cagr_3y")
+    if per_val is not None and per_val > 0 and cagr_val is not None and cagr_val > 0:
+        snap["peg"] = round(per_val / (cagr_val * 100), 3)
+
     # ROE = TTM 淨利 / 當前 equity（從 cumulative 取最新一季的 EquityAttributableToOwnersOfParent）
     if ttm_ni is not None and not cum_df.empty:
         eq_sub = cum_df[cum_df["type"] == "EquityAttributableToOwnersOfParent"]
@@ -149,14 +265,15 @@ def _fill_from_quarterly_derived(
             except (TypeError, ValueError):
                 pass
 
-    # YoY（從累計值算同季比較，比單季 YoY 穩定）
-    if not cum_df.empty:
-        eps_yoy = _yoy_from_cumulative(cum_df, "EPS")
-        rev_yoy = _yoy_from_cumulative(cum_df, "Revenue")
-        if eps_yoy is not None:
-            snap["eps_yoy"] = eps_yoy
-        if rev_yoy is not None:
-            snap["revenue_yoy"] = rev_yoy
+    # YoY：用 derived 單季資料做 Qn vs 去年同季 Qn（與主路徑語意一致）。
+    # 之前用 _yoy_from_cumulative 是「YTD-Qn vs 去年 YTD-Qn」 — 兩條路徑同名指標
+    # 但語意不同 → 同個 score 拿到不同口徑數字會拖累 IC，改用單季比對對齊。
+    eps_yoy = _single_q_yoy_from_derived(derived_df, "EPS")
+    rev_yoy = _single_q_yoy_from_derived(derived_df, "Revenue")
+    if eps_yoy is not None:
+        snap["eps_yoy"] = eps_yoy
+    if rev_yoy is not None:
+        snap["revenue_yoy"] = rev_yoy
 
     # QoQ：用最近 2 個單季 EPS / Revenue 比較
     eps_sub = derived_df[derived_df["type"] == "EPS"]
@@ -182,10 +299,12 @@ def _fill_from_quarterly_derived(
 def _fill_from_cumulative(snap: dict, cum_df: pd.DataFrame) -> None:
     """財報 fallback：從 TWSE/TPEX 累計值填基本指標（最後 fallback，沒 derived 才用）。
 
-    - Q4 (12-31)：累計 = 全年 = TTM，可填 `roe_ttm`、`eps_ttm`、`gross_margin` 等完整指標
-    - Q1~Q3：只填不受累計影響的比率（gross_margin、operating_margin、net_margin）
-             以及當期累計 EPS（較弱訊號，仍比完全無資料好）
-    - 標記 `data_source = 'cumulative'`，讓下游可辨識
+    - 比率（gross/operating/net margin）：累計比累計仍有意義，全季都填
+    - TTM（eps_ttm / roe_ttm）：用 rolling 公式 (本期 YTD + 去年 Q4 − 去年同期 YTD)
+      讓 Q1~Q3 也能算出 TTM，不再只 Q4 才填
+    - YoY（eps_yoy / revenue_yoy）：用 _yoy_from_cumulative 算 YTD-Qn vs 去年 YTD-Qn
+      （這條路徑沒有單季資料 → 只能用累計 YoY，不像 derived 路徑可以對齊主路徑語意）
+    - 標記 `data_source = 'cumulative'` + `cumulative_quarter`，讓下游可辨識
     """
     if cum_df.empty:
         return
@@ -230,15 +349,27 @@ def _fill_from_cumulative(snap: dict, cum_df: pd.DataFrame) -> None:
 
     if eps is not None:
         snap["eps_q"] = eps
-        # Q4 累計 EPS = 全年 EPS ≈ TTM
-        if quarter == 4:
-            snap["eps_ttm"] = eps
 
-    # ROE：僅 Q4（全年淨利）才能當 TTM；其他季只能粗估年化，精度差就先不填
-    if quarter == 4 and net_income is not None and equity and equity > 0:
-        roe = net_income / equity
+    # TTM EPS：rolling 公式（Q4 退化成 = 本期 YTD = 全年）
+    ttm_eps = _ttm_rolling_from_cumulative(cum_df, "EPS")
+    if ttm_eps is not None:
+        snap["eps_ttm"] = ttm_eps
+
+    # ROE：用 rolling TTM 淨利 / 最新 equity；Q4 即等於原本「全年淨利 / equity」
+    ttm_ni = _ttm_rolling_from_cumulative(cum_df, "IncomeAfterTaxes")
+    if ttm_ni is not None and equity and equity > 0:
+        roe = ttm_ni / equity
         if 0 < roe < 0.6:
             snap["roe_ttm"] = roe
+
+    # YoY：YTD-Qn vs 去年 YTD-Qn（這條路徑無單季資料，只能用累計 YoY；
+    # 與 derived 路徑改用單季 YoY 不同 — 但這條 fallback 覆蓋率小，影響有限）
+    eps_yoy = _yoy_from_cumulative(cum_df, "EPS")
+    rev_yoy = _yoy_from_cumulative(cum_df, "Revenue")
+    if eps_yoy is not None:
+        snap["eps_yoy"] = eps_yoy
+    if rev_yoy is not None:
+        snap["revenue_yoy"] = rev_yoy
 
 
 def fundamental_snapshot(
@@ -329,15 +460,11 @@ def fundamental_snapshot(
         ttm_eps = quarterly["EPS"].tail(4).sum()
         snap["eps_ttm"] = float(ttm_eps)
 
-    # 3 年 EPS CAGR：現在 TTM EPS vs 3 年前同期 TTM EPS。
-    # 比 yoy 更代表「長期成長性」；若 EPS 從正轉負（或 base 為 0/負）則 CAGR 沒意義 → None。
-    # 需要至少 4+12=16 季資料；少於 16 季就算不出。
-    if "EPS" in quarterly.columns and len(quarterly) >= 16:
-        ttm_now = float(quarterly["EPS"].tail(4).sum())
-        ttm_3y_ago = float(quarterly["EPS"].iloc[-16:-12].sum())
-        if ttm_now > 0 and ttm_3y_ago > 0:
-            # CAGR = (now / past) ** (1/3) - 1
-            snap["eps_cagr_3y"] = float((ttm_now / ttm_3y_ago) ** (1 / 3) - 1)
+    # 3 年 EPS CAGR — 共用 helper 與 derived path 一致
+    if "EPS" in quarterly.columns:
+        cagr = _eps_cagr_3y(quarterly["EPS"])
+        if cagr is not None:
+            snap["eps_cagr_3y"] = cagr
 
     # PEG = PER / (EPS 成長率%)：< 1 成長合算、> 2 過貴
     # 只在有 PER 且 CAGR > 0 時計算（負成長股算 PEG 沒意義）

@@ -1380,12 +1380,24 @@
       },
       "FactorICResponse": {
         "properties": {
+          "executionAssumption": {
+            "title": "Executionassumption",
+            "type": "string"
+          },
+          "forwardReturnBasis": {
+            "title": "Forwardreturnbasis",
+            "type": "string"
+          },
           "horizons": {
             "items": {
               "type": "integer"
             },
             "title": "Horizons",
             "type": "array"
+          },
+          "icCiMethod": {
+            "title": "Iccimethod",
+            "type": "string"
           },
           "lookbackDays": {
             "title": "Lookbackdays",
@@ -1402,6 +1414,9 @@
         "required": [
           "lookbackDays",
           "horizons",
+          "forwardReturnBasis",
+          "executionAssumption",
+          "icCiMethod",
           "rows"
         ],
         "title": "FactorICResponse",
@@ -4290,6 +4305,11 @@
       },
       "SnapshotStatus": {
         "properties": {
+          "canRefresh": {
+            "default": false,
+            "title": "Canrefresh",
+            "type": "boolean"
+          },
           "dailyPriceAsOf": {
             "anyOf": [
               {
@@ -4300,6 +4320,26 @@
               }
             ],
             "title": "Dailypriceasof"
+          },
+          "datasetDates": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "default": {},
+            "title": "Datasetdates",
+            "type": "object"
+          },
+          "datasetsSynced": {
+            "default": false,
+            "title": "Datasetssynced",
+            "type": "boolean"
           },
           "isStale": {
             "title": "Isstale",
@@ -4315,6 +4355,11 @@
               }
             ],
             "title": "Snapshotasof"
+          },
+          "staleReason": {
+            "default": "up_to_date",
+            "title": "Stalereason",
+            "type": "string"
           }
         },
         "required": [
@@ -4728,12 +4773,24 @@
       },
       "SubFactorICResponse": {
         "properties": {
+          "executionAssumption": {
+            "title": "Executionassumption",
+            "type": "string"
+          },
+          "forwardReturnBasis": {
+            "title": "Forwardreturnbasis",
+            "type": "string"
+          },
           "horizons": {
             "items": {
               "type": "integer"
             },
             "title": "Horizons",
             "type": "array"
+          },
+          "icCiMethod": {
+            "title": "Iccimethod",
+            "type": "string"
           },
           "lookbackDays": {
             "title": "Lookbackdays",
@@ -4750,6 +4807,9 @@
         "required": [
           "lookbackDays",
           "horizons",
+          "forwardReturnBasis",
+          "executionAssumption",
+          "icCiMethod",
           "rows"
         ],
         "title": "SubFactorICResponse",
@@ -6392,7 +6452,7 @@
             "required": false,
             "schema": {
               "default": 120,
-              "maximum": 365,
+              "maximum": 2000,
               "minimum": 30,
               "title": "Lookback Days",
               "type": "integer"
@@ -6508,7 +6568,7 @@
             "required": false,
             "schema": {
               "default": 120,
-              "maximum": 365,
+              "maximum": 2000,
               "minimum": 30,
               "title": "Lookback Days",
               "type": "integer"
@@ -7834,6 +7894,22 @@
                 }
               ],
               "title": "Override Price"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
             }
           }
         ],

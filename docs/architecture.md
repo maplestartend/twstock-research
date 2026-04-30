@@ -56,24 +56,26 @@
 
 | 表 | 用途 | 筆數量級 |
 |---|------|---------|
-| `stock_info` | 股票基本資料（代號、名稱、市場別） | 25K |
-| `daily_price` | 每日 OHLCV | 200 萬+ |
-| `institutional` | 三大法人買賣超 | 280 萬+ |
-| `margin` | 融資融券餘額 | 44 萬 |
-| `per_pbr` | PER/PBR/殖利率 | 40 萬 |
-| `financials` | 財報單季值（FinMind，僅 watchlist 股票） | 1.5K |
-| `financials_cumulative` | 全市場 5+ 季財報累計值（TWSE/TPEX OpenAPI + MOPS 歷史） | 130K |
-| `financials_quarterly_derived` | 累計差分後的單季值（含 TTM 計算用），全市場 ~1900 檔 | 100K |
-| `signal_history` | 每日雷達評分快照 | 增長中 |
+| `stock_info` | 股票基本資料（代號、名稱、市場別、`is_tradable` 1=真股票/0=權證） | 47K（含已下市/權證；`is_tradable=1` 的真股票/ETF ~2.9K） |
+| `daily_price` | 每日 OHLCV（2026-04-30 已 prune 權證 6.94M 列） | 1.47M（純真股票） |
+| `institutional` | 三大法人買賣超（2026-04-30 已 prune 9.17M 列） | 1.38M |
+| `margin` | 融資融券餘額 | 1.35M |
+| `per_pbr` | PER/PBR/殖利率 | 1.27M |
+| `financials` | 財報單季值（FinMind，僅 watchlist 股票），含 `publish_date` 法定下限 | 1.5K |
+| `financials_cumulative` | 全市場 5+ 季財報累計值（TWSE/TPEX OpenAPI + MOPS 歷史，2018Q1 起 33 季） | 785K |
+| `financials_quarterly_derived` | 累計差分後的單季值（含 TTM/CAGR 計算用），2018Q1 起 33 季 | 748K |
+| `signal_history` | 每日雷達評分快照 | 1.34M（1000 天 × ~1500 平均） |
+| `signal_history_factor_parts` | 子因子分數長表（給 /diagnostics sub-factor IC 用） | 27.9M |
+| `factor_ic_cache` | IC 計算結果快取（key 含 `IC_ALGO_VERSION` prefix） | 171（aggregate 15 + subfactor 63 × 演算法版本） |
 | `adj_event` | 除權息/分割事件 | 每股幾筆 |
 | `daily_price_adj` | 還原 OHLC（僅已補還原的股票） | ~每股千筆 |
-| `index_daily` | 加權指數等（用於 RS 計算） | 每日 50+ 筆 |
-| `monthly_revenue` | 月營收（2022-01 起全市場 ~1835 檔 × 50 月，已回補） | 89,000+ |
+| `index_daily` | 加權指數等（用於 RS 計算；含 yfinance 補回 2022-2023 的 ^TWII） | 37K |
+| `monthly_revenue` | 月營收（2022-01 起全市場 ~1835 檔 × 50 月，已回補） | 89K |
 | `holdings` | 庫存股 | 有幾檔就幾筆 |
 | `trade_log` | 買賣交易紀錄 append-only | 每筆 1 列 |
 | `user_weight_preset` | 權重調優頁存的命名 preset（含描述、weights JSON） | 隨用戶 |
 
-DB 目前約 **460 MB**，預計每年增長 100~150 MB。
+DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 列權證資料）。`signal_history_factor_parts` 是大宗（27.9M 列、~2.5 GB）。預計每年增長 100~150 MB（已過濾權證，純真股票）。
 
 ## 注意事項與限制
 
@@ -133,13 +135,14 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - 進場 65 分、出場 40 分，很多行情會錯過
    - 建議用權重調優頁找出符合自己直覺的參數
 
-5. **目前預設權重（v4 草案，2026-04-30；VR×MACD 改為純 VR）**
+5. **目前預設權重（v4，2026-04-30；VR×MACD 改為純 VR + LONG_TERM 大調）**
    - `COMPOSITE_WEIGHTS`：short/mid/long = **0.20 / 0.60 / 0.20**（不動 — reviewer 警告：mid IC ≈ composite IC 不足以推到 0.70/0.15/0.15）
-   - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.40 / 0.30 / 0.05 / 0.15 / 0.10**
-     - **`eps_cagr_3y` 從 0.25 砍到 0.05**：需 16 季 EPS（4 年）才算得出，全市場 `financials_quarterly_derived` 只 backfill 5 季 → 全 null。屬 **data quality 問題**，非因子問題；補完 4 年財報後可回升。
-     - **`dividend` 從 0.05 拉到 0.15**：是 long term 最穩定訊號（5/20/60 日 IC 都 ~+0.03、IR 1.86）。
-     - **`roe` / `margin_quality` 各 +0.05**：吸收 eps_cagr_3y 釋出的 0.20。`roe` 5d IC +0.091、IR 2.05 是長期最強單因子。
-     - **`valuation` 不動**：60 日 IC -0.048 看似反向但 reviewer 認為是 2026Q1 regime artifact（年底+農曆年+AI 主題股輾傳產），保留 0.10 防 regime switch。
+   - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.40 / 0.20 / 0.20 / 0.10 / 0.10**
+     - **`eps_cagr_3y` 從 0.05 拉到 0.20**：之前以為是 data quality 問題（全 null）→ 2026-04-30 發現是 [`_fill_from_quarterly_derived`](../app/indicators/fundamentals.py) 漏算 CAGR + radar.py 財報視窗 3 年不夠 16 季 + financials 只回到 2022Q1 的三重 bug。修完並擴充 financials 到 2018Q1 後，1741 檔有 ≥16 季 EPS 可算 CAGR。**它是 long 維度裡唯一 60d HAC CI 不過 0 的因子**（IC +0.031、IR +0.45），統計顯著性最高。
+     - **`margin_quality` 從 0.30 砍到 0.20**：60d IC +0.045 點估計高、但 HAC CI [-0.015, +0.106] 過 0，顯著性不足。
+     - **`dividend` 從 0.15 砍到 0.10**：60d IC +0.046 但 CI [-0.009, +0.101] 過 0；獨立 reviewer 警告 dividend 跨 horizon 全 +0.035 太完美（殖利率變動慢的自相關偽穩定），HAC CI 印證警告。
+     - **`roe` 不動 0.40**：5d IC +0.091 IR 2.05 為長期最強單因子（雖然只 15 dates 因為 `EquityAttributableToOwnersOfParent` 在金融保險業 OpenAPI 沒給 → ROE 只能算少數股票）。
+     - **`valuation` 不動 0.10**：60d +0.033 雖 CI 過 0 但點估計穩定，保留作 regime switch 對沖。
   - `SHORT_TERM_WEIGHTS`：ma_alignment 0.18 / kd 0.10 / macd 0.04 / rsi 0.07 / bollinger 0.06 / volume 0.10 / vr_macd 0.08 / foreign 0.18 / trust 0.11 / margin_change 0.08
     - 第一版草案：因子語意改成純 VR 後，短期把量能（`volume` + `vr_macd`）上調，法人短線權重小幅下修。
   - `MID_TERM_WEIGHTS`：trend 0.32 / foreign_cum 0.20 / trust_cum 0.16 / eps_growth 0.18 / revenue_growth 0.10 / vr_macd 0.04
@@ -151,7 +154,7 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
      1. `financials`（FinMind 單季，僅 watchlist）：最精準
      2. `financials_quarterly_derived`（MOPS 累計差分→單季，全市場）：有 ≥4 季就算 TTM ROE / EPS / 同期累計 YoY
      3. `financials_cumulative`（OpenAPI 當季累計，全市場最後 fallback）：只算 margin 比率
-   - 全市場覆蓋率：**1939/2291 (84.6%) 股票有 long score**，平均 data_completeness 0.885
+   - 全市場覆蓋率：**~1900/2295 股票有 long score**（精確比例會因每天 publish_date 限制略動）；2026-04-30 後 derived path 修補使 `eps_cagr_3y` 覆蓋從 0% 提升到 ~52%、`peg` 從 0% 提升到 ~25%。
 
 7. **分數會是 None 代表資料不足**
    - 子指標回 None（例：新上市 < 60 日無 MA60、非 watchlist 無財報）時整個維度**跳過該項並重新歸一化剩餘權重**，不會用 50 分中性值拖平真實分數
@@ -163,7 +166,13 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
 
    用 [/diagnostics 因子檢定頁](../web/app/diagnostics/page.tsx) 對歷史快照算 cross-sectional Spearman IC。forward return 優先使用還原價（`daily_price_adj.close_adj`）以降低除權息/分割干擾。`daily_price.close=0` 視為缺值（停牌日），避免 forward return inf 污染 Q5/Q1 統計。
 
-   ### v3 weights @ 980-day baseline（2026-04-30 量測，2022-04-08 ~ 2026-04-29）
+   **IC 95% 信賴區間：Newey-West HAC**（lag ≈ horizon-1，[`factor_diagnostics._newey_west_mean_ci`](../app/scoring/factor_diagnostics.py)）。最早版本想用 1000 iter naive bootstrap（resample per-date IC）但 forward window 重疊會造成自相關 → naive bootstrap 區間過窄。HAC 用 Bartlett kernel 修正後較保守、適合「IC 是否顯著異於 0」這類判斷。
+
+   **IC cache 失效規則**：cache key = `({IC_ALGO_VERSION}:{MAX(signal_history.as_of)}, scope, lookback_days)`。改演算法（factor 公式、forward return 邏輯、HAC lag、quintile 切法）時 bump [`factor_diagnostics.IC_ALGO_VERSION`](../app/scoring/factor_diagnostics.py)；資料變動時 `MAX(as_of)` 自然推進、不需要 bump。
+
+   ### v3 weights @ 980-day baseline（2026-04-30 量測，2022-04-08 ~ 2026-04-29，**舊版 VR×MACD 因子數據**）
+
+   ⚠️ 此表為純 VR 因子改造（commit adaf53f）+ `eps_cagr_3y` 修補（2026-04-30 P0 fix）**之前**的量測結果。重跑後的數字會放在「v4 baseline」段。
 
    index_daily 經 yfinance 補到 2022-01 後可全期回放，這是目前最 robust 的因子量測。
 
@@ -184,7 +193,7 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    - **short ma_alignment** 60d +0.034 — 短期內唯一持續有訊號的子因子
    - **short rsi/bollinger/kd** 60d -0.039/-0.027/-0.031 — 反向但比近期樣本和緩
    - **roe** 只 15 樣本算得出（資料深度不夠）
-   - **eps_cagr_3y** 全 null（需 16 季 EPS、`financials_quarterly_derived` 雖已 backfill 17 季，但 derived 表處理 incomplete 期的 EPS 時仍會跳過）
+   - **eps_cagr_3y** 全 null —— ⚠️ **這是程式 bug 不是資料問題**：[`_fill_from_quarterly_derived`](../app/indicators/fundamentals.py) 漏算 `eps_cagr_3y`。實際資料庫有 17 季 × 1947 檔有 EPS、1741 檔 ≥16 季可算 CAGR。2026-04-30 已修，下次 backfill 後此欄會跑出真實 IC、`peg`（受 CAGR 連動）也會生效。
 
    ### v4 權重決策（2026-04-30）：**維持 v3，不調**
 
@@ -195,7 +204,9 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
      2. **dividend 跨 horizon 全 +0.035 太完美** — 可能是 yield 變動極慢造成的自相關偽穩定
      3. **valuation sign flip** 是 2022-23 vs 2024-26 兩個相反 regime 平均，不是因子變有用
 
-   結論：**全期 IC 已縮水到接近噪音底，v3 在這份資料上沒搞砸（long IC 翻正、composite 仍正），就現有統計信賴度不足以支持任何方向的權重大改**。下一輪該先做 **bootstrap CI**（給每個 IC 加 95% 區間）+ **rolling 60d IC 折線圖**（看 regime 切換），而不是繼續調權重。
+   結論：**全期 IC 已縮水到接近噪音底，v3 在這份資料上沒搞砸（long IC 翻正、composite 仍正），就現有統計信賴度不足以支持任何方向的權重大改**。下一輪該先做 **HAC CI**（給每個 IC 加 95% 區間，已上線：Newey-West 取代原計劃的 naive bootstrap）+ **rolling 60d IC 折線圖**（已上線，看 regime 切換），而不是繼續調權重。
+
+   **2026-04-30 後續：** v4 第一版草案（純 VR 因子 + LONG_TERM eps_cagr_3y 0.25→0.05、dividend 0.05→0.15、roe/margin +0.05）已 ship，但因為發現 `eps_cagr_3y` 全 null 是 derived path 的程式 bug（已修），原本「砍 eps_cagr_3y 權重」的決策前提失效。修補完跑下一輪 980 天 backfill 後重新檢視 v4 是否合理。
 
    ### 重新跑此分析的方法
 
@@ -218,7 +229,7 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
 
    小樣本 IC 普遍偏高 = regime artifact 確認。**任何權重調整都應參考 980 天 baseline 而非 100 天**。
 
-   ### v3 baseline（已 deprecated，僅供歷史對照，2026-04-30 量測，100 天樣本 2025-11-25 ~ 2026-04-29）
+   ### v3 baseline（已 deprecated，僅供歷史對照，2026-04-30 量測，100 天樣本 2025-11-25 ~ 2026-04-29，**舊版 VR×MACD 因子數據**）
 
    | 因子 | 5 日 IC | 20 日 IC | 60 日 IC | 結論 |
    |---|---|---|---|---|
@@ -226,7 +237,7 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
    | 中期 | +0.031 | +0.081 | +0.124 | 與綜合幾乎一致，是主力訊號 |
    | 短期 | -0.014 | +0.009 | +0.036 | 5d 仍弱負、60d 略正（小樣本） |
    | 長期 | +0.017 | -0.003 | -0.023 | 60d 仍負（待 eps_cagr_3y data 修好＋valuation regime 換證） |
-   | VR×MACD | -0.008 | -0.017 | -0.048 | 全 horizon 反向（量價爆衝→均值回歸）|
+   | VR×MACD（舊） | -0.008 | -0.017 | -0.048 | 全 horizon 反向（量價爆衝→均值回歸），已於 commit adaf53f 改成純 VR |
 
    ### Sub-factor 觀察（v3 樣本）
 

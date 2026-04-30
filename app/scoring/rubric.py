@@ -487,13 +487,23 @@ MID_TERM_WEIGHTS = {
 }
 
 LONG_TERM_WEIGHTS = {
-    # v3：把 eps_cagr_3y 大砍到 0.05（資料品質問題：需 16 季 EPS、全市場大量缺值 → 全 null）
-    # 釋出 0.20 給 roe/margin_quality/dividend；valuation 保留待 regime 換證
-    "roe": 0.40,            # +0.05 — 5d IC +0.091 IR 2.05 為長期最強單因子
-    "margin_quality": 0.30, # +0.05
-    "eps_cagr_3y": 0.05,    # -0.20 — data quality；資料修好（補 4 年財報）後可回升
-    "dividend": 0.15,       # +0.10 — 全 horizon 都穩定 +0.03，IR 1.86 為長期最穩定因子
-    "valuation": 0.10,      # 不動 — 60d -0.048 看似反向，但 reviewer 認為是 2026Q1 regime artifact
+    # v4 (2026-04-30，修完 eps_cagr_3y bug + financials 擴充到 2018Q1 + 980 天 backfill 後)：
+    # /diagnostics 980 天 IC（horizon=long sub-factor，HAC CI）：
+    #   factor          5d        20d       60d        IR(60d)  CI(60d) 過 0?
+    #   ──────────────  ────────  ────────  ─────────  ───────  ─────────────
+    #   eps_cagr_3y     +0.0169   +0.0303   +0.0306    +0.45    ✗（顯著）
+    #   dividend        +0.0382   +0.0378   +0.0460    +0.40    ✓（雜訊範圍）
+    #   margin_quality  +0.0234   +0.0336   +0.0454    +0.37    ✓
+    #   valuation       +0.0214   +0.0225   +0.0326    +0.41    ✓
+    #   roe             +0.0905   —         —          +2.05    ⚠ 只 15 dates 稀少
+    # 解讀：dividend / margin / valuation 點估計高但 60d CI 全部過 0（不顯著於雜訊）。
+    # eps_cagr_3y 是長期裡**唯一 60d CI 不過 0** 的因子。獨立 reviewer 之前警告
+    # dividend 跨 horizon 全 +0.035 太完美（殖利率變動慢的自相關偽穩定），HAC CI 印證警告。
+    "roe": 0.40,            # 不動 — 5d IC +0.091 IR 2.05 為長期最強單因子（雖只 15 dates）
+    "margin_quality": 0.20, # -0.10 — 60d CI [-0.015, +0.106] 過 0，顯著性不足
+    "eps_cagr_3y": 0.20,    # +0.15 — bug 修完後是 long 裡唯一 60d 顯著的因子
+    "dividend": 0.10,       # -0.05 — CI 過 0 + reviewer 警告 yield 自相關偽穩定
+    "valuation": 0.10,      # 不動 — 60d +0.033 雖 CI 過 0 但點估計穩定，保留
 }
 
 
