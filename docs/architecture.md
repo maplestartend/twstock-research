@@ -161,9 +161,64 @@ DB 目前約 **460 MB**，預計每年增長 100~150 MB。
 
 8. **因子實測有效性（forward-return IC）**
 
-   用 [/diagnostics 因子檢定頁](../web/app/diagnostics/page.tsx) 對歷史快照算 cross-sectional Spearman IC。forward return 優先使用還原價（`daily_price_adj.close_adj`）以降低除權息/分割干擾。
+   用 [/diagnostics 因子檢定頁](../web/app/diagnostics/page.tsx) 對歷史快照算 cross-sectional Spearman IC。forward return 優先使用還原價（`daily_price_adj.close_adj`）以降低除權息/分割干擾。`daily_price.close=0` 視為缺值（停牌日），避免 forward return inf 污染 Q5/Q1 統計。
 
-   ### v3 baseline（2026-04-30 量測，100 天樣本 2025-11-25 ~ 2026-04-29）
+   ### v3 weights @ 980-day baseline（2026-04-30 量測，2022-04-08 ~ 2026-04-29）
+
+   index_daily 經 yfinance 補到 2022-01 後可全期回放，這是目前最 robust 的因子量測。
+
+   | 因子 | 5 日 IC | 20 日 IC | 60 日 IC | n | 結論 |
+   |---|---|---|---|---|---|
+   | 綜合 | +0.017 | +0.024 | +0.038 | 920 | 跨 4 年 IC 仍正向但已從近期 +0.146 縮到 +0.038 |
+   | 中期 | +0.012 | +0.020 | +0.029 | 920 | 與 composite 接近、是訊號主力 |
+   | 長期 | +0.016 | +0.017 | **+0.032** | 895 | **較近期 (-0.003) 翻正**，dividend + valuation 撐住 |
+   | 短期 | -0.008 | -0.003 | +0.006 | 920 | 全期接近噪音 |
+   | VR×MACD | +0.001 | -0.002 | -0.025 | 920 | 從近期 -0.072 收斂，反向訊號弱化 |
+
+   ### Sub-factor 全期觀察
+
+   - **dividend** 5/20/60d 都 +0.035 — 全系統最 stable，但**獨立 reviewer 警告可能是殖利率變動極慢造成的自相關偽穩定**，不是真訊號穩定
+   - **valuation** 5/20/60d 都 +0.017 — 同樣 stable，全期翻正（近期是 -0.030）
+   - **margin_quality** 60d +0.024
+   - **mid trend** 60d 從近期 +0.137 大幅縮到 +0.036 — 純 momentum regime 訊號
+   - **short ma_alignment** 60d +0.034 — 短期內唯一持續有訊號的子因子
+   - **short rsi/bollinger/kd** 60d -0.039/-0.027/-0.031 — 反向但比近期樣本和緩
+   - **roe** 只 15 樣本算得出（資料深度不夠）
+   - **eps_cagr_3y** 全 null（需 16 季 EPS、`financials_quarterly_derived` 雖已 backfill 17 季，但 derived 表處理 incomplete 期的 EPS 時仍會跳過）
+
+   ### v4 權重決策（2026-04-30）：**維持 v3，不調**
+
+   兩位 agent 對 980 天結果的看法：
+   - quant 分析師提案大幅 rebalance（COMPOSITE long 0.20→0.40、dividend 0.15→0.35、valuation 0.10→0.30）
+   - 獨立 reviewer 三點挑刺：
+     1. **有效獨立樣本 ≈ 15**（60d forward window 重疊：N=920 / 60 ≈ 15），IC_IR 0.37 在 N=15 下 t-stat~1.4，跨不過顯著性門檻
+     2. **dividend 跨 horizon 全 +0.035 太完美** — 可能是 yield 變動極慢造成的自相關偽穩定
+     3. **valuation sign flip** 是 2022-23 vs 2024-26 兩個相反 regime 平均，不是因子變有用
+
+   結論：**全期 IC 已縮水到接近噪音底，v3 在這份資料上沒搞砸（long IC 翻正、composite 仍正），就現有統計信賴度不足以支持任何方向的權重大改**。下一輪該先做 **bootstrap CI**（給每個 IC 加 95% 區間）+ **rolling 60d IC 折線圖**（看 regime 切換），而不是繼續調權重。
+
+   ### 重新跑此分析的方法
+
+   ```bash
+   # 改 scoring 後跑（清舊算法 + 重算 + 預熱 IC cache）
+   python -m scripts.backfill_signal_history --days 100 --clear --workers 4
+
+   # 全期回放（要 ~3-4 小時，含 yfinance ^TWII 補老 index）
+   python -m scripts.backfill_index_yfinance --from 2022-01-01
+   python -m scripts.backfill_signal_history --days 1000 --clear --workers 4
+   ```
+
+   ### 100 → 600 → 980 day IC 演進對照
+
+   | composite IC | 100 天 | 600 天 | 980 天 |
+   |---|---|---|---|
+   | 5d | +0.055 | +0.045 | +0.017 |
+   | 20d | +0.098 | +0.075 | +0.024 |
+   | 60d | +0.146 | +0.100 | +0.038 |
+
+   小樣本 IC 普遍偏高 = regime artifact 確認。**任何權重調整都應參考 980 天 baseline 而非 100 天**。
+
+   ### v3 baseline（已 deprecated，僅供歷史對照，2026-04-30 量測，100 天樣本 2025-11-25 ~ 2026-04-29）
 
    | 因子 | 5 日 IC | 20 日 IC | 60 日 IC | 結論 |
    |---|---|---|---|---|
