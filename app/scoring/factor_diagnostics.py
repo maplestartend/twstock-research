@@ -78,12 +78,19 @@ def _fetch_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.
 
 def _build_price_pivot(prices: pd.DataFrame) -> pd.DataFrame:
     """把 long-format daily_price 轉成 wide：rows=date, cols=stock_id, values=close。
-    用作 shift(-h) 算 forward return 的基底。"""
+    用作 shift(-h) 算 forward return 的基底。
+
+    close=0 視為缺值（NaN）：實際 daily_price 在停牌 / 暫停交易日會回 0，但 0 當分母會
+    讓 forward_return = (forward / 0) - 1 變 inf，污染 Q5/Q1 spread 統計。改成 NaN
+    後 valid mask 會排除這些 cell。
+    """
     if prices.empty:
         return pd.DataFrame()
     prices = prices.copy()
     prices["date"] = pd.to_datetime(prices["date"])
     wide = prices.pivot(index="date", columns="stock_id", values="close").sort_index()
+    # 0 視同停牌缺值
+    wide = wide.replace(0, np.nan)
     return wide
 
 
