@@ -67,6 +67,7 @@ export function FilterChip({
 
   const cls = cn(
     "inline-flex items-center rounded-md border transition-colors",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-500)]/40 focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--surface)]",
     sizeClasses[size],
     active ? activeClass : inactiveClass,
     className,
@@ -93,7 +94,16 @@ export function FilterChip({
 
   if (href) {
     return (
-      <Link href={href} scroll={scroll} prefetch={prefetch} className={cls} aria-label={ariaLabel}>
+      <Link
+        href={href}
+        scroll={scroll}
+        prefetch={prefetch}
+        className={cls}
+        aria-label={ariaLabel}
+        // aria-current 對 link-based filter 比 aria-pressed 更語意正確：告訴讀屏軟體
+        // 「目前頁面套用的就是這個 chip 對應的篩選條件」。
+        aria-current={active ? "page" : undefined}
+      >
         {inner}
       </Link>
     );

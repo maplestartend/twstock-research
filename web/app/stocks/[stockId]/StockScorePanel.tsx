@@ -236,8 +236,14 @@ export function StockScorePanel({
         error={error}
       />
 
-      {/* 5-KPI row */}
-      <section className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      {/* 5-KPI row — loading 時整段降透明度，視覺上「凍結」舊值，與 ModeBar 的 spinner 呼應 */}
+      <section
+        className={cn(
+          "grid grid-cols-2 md:grid-cols-5 gap-3 transition-opacity duration-200",
+          loading && "opacity-60",
+        )}
+        aria-busy={loading}
+      >
         <ScoreCard
           label="短期"
           score={score.short.total}
@@ -292,11 +298,17 @@ export function StockScorePanel({
         </div>
       </section>
 
-      {/* Breakdown + signals */}
+      {/* Breakdown + signals — Breakdown 與 KPI 同一資料來源，loading 時一起降透明度 */}
       <section className="grid grid-cols-1 xl:grid-cols-[1fr_1.1fr] gap-6">
         <div className="flex flex-col gap-4">
           <SectionTitle icon="analytics">評分拆解</SectionTitle>
-          <div className="rounded-xl border border-[var(--border-default)] bg-surface p-5 flex flex-col gap-5">
+          <div
+            className={cn(
+              "rounded-xl border border-[var(--border-default)] bg-surface p-5 flex flex-col gap-5 transition-opacity duration-200",
+              loading && "opacity-60",
+            )}
+            aria-busy={loading}
+          >
             <BreakdownBlock title="短期" total={score.short.total} parts={score.short.parts} />
             <BreakdownBlock title="中期" total={score.mid.total} parts={score.mid.parts} />
             <BreakdownBlock title="長期" total={score.long.total} parts={score.long.parts} />
