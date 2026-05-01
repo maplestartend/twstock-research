@@ -11,6 +11,7 @@ import { Th, Td } from "@/components/primitives/Table";
 import { TableContainer } from "@/components/primitives/TableContainer";
 import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
+import { FilterChip } from "@/components/primitives/FilterChip";
 import { fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -82,23 +83,16 @@ export default async function WatchlistOverviewPage({
             const active = t === tab;
             const count = t === "etf" ? etfRows.length : stockRows.length;
             return (
-              <Link
+              <FilterChip
                 key={t}
                 href={`/watchlist${t === "etf" ? "?type=etf" : ""}`}
-                className={cn(
-                  "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border",
-                  active
-                    ? "bg-[var(--brand-500)] text-white border-[var(--brand-500)]"
-                    : "bg-surface text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--brand-300)]",
-                )}
+                active={active}
+                icon={t === "etf" ? "currency_exchange" : "monitoring"}
+                count={count}
+                prefetch={false}
               >
-                <Icon name={t === "etf" ? "currency_exchange" : "monitoring"} size={16} filled={active} />
                 {TABS[t].label}
-                <span className={cn(
-                  "numeric text-xs px-1.5 py-0.5 rounded",
-                  active ? "bg-white/20" : "bg-subtle text-[var(--text-tertiary)]",
-                )}>{count}</span>
-              </Link>
+              </FilterChip>
             );
           })}
           <span className="text-[11px] text-[var(--text-tertiary)] ml-2">

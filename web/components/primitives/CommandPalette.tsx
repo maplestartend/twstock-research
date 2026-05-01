@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/primitives/Icon";
+import { API_BASE } from "@/lib/api-base";
 import { cn } from "@/lib/utils";
 
 type SearchHit = {
@@ -51,7 +52,7 @@ const DEFAULT_ACTION_IDS = new Set([
   "go-watchlist",
 ]);
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+const BASE = API_BASE;
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);

@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidateTag } from "next/cache";
+import { API_BASE_SERVER } from "@/lib/api-base";
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+const BASE = API_BASE_SERVER;
 
 /**
  * Toggle 一檔股票的自選狀態。

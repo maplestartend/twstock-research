@@ -16,36 +16,73 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <html lang="zh-Hant">
-      <body style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: "640px", margin: "0 auto" }}>
-        <h1 style={{ fontSize: "1.5rem", fontWeight: 700 }}>應用程式發生未預期錯誤</h1>
-        <p style={{ marginTop: "0.75rem", color: "#475569" }}>
-          這通常代表 layout 或全域 provider 出問題。試試重新整理；若仍無法解決，請查看 FastAPI / Next.js 視窗的 log。
-        </p>
-        <pre style={{
-          marginTop: "1rem",
-          padding: "0.75rem",
-          background: "#f1f5f9",
-          color: "#0f172a",
-          borderRadius: "6px",
-          fontSize: "0.75rem",
-          overflowX: "auto",
-        }}>{error.message}{error.digest ? `\n\ndigest: ${error.digest}` : ""}</pre>
-        <button
-          type="button"
-          onClick={() => reset()}
+    <html lang="zh-TW">
+      <body
+        style={{
+          margin: 0,
+          minHeight: "100vh",
+          fontFamily: "system-ui, sans-serif",
+          background: "var(--bg-base, #f8fafc)",
+          color: "var(--text-primary, #0f172a)",
+        }}
+      >
+        <main
           style={{
-            marginTop: "1rem",
-            padding: "0.5rem 1rem",
-            border: "none",
-            borderRadius: "6px",
-            background: "#0ea5e9",
-            color: "#fff",
-            cursor: "pointer",
+            maxWidth: "720px",
+            margin: "0 auto",
+            padding: "2.5rem 1.25rem",
           }}
         >
-          重試
-        </button>
+          <section
+            style={{
+              border: "1px solid var(--border-default, #cbd5e1)",
+              borderRadius: "0.75rem",
+              background: "var(--bg-surface, #ffffff)",
+              padding: "1.25rem",
+            }}
+          >
+            <h1 style={{ fontSize: "1.4rem", lineHeight: 1.35, fontWeight: 700, margin: 0 }}>
+              應用程式發生未預期錯誤
+            </h1>
+            <p style={{ marginTop: "0.75rem", color: "var(--text-secondary, #475569)" }}>
+              可能是 layout 或全域 provider 初始化失敗。請先按「重試」，若仍失敗再查看 FastAPI /
+              Next.js 視窗 log。
+            </p>
+            <pre
+              style={{
+                marginTop: "1rem",
+                marginBottom: 0,
+                padding: "0.75rem",
+                background: "var(--bg-subtle, #f1f5f9)",
+                color: "var(--text-primary, #0f172a)",
+                borderRadius: "0.5rem",
+                fontSize: "0.75rem",
+                overflowX: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {error.message}
+              {error.digest ? `\n\ndigest: ${error.digest}` : ""}
+            </pre>
+            <button
+              type="button"
+              onClick={() => reset()}
+              style={{
+                marginTop: "1rem",
+                padding: "0.5rem 1rem",
+                border: "1px solid var(--brand-500, #0ea5e9)",
+                borderRadius: "0.5rem",
+                background: "var(--brand-500, #0ea5e9)",
+                color: "#fff",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              重試
+            </button>
+          </section>
+        </main>
       </body>
     </html>
   );

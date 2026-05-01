@@ -5,11 +5,15 @@ import {
   ListSkeleton,
 } from "@/components/primitives/Skeleton";
 
-export default function DashboardLoading() {
+export default function GlobalLoading() {
   return (
     <div className="p-4 lg:p-8 flex flex-col gap-8 max-w-[1600px] mx-auto">
-      <PageHeader title="今日戰情室" icon="dashboard" description="開工具第一眼看的整合資訊" />
-      <KpiRowSkeleton count={4} hero />
+      <PageHeader
+        title="載入中"
+        icon="progress_activity"
+        description="正在準備頁面資料，請稍候..."
+      />
+      <KpiRowSkeleton count={4} />
       <section className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-6">
         <TableSkeleton rows={4} cols={6} />
         <ListSkeleton rows={4} />

@@ -1,7 +1,9 @@
 // FastAPI 薄封裝。Server Components 直接呼叫；Client Components 走 fetch。
 // 開發期 next.config.mjs 的 rewrites 會把 /api/* 代理到 http://127.0.0.1:8000。
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+import { API_BASE_SERVER } from "@/lib/api-base";
+
+const BASE = API_BASE_SERVER;
 
 /**
  * 把 FastAPI 的 detail 訊息或 HTTP 狀態碼轉成「使用者看得懂的中文」。
