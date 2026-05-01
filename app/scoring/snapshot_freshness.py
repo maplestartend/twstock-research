@@ -16,6 +16,7 @@ import threading
 
 from app.data.db import Database
 from app.scoring.history import snapshot_today
+from app.scoring.version import current_engine_version
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,18 @@ def _latest_snapshot_date(db: Database) -> str | None:
     with db.connect() as conn:
         row = conn.execute("SELECT MAX(as_of) AS m FROM signal_history").fetchone()
     return row["m"] if row and row["m"] else None
+
+
+def _latest_snapshot_engine_version(db: Database) -> str | None:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT engine_version FROM signal_history "
+            "ORDER BY as_of DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    v = row["engine_version"]
+    return str(v) if v else None
 
 
 # snapshot 計分時實際讀的核心 dataset。任一張比 daily_price 落後 → 早盤跑 snapshot 會
@@ -70,9 +83,12 @@ def freshness_status(db: Database) -> dict[str, object]:
     """回傳 snapshot 新鮮度完整狀態，供 API/前端顯示明確 stale 原因。"""
     price = _latest_price_date(db)
     snap = _latest_snapshot_date(db)
+    snap_engine = _latest_snapshot_engine_version(db)
+    current_engine = current_engine_version()
     dataset_dates = latest_dataset_dates(db)
     values = list(dataset_dates.values())
     datasets_synced = bool(values) and all(v is not None for v in values) and (max(values) == min(values))
+    engine_match = bool(snap_engine) and (snap_engine == current_engine)
 
     stale_reason = "up_to_date"
     is_stale_now = False
@@ -80,6 +96,10 @@ def freshness_status(db: Database) -> dict[str, object]:
 
     if not price:
         stale_reason = "no_price_data"
+    elif snap and snap >= price and not engine_match:
+        stale_reason = "engine_version_mismatch"
+        is_stale_now = True
+        can_refresh = True
     elif snap and snap >= price:
         stale_reason = "up_to_date"
     elif not datasets_synced:
@@ -97,6 +117,9 @@ def freshness_status(db: Database) -> dict[str, object]:
         "dataset_dates": dataset_dates,
         "stale_reason": stale_reason,
         "can_refresh": can_refresh,
+        "engine_version_snapshot": snap_engine,
+        "engine_version_current": current_engine,
+        "engine_version_match": engine_match,
     }
 
 

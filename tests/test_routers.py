@@ -42,6 +42,9 @@ def test_snapshot_status_includes_reason_fields():
     assert "datasetDates" in data
     assert "staleReason" in data
     assert "canRefresh" in data
+    assert "engineVersionSnapshot" in data
+    assert "engineVersionCurrent" in data
+    assert "engineVersionMatch" in data
 
 
 def test_market_type_classify_0050_is_etf():

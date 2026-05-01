@@ -144,6 +144,9 @@ export type SnapshotStatus = {
   datasetDates?: Record<string, string | null>;
   staleReason?: string;
   canRefresh?: boolean;
+  engineVersionSnapshot?: string | null;
+  engineVersionCurrent?: string | null;
+  engineVersionMatch?: boolean;
 };
 
 export type RefreshSnapshotResponse = {

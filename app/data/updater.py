@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.data.db import Database
 from app.data.fetcher import FinMindError, FinMindFetcher, today_str
+from app.data.publish_dates import quarter_end_to_publish_date
 
 logger = logging.getLogger(__name__)
 
@@ -22,28 +23,8 @@ INSTITUTIONAL_NAME_MAP = {
 
 
 def _finmind_quarter_publish_date(quarter_end: object) -> str | None:
-    """單季 FinMind row 的法定公告下限：Q1=05-15、Q2=08-14、Q3=11-14、Q4=次年 03-31。
-    quarter_end 可能是 pandas Timestamp / datetime.date / 字串 'YYYY-MM-DD'。
-    """
-    if quarter_end is None:
-        return None
-    s = str(quarter_end)[:10]
-    if len(s) < 10:
-        return None
-    year = s[:4]
-    md = s[5:10]
-    if md == "03-31":
-        return f"{year}-05-15"
-    if md == "06-30":
-        return f"{year}-08-14"
-    if md == "09-30":
-        return f"{year}-11-14"
-    if md == "12-31":
-        try:
-            return f"{int(year) + 1}-03-31"
-        except ValueError:
-            return None
-    return None
+    """向後相容 wrapper：實作改委派到 app.data.publish_dates。"""
+    return quarter_end_to_publish_date(quarter_end)
 
 
 class DataUpdater:

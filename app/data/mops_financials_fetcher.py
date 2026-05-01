@@ -28,6 +28,7 @@ import pandas as pd
 import requests
 
 from app.data.http_client import make_session
+from app.data.publish_dates import quarter_publish_date
 
 logger = logging.getLogger(__name__)
 
@@ -101,15 +102,10 @@ def _publish_date(year_roc: int, quarter: int) -> str:
     這是法定下限（部分公司更早公告，但保守取下限避免 look-ahead）。
     """
     ce_year = year_roc + 1911
-    if quarter == 1:
-        return f"{ce_year}-05-15"
-    if quarter == 2:
-        return f"{ce_year}-08-14"
-    if quarter == 3:
-        return f"{ce_year}-11-14"
-    if quarter == 4:
-        return f"{ce_year + 1}-03-31"
-    raise ValueError(f"invalid quarter: {quarter}")
+    out = quarter_publish_date(ce_year, quarter)
+    if out is None:
+        raise ValueError(f"invalid quarter: {quarter}")
+    return out
 
 
 def _to_float(v) -> float | None:

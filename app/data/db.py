@@ -8,6 +8,8 @@ from typing import Iterator
 
 import pandas as pd
 
+from app.data.publish_dates import quarter_end_to_publish_date, quarter_publish_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -149,6 +151,7 @@ SCHEMA = [
         strategies TEXT,
         data_completeness REAL,
         is_stale INTEGER DEFAULT 0,
+        engine_version TEXT,
         PRIMARY KEY (as_of, stock_id)
     )
     """,
@@ -371,6 +374,7 @@ class Database:
             ("signal_history", "data_completeness", "REAL"),
             ("signal_history", "is_stale", "INTEGER DEFAULT 0"),
             ("signal_history", "vr_macd", "REAL"),
+            ("signal_history", "engine_version", "TEXT"),
             ("financials_cumulative", "publish_date", "TEXT"),
             ("financials_quarterly_derived", "publish_date", "TEXT"),
             # FinMind 單季財報原本只有 quarter-end 的 date 欄、無公告日 → backtest 用 date 過濾會
@@ -495,19 +499,26 @@ class Database:
                 cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
                 if "publish_date" not in cols:
                     continue  # _migrate_add_columns 還沒跑或 schema 異常
-                # SQLite CASE expression：依 quarter 推算 publish_date
-                cur = conn.execute(f"""
-                    UPDATE {table}
-                    SET publish_date = CASE quarter
-                        WHEN 1 THEN year || '-05-15'
-                        WHEN 2 THEN year || '-08-14'
-                        WHEN 3 THEN year || '-11-14'
-                        WHEN 4 THEN (CAST(year AS INTEGER) + 1) || '-03-31'
-                    END
-                    WHERE publish_date IS NULL AND quarter IN (1,2,3,4) AND year IS NOT NULL
-                """)
-                if cur.rowcount > 0:
-                    logger.info("%s: backfilled publish_date for %d rows", table, cur.rowcount)
+                rows = conn.execute(
+                    f"SELECT rowid, year, quarter FROM {table} "
+                    f"WHERE publish_date IS NULL AND quarter IN (1,2,3,4) AND year IS NOT NULL"
+                ).fetchall()
+                updates: list[tuple[str, int]] = []
+                for r in rows:
+                    try:
+                        year_ce = int(r["year"])
+                        quarter = int(r["quarter"])
+                    except (TypeError, ValueError):
+                        continue
+                    pub = quarter_publish_date(year_ce, quarter)
+                    if pub:
+                        updates.append((pub, int(r["rowid"])))
+                if updates:
+                    conn.executemany(
+                        f"UPDATE {table} SET publish_date=? WHERE rowid=?",
+                        updates,
+                    )
+                    logger.info("%s: backfilled publish_date for %d rows", table, len(updates))
                 # 欄位確定存在後才能建 index（在 SCHEMA 階段建會撞舊 DB 的 OperationalError）
                 idx_name = "idx_fin_cum_publish" if table == "financials_cumulative" else "idx_fin_qd_publish"
                 conn.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table}(publish_date)")
@@ -532,19 +543,22 @@ class Database:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(financials)").fetchall()}
             if "publish_date" not in cols:
                 return  # _migrate_add_columns 還沒跑或 schema 異常
-            cur = conn.execute("""
-                UPDATE financials
-                SET publish_date = CASE substr(date, 6, 5)
-                    WHEN '03-31' THEN substr(date, 1, 4) || '-05-15'
-                    WHEN '06-30' THEN substr(date, 1, 4) || '-08-14'
-                    WHEN '09-30' THEN substr(date, 1, 4) || '-11-14'
-                    WHEN '12-31' THEN (CAST(substr(date, 1, 4) AS INTEGER) + 1) || '-03-31'
-                END
-                WHERE publish_date IS NULL
-                  AND substr(date, 6, 5) IN ('03-31','06-30','09-30','12-31')
-            """)
-            if cur.rowcount > 0:
-                logger.info("financials: backfilled publish_date for %d rows", cur.rowcount)
+            rows = conn.execute(
+                "SELECT rowid, date FROM financials "
+                "WHERE publish_date IS NULL "
+                "AND substr(date, 6, 5) IN ('03-31','06-30','09-30','12-31')"
+            ).fetchall()
+            updates: list[tuple[str, int]] = []
+            for r in rows:
+                pub = quarter_end_to_publish_date(r["date"])
+                if pub:
+                    updates.append((pub, int(r["rowid"])))
+            if updates:
+                conn.executemany(
+                    "UPDATE financials SET publish_date=? WHERE rowid=?",
+                    updates,
+                )
+                logger.info("financials: backfilled publish_date for %d rows", len(updates))
             conn.execute("CREATE INDEX IF NOT EXISTS idx_financials_publish ON financials(publish_date)")
         except sqlite3.Error as e:
             logger.warning("financials.publish_date migration skipped: %s", e)

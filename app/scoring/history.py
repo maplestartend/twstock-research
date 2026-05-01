@@ -7,6 +7,7 @@ import pandas as pd
 
 from app.data.db import Database
 from app.scoring import radar
+from app.scoring.version import current_engine_version
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ def snapshot_today(
             strategy_hits[sid].append(name)
 
     as_of = df["as_of"].iloc[0]
+    engine_version = current_engine_version()
     # 向量化建構 — 改寫自過去 iterrows + dict append 版本（~2300 row × Python loop ≈ 1-2s）。
     # numeric 欄位用 .where(notna, None) 把 NaN/None 統一成 SQL NULL（DB 端能區分「無資料」vs 50 中性分）。
     out = pd.DataFrame({
@@ -98,6 +100,7 @@ def snapshot_today(
             df.get("data_completeness", pd.Series(dtype=object)).notna(), None,
         ) if "data_completeness" in df.columns else None,
         "is_stale": df.get("is_stale", pd.Series([False] * len(df))).fillna(False).astype(int).values,
+        "engine_version": engine_version,
         "recommendation": df.get("recommendation", pd.Series([""] * len(df))).fillna("").values,
         "strategies": df["stock_id"].map(lambda sid: ",".join(strategy_hits[sid])).values,
     })

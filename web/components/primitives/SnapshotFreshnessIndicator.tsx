@@ -25,6 +25,7 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
 
   const stale = status.isStale;
   const staleReason = status.staleReason;
+  const engineMismatch = staleReason === "engine_version_mismatch";
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -38,6 +39,8 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
         isStale: false,
         staleReason: "up_to_date",
         canRefresh: false,
+        engineVersionSnapshot: status.engineVersionCurrent ?? status.engineVersionSnapshot,
+        engineVersionMatch: true,
       });
       startTransition(() => router.refresh());
       console.info(`snapshot refreshed: ${res.rowsWritten} rows`);
@@ -81,13 +84,17 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
   }
 
   if (!status.canRefresh) {
+    const title =
+      staleReason === "engine_version_mismatch"
+        ? `評分引擎版本不一致：snapshot=${status.engineVersionSnapshot ?? "unknown"} / current=${status.engineVersionCurrent ?? "unknown"}`
+        : `快照狀態：${staleReason ?? "unknown"}`;
     return (
       <span
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--warning-bg)] text-[var(--warning-fg)]"
-        title={`快照狀態：${staleReason ?? "unknown"}`}
+        title={title}
       >
         <Icon name="warning" size={14} filled />
-        <span className="hidden sm:inline">快照待更新</span>
+        <span className="hidden sm:inline">{engineMismatch ? "引擎更新待重算" : "快照待更新"}</span>
       </span>
     );
   }
@@ -104,11 +111,13 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
       title={
         error
           ? `重算失敗：${error}`
-          : `signal_history (${status.snapshotAsOf}) 落後 daily_price (${status.dailyPriceAsOf}) — 點擊重算`
+          : engineMismatch
+            ? `評分引擎已更新（${status.engineVersionCurrent ?? "unknown"}），目前快照版本為 ${status.engineVersionSnapshot ?? "unknown"} — 點擊重算`
+            : `signal_history (${status.snapshotAsOf}) 落後 daily_price (${status.dailyPriceAsOf}) — 點擊重算`
       }
     >
       <Icon name="error" size={14} filled />
-      <span className="hidden sm:inline">快照需重算</span>
+      <span className="hidden sm:inline">{engineMismatch ? "引擎更新，需重算" : "快照需重算"}</span>
       <Icon name="refresh" size={12} className="ml-0.5" />
     </button>
   );

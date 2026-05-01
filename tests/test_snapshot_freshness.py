@@ -14,6 +14,7 @@ from app.data.db import Database
 from app.scoring.snapshot_freshness import (
     _SCORING_DATASETS,
     all_datasets_synced,
+    freshness_status,
     is_stale,
     latest_dataset_dates,
 )
@@ -51,3 +52,35 @@ def test_all_datasets_synced_false_on_empty_db(empty_db: Database):
 def test_is_stale_false_when_no_price_data(empty_db: Database):
     """daily_price 為空 → 沒有「最新一日」可比，is_stale 應回 False（不觸發重算）。"""
     assert is_stale(empty_db) is False
+
+
+def test_engine_version_mismatch_marks_stale(empty_db: Database, monkeypatch):
+    """日期相同但 engine_version 不同時也要視為 stale，避免快照與即時計分分岔。"""
+    with empty_db.connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_price (date, stock_id, close) VALUES (?,?,?)",
+            ("2026-05-01", "2330", 800.0),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO institutional (date, stock_id, foreign_net, investment_trust_net, dealer_net) VALUES (?,?,?,?,?)",
+            ("2026-05-01", "2330", 1.0, 1.0, 1.0),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO margin (date, stock_id, margin_balance, short_balance) VALUES (?,?,?,?)",
+            ("2026-05-01", "2330", 1.0, 1.0),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO per_pbr (date, stock_id, per, pbr, dividend_yield) VALUES (?,?,?,?,?)",
+            ("2026-05-01", "2330", 12.0, 1.5, 3.0),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO signal_history (as_of, stock_id, stock_name, close, engine_version) VALUES (?,?,?,?,?)",
+            ("2026-05-01", "2330", "台積電", 800.0, "oldver"),
+        )
+        conn.commit()
+
+    monkeypatch.setattr("app.scoring.snapshot_freshness.current_engine_version", lambda: "newver")
+    st = freshness_status(empty_db)
+    assert st["stale_reason"] == "engine_version_mismatch"
+    assert st["is_stale"] is True
+    assert st["can_refresh"] is True

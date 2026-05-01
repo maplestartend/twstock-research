@@ -38,6 +38,9 @@ class SnapshotStatus(CamelModel):
     dataset_dates: dict[str, str | None] = {}
     stale_reason: str = "up_to_date"
     can_refresh: bool = False
+    engine_version_snapshot: str | None = None
+    engine_version_current: str | None = None
+    engine_version_match: bool = False
 
 
 @router.get("/snapshot-status", response_model=SnapshotStatus)

@@ -14,6 +14,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from app.indicators.fundamentals import compute_peg
+
 
 def _is_missing(x) -> bool:
     """統一的缺失值判斷：None / NaN / Inf / pd.NA 都算缺失。"""
@@ -443,11 +445,11 @@ def score_valuation(fund: dict) -> Optional[float]:
         elif pbr < 5: scores.append(40.0)
         else: scores.append(20.0)
 
-    # PEG：PER ÷ EPS 成長率（用 3 年 CAGR 較穩，避免單季噪音）
-    # 成長率必須為正才有意義；負成長股別用 PEG 評估
-    cagr = fund.get("eps_cagr_3y")
-    if per is not None and per > 0 and cagr is not None and cagr > 0:
-        peg = per / (cagr * 100)
+    # PEG：優先吃 fundamentals 預先算好的 peg（單一來源），缺值才 fallback 用同一 helper 補算。
+    peg = fund.get("peg")
+    if peg is None:
+        peg = compute_peg(per, fund.get("eps_cagr_3y"))
+    if peg is not None:
         if peg < 0.5: scores.append(90.0)
         elif peg < 1.0: scores.append(75.0)
         elif peg < 1.5: scores.append(60.0)

@@ -183,6 +183,20 @@ def _eps_cagr_3y(eps_series: pd.Series) -> float | None:
     return float((ttm_now / ttm_3y_ago) ** (1 / 3) - 1)
 
 
+def compute_peg(per: float | None, eps_cagr_3y: float | None) -> float | None:
+    """PEG 單一來源公式：PER / (EPS CAGR * 100)，僅在兩者皆為正值時計算。"""
+    if per is None or eps_cagr_3y is None:
+        return None
+    try:
+        per_v = float(per)
+        cagr_v = float(eps_cagr_3y)
+    except (TypeError, ValueError):
+        return None
+    if per_v <= 0 or cagr_v <= 0:
+        return None
+    return round(per_v / (cagr_v * 100), 3)
+
+
 def _yoy_from_cumulative(cum_df: pd.DataFrame, type_name: str) -> float | None:
     """累計 YoY：本期 YTD-Qn vs 去年 YTD-Qn。本檔只剩 _fill_from_cumulative 這條 fallback 在用
     （沒 derived 時才走）。
@@ -290,10 +304,9 @@ def _fill_from_quarterly_derived(
         snap["eps_cagr_3y"] = cagr
 
     # PEG：PER 來自 per_pbr stanza（已在 fundamental_snapshot 開頭執行），CAGR 來自上一段
-    per_val = snap.get("per")
-    cagr_val = snap.get("eps_cagr_3y")
-    if per_val is not None and per_val > 0 and cagr_val is not None and cagr_val > 0:
-        snap["peg"] = round(per_val / (cagr_val * 100), 3)
+    peg = compute_peg(snap.get("per"), snap.get("eps_cagr_3y"))
+    if peg is not None:
+        snap["peg"] = peg
 
     # ROE = TTM 淨利 / 最新 equity（從 cumulative 取）
     if ttm_ni is not None and not cum_df.empty:
@@ -485,10 +498,9 @@ def fundamental_snapshot(
 
     # PEG = PER / (EPS 成長率%)：< 1 成長合算、> 2 過貴
     # 只在有 PER 且 CAGR > 0 時計算（負成長股算 PEG 沒意義）
-    per_val = snap.get("per")
-    cagr_val = snap.get("eps_cagr_3y")
-    if per_val is not None and per_val > 0 and cagr_val is not None and cagr_val > 0:
-        snap["peg"] = round(per_val / (cagr_val * 100), 3)
+    peg = compute_peg(snap.get("per"), snap.get("eps_cagr_3y"))
+    if peg is not None:
+        snap["peg"] = peg
 
     # ROE 粗估：用最近 4 季稅後淨利 / 最近股東權益
     # 優先序：(1) financials_cumulative 的 OpenAPI 期末權益（最準確，TWSE 官方資料）
