@@ -41,7 +41,7 @@ export default async function HistoryPage({
 
   let dates: string[];
   try {
-    dates = await apiGet<string[]>("/api/history/dates");
+    dates = await apiGet<string[]>("/api/history/dates", { tags: ["snapshot"] });
   } catch (e) {
     return <BackendDownError error={e} pageTitle="歷史追蹤" />;
   }
@@ -76,8 +76,11 @@ export default async function HistoryPage({
   const [strategiesResult, optimisticPerf] = await Promise.all([
     apiGet<RadarStrategy[]>(
       `/api/history/strategies?as_of=${encodeURIComponent(asOf)}&${marketParams}`,
+      { tags: ["snapshot"] },
     ).catch(() => [] as RadarStrategy[]),
-    optimisticPerfUrl ? apiGetOptional<HistoryPerfSummary>(optimisticPerfUrl) : Promise.resolve(null),
+    optimisticPerfUrl
+      ? apiGetOptional<HistoryPerfSummary>(optimisticPerfUrl, { tags: ["snapshot"] })
+      : Promise.resolve(null),
   ]);
 
   // ETF tab 額外過濾「個股限定」策略
@@ -108,6 +111,7 @@ export default async function HistoryPage({
   } else if (validStrategy) {
     perf = await apiGetOptional<HistoryPerfSummary>(
       `/api/history/performance?as_of=${encodeURIComponent(asOf)}&strategy=${encodeURIComponent(validStrategy)}&top=0&${marketParams}`,
+      { tags: ["snapshot"] },
     );
   } else {
     perf = null;

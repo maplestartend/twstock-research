@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { apiPost, type SnapshotStatus, type RefreshSnapshotResponse } from "@/lib/api";
+import { refreshSnapshotAction } from "@/lib/snapshot-actions";
+import type { SnapshotStatus } from "@/lib/api";
 import { Icon } from "./Icon";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +32,7 @@ export function SnapshotFreshnessIndicator({ initial }: { initial: SnapshotStatu
     setRefreshing(true);
     setError(null);
     try {
-      const res = await apiPost<RefreshSnapshotResponse>("/api/system/refresh-snapshot", {});
+      const res = await refreshSnapshotAction();
       // refresh OK → 更新 local + 重新整理整頁的 RSC
       setStatus({
         ...status,

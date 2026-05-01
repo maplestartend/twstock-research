@@ -33,7 +33,9 @@ export default async function WatchlistOverviewPage({
 
   let allRows: WatchlistOverviewRow[];
   try {
-    allRows = await apiGet<WatchlistOverviewRow[]>("/api/watchlist/overview");
+    allRows = await apiGet<WatchlistOverviewRow[]>("/api/watchlist/overview", {
+      tags: ["watchlist", "snapshot"],
+    });
   } catch (e) {
     return <BackendDownError error={e} pageTitle="自選股總覽" />;
   }

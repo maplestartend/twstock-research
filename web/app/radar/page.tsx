@@ -66,7 +66,7 @@ export default async function RadarPage({
 
   let allStrategies: RadarStrategy[];
   try {
-    allStrategies = await apiGet<RadarStrategy[]>("/api/radar/strategies");
+    allStrategies = await apiGet<RadarStrategy[]>("/api/radar/strategies", { tags: ["snapshot"] });
   } catch (e) {
     return <BackendDownError error={e} pageTitle="雷達掃描" />;
   }
@@ -85,7 +85,10 @@ export default async function RadarPage({
 
   let hits: RadarHit[];
   try {
-    hits = await apiGet<RadarHit[]>(buildHitsUrl(activeStrategy, effectiveMarkets, topApi));
+    hits = await apiGet<RadarHit[]>(
+      buildHitsUrl(activeStrategy, effectiveMarkets, topApi),
+      { tags: ["snapshot"] },
+    );
   } catch (e) {
     return <BackendDownError error={e} pageTitle="雷達掃描" />;
   }

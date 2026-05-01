@@ -157,6 +157,7 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_signal_asof ON signal_history(as_of)",
     "CREATE INDEX IF NOT EXISTS idx_signal_stock ON signal_history(stock_id)",
+    "CREATE INDEX IF NOT EXISTS idx_signal_stock_asof ON signal_history(stock_id, as_of DESC)",
     # 子因子分數歷史（給 /diagnostics 算 sub-factor IC 用）。
     # 長格式：每檔 × 每天 × 每個 horizon × 每個 sub-factor 一列。
     # short ~10 個 sub-factor + mid 6 + long 5 = 21 個 → 2300 檔 × 21 = ~48k 列/天，
@@ -522,6 +523,15 @@ class Database:
                 # 欄位確定存在後才能建 index（在 SCHEMA 階段建會撞舊 DB 的 OperationalError）
                 idx_name = "idx_fin_cum_publish" if table == "financials_cumulative" else "idx_fin_qd_publish"
                 conn.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table}(publish_date)")
+                idx_composite = (
+                    "idx_fin_cum_stock_publish_date"
+                    if table == "financials_cumulative"
+                    else "idx_fin_qd_stock_publish_date"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {idx_composite} "
+                    f"ON {table}(stock_id, publish_date, date)"
+                )
             except sqlite3.Error as e:
                 logger.warning("%s.publish_date migration skipped: %s", table, e)
 
@@ -560,6 +570,10 @@ class Database:
                 )
                 logger.info("financials: backfilled publish_date for %d rows", len(updates))
             conn.execute("CREATE INDEX IF NOT EXISTS idx_financials_publish ON financials(publish_date)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_financials_stock_publish_date "
+                "ON financials(stock_id, publish_date, date)"
+            )
         except sqlite3.Error as e:
             logger.warning("financials.publish_date migration skipped: %s", e)
 

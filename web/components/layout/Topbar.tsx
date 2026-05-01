@@ -117,6 +117,8 @@ async function TopbarMarket() {
 }
 
 async function TopbarFreshness() {
-  const status = await apiGetOptional<SnapshotStatus>("/api/system/snapshot-status", { revalidate: 30 });
+  const status = await apiGetOptional<SnapshotStatus>("/api/system/snapshot-status", {
+    noCache: true,
+  });
   return <SnapshotFreshnessIndicator initial={status} />;
 }

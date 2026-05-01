@@ -675,7 +675,8 @@
 
 | Function | 狀態 | 對應 endpoint |
 |---|---|---|
-| `is_stale(db)` | ✅ | GET /api/system/snapshot-status（以 `freshness_status` 對外回傳） |
+| `freshness_status(db)` | ✅ | GET /api/system/snapshot-status（含 `stale_reason`、`can_refresh`、`engine_version_*`） |
+| `is_stale(db)` | ✅ | 內部 helper（`ensure_fresh` 與 freshness 檢查共用） |
 | `ensure_fresh(db)` | — | 列表 router 內部呼叫 |
 
 ### app/scoring/preset.py — [app/scoring/preset.py](../app/scoring/preset.py)

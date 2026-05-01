@@ -126,8 +126,8 @@ async function KpiSection() {
   try {
     [summary, radarHits, freshness] = await Promise.all([
       apiGet<PortfolioSummary>("/api/portfolio/summary"),
-      apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=6"),
-      apiGet<DataFreshness[]>("/api/dashboard/data-freshness"),
+      apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=6", { tags: ["snapshot"] }),
+      apiGet<DataFreshness[]>("/api/dashboard/data-freshness", { tags: ["snapshot"] }),
     ]);
   } catch (e) {
     return <SectionError error={e} />;
@@ -189,9 +189,9 @@ async function HoldingsSnapshotSection() {
   try {
     [holdings, risks, delta] = await Promise.all([
       // holdings 含 in_watchlist 旗標，加 'watchlist' tag 讓 toggleWatchlistAction 能精準清快取
-      apiGet<HoldingRow[]>("/api/portfolio/holdings", { tags: ["watchlist"] }),
-      apiGet<RiskAlert[]>("/api/portfolio/risk-alerts"),
-      apiGetOptional<SnapshotDelta>("/api/dashboard/snapshot-delta?top=8"),
+      apiGet<HoldingRow[]>("/api/portfolio/holdings", { tags: ["watchlist", "snapshot"] }),
+      apiGet<RiskAlert[]>("/api/portfolio/risk-alerts", { tags: ["snapshot"] }),
+      apiGetOptional<SnapshotDelta>("/api/dashboard/snapshot-delta?top=8", { tags: ["snapshot"] }),
     ]);
   } catch (e) {
     return <SectionError error={e} />;
@@ -213,7 +213,7 @@ async function HoldingsSnapshotSection() {
 async function RadarHitsSection() {
   let radarHits: RadarHit[];
   try {
-    radarHits = await apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=6");
+    radarHits = await apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=6", { tags: ["snapshot"] });
   } catch (e) {
     return <SectionError error={e} />;
   }
@@ -243,7 +243,7 @@ async function RadarHitsSection() {
 async function MoversSection({ direction }: { direction: "up" | "down" }) {
   const movers = (await apiGetOptional<WatchlistMover[]>(
     `/api/watchlist/movers?top=5&direction=${direction}`,
-    { tags: ["watchlist"] },
+    { tags: ["watchlist", "snapshot"] },
   )) ?? [];
   return <MoversCard movers={movers} />;
 }
@@ -251,7 +251,7 @@ async function MoversSection({ direction }: { direction: "up" | "down" }) {
 async function MyScoreChangesSection() {
   let changes: ScoreChange[];
   try {
-    changes = await apiGet<ScoreChange[]>("/api/dashboard/my-score-changes?days=7");
+    changes = await apiGet<ScoreChange[]>("/api/dashboard/my-score-changes?days=7", { tags: ["snapshot"] });
   } catch (e) {
     return <SectionError error={e} />;
   }
@@ -330,7 +330,7 @@ async function ExDividendSection() {
 async function FreshnessFooterSection() {
   let freshness: DataFreshness[];
   try {
-    freshness = await apiGet<DataFreshness[]>("/api/dashboard/data-freshness");
+    freshness = await apiGet<DataFreshness[]>("/api/dashboard/data-freshness", { tags: ["snapshot"] });
   } catch (e) {
     return <SectionError error={e} />;
   }

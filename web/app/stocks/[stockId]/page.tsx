@@ -29,8 +29,12 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
     apiGetOptional<StockMeta>(`/api/stocks/${stockId}/meta`),
     apiGetOptional<StockScoreView>(`/api/stocks/${stockId}/score`),
     apiGetOptional<StockPriceBundle>(`/api/stocks/${stockId}/price?days=180`),
-    apiGetOptional<ScoreHistoryPoint[]>(`/api/stocks/${stockId}/score-history?days=90`).then((v) => v ?? []),
-    apiGetOptional<HoldingRow[]>(`/api/portfolio/holdings`),
+    apiGetOptional<ScoreHistoryPoint[]>(`/api/stocks/${stockId}/score-history?days=90`, {
+      tags: ["snapshot"],
+    }).then((v) => v ?? []),
+    apiGetOptional<HoldingRow[]>(`/api/portfolio/holdings`, {
+      tags: ["watchlist", "snapshot"],
+    }),
   ]);
 
   // 若使用者持有此檔，把 entry_date / entry_price 拿來算 trailing 停損 + Chandelier 動態停利

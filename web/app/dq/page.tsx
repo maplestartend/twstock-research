@@ -45,7 +45,7 @@ export default async function DqPage({
   try {
     [dq, freshness] = await Promise.all([
       apiGet<DqSummary>(`/api/dq/summary?days=${days}`),
-      apiGet<DataFreshness[]>("/api/dashboard/data-freshness"),
+      apiGet<DataFreshness[]>("/api/dashboard/data-freshness", { tags: ["snapshot"] }),
     ]);
   } catch (e) {
     return <BackendDownError error={e} pageTitle="資料品質" />;
