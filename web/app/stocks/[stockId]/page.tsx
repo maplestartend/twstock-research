@@ -17,6 +17,7 @@ import { fmtPct, fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { StockScorePanel } from "./StockScorePanel";
 import { NarrativeSection } from "./NarrativeSection";
+import { PeerComparisonSection } from "./PeerComparisonSection";
 import { PositionSuggestCard } from "./PositionSuggestCard";
 
 export const revalidate = 60;
@@ -95,6 +96,9 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
 
       {/* AI 解讀（client：on-demand fetch、後端永久快取，未設 API key 時自動隱藏） */}
       <NarrativeSection stockId={stockId} />
+
+      {/* 同業比較（RSC：產業樣本不足 / ETF / 興櫃 → 整段隱藏） */}
+      <PeerComparisonSection stockId={stockId} />
 
       {/* K-line */}
       <section className="flex flex-col gap-3">

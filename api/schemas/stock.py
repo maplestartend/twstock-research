@@ -198,6 +198,31 @@ class HistoryPerfSummary(CamelModel):
     truncated: bool = False     # 命中數超過 hard cap 被截掉時為 True；hit_count 仍是原始全數
 
 
+class PeerMetric(CamelModel):
+    """個股 vs 同業中位數的單一指標。
+
+    `value` / `median` 都可能為 None：
+    - value=None：該檔自己缺資料（如興櫃股缺財報）
+    - median=None：產業內有效樣本不足 MIN_PEERS（5 檔），不算 median 避免噪音
+    `better_direction` 用於前端決定上漲/下跌色（lower=越低越好，例如 PER）。
+    """
+    key: str
+    label: str
+    unit: str
+    better_direction: str  # "higher" | "lower"
+    value: float | None = None
+    median: float | None = None
+    rank: int | None = None  # 1 = 該方向最好；None 表示樣本不足或自己缺資料
+    out_of: int = 0          # 同業中該指標有資料的檔數
+
+
+class PeerComparison(CamelModel):
+    stock_id: str
+    industry: str
+    peer_count: int          # 產業內標的數（含自己），含可能缺財報的檔
+    metrics: list[PeerMetric]
+
+
 class DataFreshness(CamelModel):
     table: str
     label: str

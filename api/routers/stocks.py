@@ -19,6 +19,8 @@ from api.schemas.stock import (
     IntradayQuoteView,
     NarrativeView,
     OHLCV,
+    PeerComparison,
+    PeerMetric,
     ScoreHistoryPoint,
     StockMeta,
     StockPriceBundle,
@@ -27,6 +29,7 @@ from api.schemas.stock import (
 from app import risk as risk_mod
 from app.data import intraday as intraday_mod
 from app.data.db import Database
+from app.indicators import peer_medians
 from app.indicators import technical as tech
 from app.narrative import (
     NarrativeNotAvailable,
@@ -314,6 +317,27 @@ def score_history(stock_id: str, days: int = 90, db: Database = Depends(get_db))
         )
         for r in rows
     ]
+
+
+@router.get("/{stock_id}/peers", response_model=PeerComparison)
+def peers(stock_id: str, db: Database = Depends(get_db)) -> PeerComparison:
+    """個股 vs 同業中位數比較（PER / 殖利率 / 毛利率 / EPS YoY / 營收 YoY）。
+
+    - 產業空、產業內樣本不足 5 檔（含 ETF 排除後）→ 404，前端可隱藏該區塊
+    - 個別指標樣本不足 → 仍回傳該指標但 median=null / rank=null（前端顯示 N/A）
+    """
+    result = peer_medians.compute_peer_comparison(db, stock_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="該股無產業資料或同業樣本不足，無法做比較",
+        )
+    return PeerComparison(
+        stock_id=result["stock_id"],
+        industry=result["industry"],
+        peer_count=result["peer_count"],
+        metrics=[PeerMetric(**m) for m in result["metrics"]],
+    )
 
 
 class AtrFixed(CamelModel):

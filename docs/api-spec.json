@@ -2991,6 +2991,104 @@
         "title": "OHLCV",
         "type": "object"
       },
+      "PeerComparison": {
+        "properties": {
+          "industry": {
+            "title": "Industry",
+            "type": "string"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/PeerMetric"
+            },
+            "title": "Metrics",
+            "type": "array"
+          },
+          "peerCount": {
+            "title": "Peercount",
+            "type": "integer"
+          },
+          "stockId": {
+            "title": "Stockid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stockId",
+          "industry",
+          "peerCount",
+          "metrics"
+        ],
+        "title": "PeerComparison",
+        "type": "object"
+      },
+      "PeerMetric": {
+        "description": "個股 vs 同業中位數的單一指標。\n\n`value` / `median` 都可能為 None：\n- value=None：該檔自己缺資料（如興櫃股缺財報）\n- median=None：產業內有效樣本不足 MIN_PEERS（5 檔），不算 median 避免噪音\n`better_direction` 用於前端決定上漲/下跌色（lower=越低越好，例如 PER）。",
+        "properties": {
+          "betterDirection": {
+            "title": "Betterdirection",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "median": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median"
+          },
+          "outOf": {
+            "default": 0,
+            "title": "Outof",
+            "type": "integer"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "unit",
+          "betterDirection"
+        ],
+        "title": "PeerMetric",
+        "type": "object"
+      },
       "PortfolioAggregate": {
         "properties": {
           "avgAlpha": {
@@ -7826,6 +7924,49 @@
           }
         },
         "summary": "Narrative",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/stocks/{stock_id}/peers": {
+      "get": {
+        "description": "個股 vs 同業中位數比較（PER / 殖利率 / 毛利率 / EPS YoY / 營收 YoY）。\n\n- 產業空、產業內樣本不足 5 檔（含 ETF 排除後）→ 404，前端可隱藏該區塊\n- 個別指標樣本不足 → 仍回傳該指標但 median=null / rank=null（前端顯示 N/A）",
+        "operationId": "peers_api_stocks__stock_id__peers_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stock_id",
+            "required": true,
+            "schema": {
+              "title": "Stock Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerComparison"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Peers",
         "tags": [
           "stocks"
         ]

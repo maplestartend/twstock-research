@@ -746,6 +746,26 @@ export type ScoreHistoryPoint = {
   short: number | null; mid: number | null; long: number | null; composite: number | null;
 };
 
+/** 個股 vs 同業中位數比較（GET /api/stocks/{id}/peers）。
+ *  404 表示產業空 / 樣本不足 / 自己是 ETF — 前端應隱藏整個區塊。 */
+export type PeerMetric = {
+  key: string;
+  label: string;
+  unit: string;             // "倍" | "%" | ""
+  betterDirection: "higher" | "lower";
+  value: number | null;     // null = 自己缺資料
+  median: number | null;    // null = 產業樣本不足，無法算中位數
+  rank: number | null;      // 1 = 該方向最好；null = 自己缺資料或樣本不足
+  outOf: number;            // 同業中該指標有資料的檔數（不含自己）
+};
+
+export type PeerComparison = {
+  stockId: string;
+  industry: string;
+  peerCount: number;
+  metrics: PeerMetric[];
+};
+
 /** LLM 對個股的中文敘事（POST /api/stocks/{id}/narrative）。
  *  cached=true 表示從 narrative_cache 撈出，沒打 LLM；cached=false 是這次剛打完並存進快取。 */
 export type NarrativeView = {
