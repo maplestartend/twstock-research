@@ -5043,6 +5043,42 @@
         "title": "SubFactorICRow",
         "type": "object"
       },
+      "TagCount": {
+        "description": "每個 tag + 對應的命中檔數，用於 filter chip 上的數字徽章。",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "tag": {
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "count"
+        ],
+        "title": "TagCount",
+        "type": "object"
+      },
+      "TagsUpdateBody": {
+        "description": "覆寫單檔的所有 tags。空 list = 清空。\n後端會做 trim + 去重（保序），UI 不必預先處理。",
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "title": "TagsUpdateBody",
+        "type": "object"
+      },
       "TradeCreateBody": {
         "description": "新增交易 request body。fee/tax 留空 → 後端依券商規則算\n（手續費 0.1425%×券商折扣；賣方證交稅依代號：一般股 0.3%、股票型 ETF 0.1%、債券 ETF 0%）。",
         "properties": {
@@ -5603,6 +5639,14 @@
           "stockName": {
             "title": "Stockname",
             "type": "string"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
           }
         },
         "required": [
@@ -5806,6 +5850,14 @@
           "stockName": {
             "title": "Stockname",
             "type": "string"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
           }
         },
         "required": [
@@ -8805,6 +8857,32 @@
         ]
       }
     },
+    "/api/watchlist/tags": {
+      "get": {
+        "description": "所有出現過的 tag + 命中檔數，按命中數降序（同數字按字典序）。\nUI 用此 endpoint 渲染 filter chip 列。",
+        "operationId": "list_tags_api_watchlist_tags_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagCount"
+                  },
+                  "title": "Response List Tags Api Watchlist Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Tags",
+        "tags": [
+          "watchlist"
+        ]
+      }
+    },
     "/api/watchlist/{stock_id}": {
       "delete": {
         "operationId": "remove_api_watchlist__stock_id__delete",
@@ -8844,6 +8922,59 @@
           }
         },
         "summary": "Remove",
+        "tags": [
+          "watchlist"
+        ]
+      }
+    },
+    "/api/watchlist/{stock_id}/tags": {
+      "put": {
+        "description": "覆寫單檔 tags。stock_id 不在自選清單 → 404。",
+        "operationId": "update_tags_api_watchlist__stock_id__tags_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stock_id",
+            "required": true,
+            "schema": {
+              "title": "Stock Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagsUpdateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Tags",
         "tags": [
           "watchlist"
         ]

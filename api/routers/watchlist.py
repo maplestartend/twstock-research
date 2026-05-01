@@ -21,6 +21,7 @@ class WatchlistEntry(CamelModel):
     """回應用 — CamelModel 會自動 serialize 成 camelCase (stockId / stockName)。"""
     stock_id: str
     stock_name: str
+    tags: list[str] = []  # 自訂分組標籤；無 tag 的檔回 []
 
 
 class WatchlistLookup(CamelModel):
@@ -28,9 +29,53 @@ class WatchlistLookup(CamelModel):
     stock_name: str | None = None
 
 
+class TagCount(CamelModel):
+    """每個 tag + 對應的命中檔數，用於 filter chip 上的數字徽章。"""
+    tag: str
+    count: int
+
+
+class TagsUpdateBody(BaseModel):
+    """覆寫單檔的所有 tags。空 list = 清空。
+    後端會做 trim + 去重（保序），UI 不必預先處理。"""
+    tags: list[str]
+
+
 @router.get("", response_model=list[WatchlistEntry])
 def list_all() -> list[WatchlistEntry]:
-    return [WatchlistEntry(stock_id=k, stock_name=v) for k, v in wl_mod.load().items()]
+    tags_map = wl_mod.load_tags()
+    return [
+        WatchlistEntry(stock_id=k, stock_name=v, tags=tags_map.get(k, []))
+        for k, v in wl_mod.load().items()
+    ]
+
+
+@router.get("/tags", response_model=list[TagCount])
+def list_tags() -> list[TagCount]:
+    """所有出現過的 tag + 命中檔數，按命中數降序（同數字按字典序）。
+    UI 用此 endpoint 渲染 filter chip 列。"""
+    tags_map = wl_mod.load_tags()
+    counts: dict[str, int] = {}
+    for tags in tags_map.values():
+        for t in tags:
+            counts[t] = counts.get(t, 0) + 1
+    return [
+        TagCount(tag=t, count=counts[t])
+        for t in sorted(counts.keys(), key=lambda x: (-counts[x], x))
+    ]
+
+
+@router.put("/{stock_id}/tags", response_model=WatchlistEntry)
+def update_tags(stock_id: str, body: TagsUpdateBody) -> WatchlistEntry:
+    """覆寫單檔 tags。stock_id 不在自選清單 → 404。"""
+    sid = stock_id.strip()
+    ok = wl_mod.set_tags(sid, body.tags)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"「{sid}」不在自選清單，無法設定 tags")
+    name = wl_mod.load().get(sid, sid)
+    return WatchlistEntry(
+        stock_id=sid, stock_name=name, tags=wl_mod.load_tags().get(sid, []),
+    )
 
 
 class AddBody(BaseModel):
@@ -195,6 +240,7 @@ def overview(db: Database = Depends(get_db)) -> list[WatchlistOverviewRow]:
     if not stocks:
         return []
     ensure_fresh(db)
+    tags_map = wl_mod.load_tags()
     placeholders = make_placeholders(len(stocks))
     sids = list(stocks.keys())
     out: list[WatchlistOverviewRow] = []
@@ -250,6 +296,7 @@ def overview(db: Database = Depends(get_db)) -> list[WatchlistOverviewRow]:
                 recommendation=sig["recommendation"] if sig else None,
                 as_of=sig["as_of"] if sig else None,
                 market=classify_market(sid, type_by_stock.get(sid)),
+                tags=tags_map.get(sid, []),
             ))
 
     # None 永遠墊底（避免新股或 ETF 沒分數時冒到榜首）

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { apiGet, type WatchlistOverviewRow } from "@/lib/api";
+import { apiGet, apiGetOptional, type TagCount, type WatchlistOverviewRow } from "@/lib/api";
 import { Icon } from "@/components/primitives/Icon";
 import { PageHeader } from "@/components/primitives/PageHeader";
 import { EmptyState } from "@/components/primitives/EmptyState";
@@ -26,10 +26,11 @@ type Tab = keyof typeof TABS;
 export default async function WatchlistOverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ type?: string }>;
+  searchParams: Promise<{ type?: string; tag?: string }>;
 }) {
   const sp = await searchParams;
   const tab: Tab = sp.type === "etf" ? "etf" : "stock";
+  const activeTag = sp.tag || "";
 
   let allRows: WatchlistOverviewRow[];
   try {
@@ -39,10 +40,16 @@ export default async function WatchlistOverviewPage({
   } catch (e) {
     return <BackendDownError error={e} pageTitle="自選股總覽" />;
   }
+  // 完整 tag 清單給 chip 列；沒設過任何 tag 時整段不渲染
+  const tagCounts = await apiGetOptional<TagCount[]>("/api/watchlist/tags", {
+    tags: ["watchlist"],
+  }) ?? [];
 
   const stockRows = allRows.filter((r) => TABS.stock.match(r.market));
   const etfRows = allRows.filter((r) => TABS.etf.match(r.market));
-  const rows = tab === "etf" ? etfRows : stockRows;
+  // 先 type 過濾，再 tag 過濾（順序：type 是 hard split，tag 是 soft cross-cut）
+  const tabRows = tab === "etf" ? etfRows : stockRows;
+  const rows = activeTag ? tabRows.filter((r) => r.tags?.includes(activeTag)) : tabRows;
 
   const top3 = rows.slice(0, 3);
   const bottom3 = rows.slice().reverse().slice(0, 3);
@@ -84,10 +91,15 @@ export default async function WatchlistOverviewPage({
           {(Object.keys(TABS) as Tab[]).map((t) => {
             const active = t === tab;
             const count = t === "etf" ? etfRows.length : stockRows.length;
+            // 切 tab 時保留當前 tag filter（只要 tag 在新 tab 下還有命中）
+            const tabHref =
+              t === "etf"
+                ? `/watchlist?type=etf${activeTag ? `&tag=${encodeURIComponent(activeTag)}` : ""}`
+                : `/watchlist${activeTag ? `?tag=${encodeURIComponent(activeTag)}` : ""}`;
             return (
               <FilterChip
                 key={t}
-                href={`/watchlist${t === "etf" ? "?type=etf" : ""}`}
+                href={tabHref}
                 active={active}
                 icon={t === "etf" ? "currency_exchange" : "monitoring"}
                 count={count}
@@ -103,11 +115,50 @@ export default async function WatchlistOverviewPage({
         </section>
       )}
 
+      {tagCounts.length > 0 && (
+        <section className="flex flex-wrap items-center gap-2 -mt-2">
+          <span className="text-xs text-[var(--text-tertiary)] inline-flex items-center gap-1">
+            <Icon name="sell" size={12} />
+            標籤
+          </span>
+          <FilterChip
+            href={`/watchlist${tab === "etf" ? "?type=etf" : ""}`}
+            active={!activeTag}
+            size="sm"
+            tone="neutral"
+            prefetch={false}
+          >
+            全部
+          </FilterChip>
+          {tagCounts.map((tc) => {
+            const active = tc.tag === activeTag;
+            // 構造 query：保留 type tab，覆寫 tag
+            const params = new URLSearchParams();
+            if (tab === "etf") params.set("type", "etf");
+            params.set("tag", tc.tag);
+            return (
+              <FilterChip
+                key={tc.tag}
+                href={`/watchlist?${params.toString()}`}
+                active={active}
+                size="sm"
+                count={tc.count}
+                prefetch={false}
+              >
+                {tc.tag}
+              </FilterChip>
+            );
+          })}
+        </section>
+      )}
+
       {rows.length === 0 ? (
         <EmptyState>
           {allRows.length === 0
             ? <>尚無自選股。先到「自選股管理」新增，再跑 <code className="font-mono">python -m scripts.market_update</code> 產生訊號快照。</>
-            : `自選清單沒有${TABS[tab].label}。可切到另一個 tab。`}
+            : activeTag
+              ? `「${activeTag}」標籤底下沒有${TABS[tab].label}。可切標籤或回到「全部」。`
+              : `自選清單沒有${TABS[tab].label}。可切到另一個 tab。`}
         </EmptyState>
       ) : (
         <>
@@ -148,7 +199,21 @@ export default async function WatchlistOverviewPage({
                   {rows.map((r) => (
                     <tr key={r.stockId} className="tv-row border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                       <Td>
-                        <StockIdCell stockId={r.stockId} stockName={r.stockName} />
+                        <div className="flex items-center gap-2 min-w-0">
+                          <StockIdCell stockId={r.stockId} stockName={r.stockName} />
+                          {r.tags && r.tags.length > 0 && (
+                            <span className="flex flex-wrap gap-1 shrink-0">
+                              {r.tags.map((t) => (
+                                <span
+                                  key={t}
+                                  className="px-1.5 py-px rounded text-[10px] bg-[var(--brand-tint)] text-[var(--brand-700)] border border-[var(--brand-300)]/40"
+                                >
+                                  {t}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </div>
                       </Td>
                       <Td align="right" numeric>{fmtPrice(r.close)}</Td>
                       <Td align="right">

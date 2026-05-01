@@ -6,11 +6,11 @@ import { Icon } from "@/components/primitives/Icon";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { Field } from "@/components/primitives/Field";
 import { Th, TdCompact as Td } from "@/components/primitives/Table";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, apiPut } from "@/lib/api";
 import { btnDestructive, btnPrimary, btnSecondary, inputCls } from "@/lib/formClasses";
 import { cn } from "@/lib/utils";
 
-type Entry = { stockId: string; stockName: string };
+type Entry = { stockId: string; stockName: string; tags: string[] };
 
 export function WatchlistManageClient({ initialEntries }: { initialEntries: Entry[] }) {
   const router = useRouter();
@@ -70,13 +70,25 @@ export function WatchlistManageClient({ initialEntries }: { initialEntries: Entr
     try {
       const r = await apiPost<{ ok: boolean; stockName: string }>("/api/watchlist", { stock_id: sid });
       const name = r.stockName || sid;
-      setEntries((arr) => [...arr, { stockId: sid, stockName: name }]
+      setEntries((arr) => [...arr, { stockId: sid, stockName: name, tags: [] }]
         .sort((a, b) => a.stockId.localeCompare(b.stockId)));
       setAddSid(""); setPreviewName(""); setLookedUp("");
       flash("ok", `已新增 ${sid} ${name}`);
       refresh();
     } catch (e) {
       flash("err", `新增失敗：${(e as Error).message}`);
+    }
+  };
+
+  /** 覆寫單檔的所有 tags：local state 先樂觀更新，後端失敗時還原並 flash error。 */
+  const updateTags = async (sid: string, tags: string[]) => {
+    const prev = entries;
+    setEntries((arr) => arr.map((e) => (e.stockId === sid ? { ...e, tags } : e)));
+    try {
+      await apiPut<{ tags: string[] }>(`/api/watchlist/${encodeURIComponent(sid)}/tags`, { tags });
+    } catch (e) {
+      setEntries(prev);  // rollback
+      flash("err", `更新標籤失敗：${(e as Error).message}`);
     }
   };
 
@@ -228,8 +240,9 @@ export function WatchlistManageClient({ initialEntries }: { initialEntries: Entr
                     />
                   </Th>
                   <Th className="w-28">代號</Th>
-                  <Th>名稱</Th>
-                  <Th className="w-32" align="right" />
+                  <Th className="w-40">名稱</Th>
+                  <Th>標籤</Th>
+                  <Th className="w-24" align="right" />
                 </tr>
               </thead>
               <tbody>
@@ -252,6 +265,12 @@ export function WatchlistManageClient({ initialEntries }: { initialEntries: Entr
                     <Td>
                       <span className="text-[var(--text-primary)]">{e.stockName}</span>
                     </Td>
+                    <Td>
+                      <TagsEditor
+                        tags={e.tags}
+                        onChange={(next) => updateTags(e.stockId, next)}
+                      />
+                    </Td>
                     <Td align="right">
                       <a href={`/stocks/${e.stockId}`} className="inline-flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--brand-600)]">
                         詳情
@@ -269,3 +288,64 @@ export function WatchlistManageClient({ initialEntries }: { initialEntries: Entr
   );
 }
 
+/**
+ * 單列 tag 編輯器：chip 上點 × 移除、輸入框 Enter 新增。
+ * 樂觀更新由 caller 處理（updateTags），這裡只負責「local 編輯狀態」。
+ */
+function TagsEditor({
+  tags,
+  onChange,
+}: {
+  tags: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+
+  const submit = () => {
+    const t = draft.trim();
+    if (!t) return;
+    if (tags.includes(t)) {
+      setDraft("");
+      return;  // 已存在，視為 noop（後端也會 dedup）
+    }
+    onChange([...tags, t]);
+    setDraft("");
+  };
+
+  const remove = (tag: string) => onChange(tags.filter((t) => t !== tag));
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {tags.map((t) => (
+        <span
+          key={t}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-[var(--brand-tint)] text-[var(--brand-700)] border border-[var(--brand-300)]/40"
+        >
+          {t}
+          <button
+            type="button"
+            onClick={() => remove(t)}
+            className="hover:text-[var(--text-primary)] -mr-0.5"
+            aria-label={`移除標籤 ${t}`}
+          >
+            <Icon name="close" size={12} />
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          }
+        }}
+        onBlur={submit}
+        placeholder={tags.length === 0 ? "+ 新增標籤" : "+"}
+        className="text-xs px-2 py-0.5 rounded-md border border-dashed border-[var(--border-default)] bg-transparent w-24 focus:w-32 focus:border-[var(--brand-500)] focus:outline-none transition-[width,border-color]"
+      />
+    </div>
+  );
+}

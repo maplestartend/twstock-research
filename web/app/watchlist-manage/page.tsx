@@ -1,11 +1,9 @@
-import { apiGet } from "@/lib/api";
+import { apiGet, type WatchlistEntry } from "@/lib/api";
 import { PageHeader } from "@/components/primitives/PageHeader";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { WatchlistManageClient } from "./client";
 
 export const revalidate = 0;  // 每次進頁面重抓最新自選股
-
-type WatchlistEntry = { stockId: string; stockName: string };
 
 export default async function WatchlistManagePage() {
   let entries: WatchlistEntry[];

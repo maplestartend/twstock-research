@@ -346,6 +346,20 @@ export type WatchlistOverviewRow = {
   short: number | null; mid: number | null; long: number | null; composite: number | null;
   recommendation: string | null; asOf: string | null;
   market?: string | null;   // "上市" | "上櫃" | "ETF" | "其他"
+  tags: string[];           // 自訂分組標籤；無 tag 為 []
+};
+
+/** GET /api/watchlist 回傳的單筆。 */
+export type WatchlistEntry = {
+  stockId: string;
+  stockName: string;
+  tags: string[];
+};
+
+/** GET /api/watchlist/tags 給 filter chip 用的 tag + count。 */
+export type TagCount = {
+  tag: string;
+  count: number;
 };
 
 export type IndustryRotationRow = {
@@ -563,6 +577,27 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const hasBody = body !== undefined;
   const res = await fetch(url, {
     method: "POST",
+    headers: hasBody ? { "Content-Type": "application/json; charset=utf-8" } : undefined,
+    body: hasBody ? JSON.stringify(body) : undefined,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const j = await res.json();
+      if (j && typeof j.detail === "string") msg = j.detail;
+      else msg = JSON.stringify(j);
+    } catch {}
+    throw new Error(msg);
+  }
+  return (await res.json()) as T;
+}
+
+export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  const url = path.startsWith("http") ? path : `${BASE}${path}`;
+  const hasBody = body !== undefined;
+  const res = await fetch(url, {
+    method: "PUT",
     headers: hasBody ? { "Content-Type": "application/json; charset=utf-8" } : undefined,
     body: hasBody ? JSON.stringify(body) : undefined,
     cache: "no-store",

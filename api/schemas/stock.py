@@ -149,6 +149,7 @@ class WatchlistOverviewRow(StockRef):
     recommendation: str | None = None
     as_of: str | None = None
     market: str | None = None             # "上市" | "上櫃" | "ETF" | "其他"
+    tags: list[str] = []                  # 自訂分組標籤（可空）
 
 
 class ExDividendEvent(StockRef):
