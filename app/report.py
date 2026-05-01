@@ -11,6 +11,7 @@ from app import portfolio as pf
 from app import watchlist as wl_mod
 from app.data.clock import taipei_today
 from app.data.db import Database
+from app.data.sql_utils import make_placeholders
 from app.notifier import notify
 from app.risk import enhanced_risk_signals
 from app.scoring import history as sh
@@ -65,7 +66,7 @@ def build_report(db: Database, as_of: str | None = None) -> str:
                 f"""SELECT p.stock_id, p.close FROM daily_price p
                     JOIN (SELECT stock_id, MAX(date) mx FROM daily_price GROUP BY stock_id) m
                     ON p.stock_id=m.stock_id AND p.date=m.mx
-                    WHERE p.stock_id IN ({','.join('?'*len(holding_ids))})""",
+                    WHERE p.stock_id IN ({make_placeholders(len(holding_ids))})""",
                 conn, params=list(holding_ids),
             )
         price_map = {r["stock_id"]: float(r["close"]) for _, r in prices.iterrows()}

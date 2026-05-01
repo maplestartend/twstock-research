@@ -7,7 +7,11 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 
-from api.common import safe_float as _safe_float
+from api.common import (
+    breakdown_to_dict,
+    breakdown_to_view,
+    safe_float as _safe_float,
+)
 from api.deps import get_db
 from api.schemas.common import CamelModel
 from api.schemas.stock import (
@@ -16,7 +20,6 @@ from api.schemas.stock import (
     NarrativeView,
     OHLCV,
     ScoreHistoryPoint,
-    ScoreParts,
     StockMeta,
     StockPriceBundle,
     StockScoreView,
@@ -161,21 +164,9 @@ def score(
         stock_name=s.stock_name,
         as_of=s.as_of,
         close=s.close,
-        short=ScoreParts(
-            total=_safe_float(s.short.total),
-            completeness=s.short.completeness,
-            parts={k: _safe_float(v) for k, v in s.short.parts.items()},
-        ),
-        mid=ScoreParts(
-            total=_safe_float(s.mid.total),
-            completeness=s.mid.completeness,
-            parts={k: _safe_float(v) for k, v in s.mid.parts.items()},
-        ),
-        long=ScoreParts(
-            total=_safe_float(s.long.total),
-            completeness=s.long.completeness,
-            parts={k: _safe_float(v) for k, v in s.long.parts.items()},
-        ),
+        short=breakdown_to_view(s.short),
+        mid=breakdown_to_view(s.mid),
+        long=breakdown_to_view(s.long),
         composite_score=_safe_float(s.signals.get("composite_score")),
         data_completeness=float(s.signals.get("data_completeness", 1.0)),
         is_stale=bool(s.is_stale),
@@ -228,21 +219,9 @@ def narrative(
         "stock_name": s.stock_name,
         "as_of": s.as_of,
         "close": s.close,
-        "short": {
-            "total": _safe_float(s.short.total),
-            "completeness": s.short.completeness,
-            "parts": {k: _safe_float(v) for k, v in s.short.parts.items()},
-        },
-        "mid": {
-            "total": _safe_float(s.mid.total),
-            "completeness": s.mid.completeness,
-            "parts": {k: _safe_float(v) for k, v in s.mid.parts.items()},
-        },
-        "long": {
-            "total": _safe_float(s.long.total),
-            "completeness": s.long.completeness,
-            "parts": {k: _safe_float(v) for k, v in s.long.parts.items()},
-        },
+        "short": breakdown_to_dict(s.short),
+        "mid": breakdown_to_dict(s.mid),
+        "long": breakdown_to_dict(s.long),
         "composite_score": _safe_float(s.signals.get("composite_score")),
         "is_stale": bool(s.is_stale),
         "is_pending": bool(s.is_pending),

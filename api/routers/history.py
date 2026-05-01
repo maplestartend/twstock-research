@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from api.common import safe_float as _sf
+from api.common import make_placeholders, safe_float as _sf
 from api.deps import get_db
 from api.schemas.stock import HistoryPerfRow, HistoryPerfSummary, RadarStrategy
 from app.data.db import Database
@@ -84,7 +84,7 @@ def performance(
         sids = perf["stock_id"].tolist()
         with db.connect() as conn:
             type_rows = conn.execute(
-                f"SELECT stock_id, type FROM stock_info WHERE stock_id IN ({','.join('?' * len(sids))})",
+                f"SELECT stock_id, type FROM stock_info WHERE stock_id IN ({make_placeholders(len(sids))})",
                 sids,
             ).fetchall()
         type_map = {r["stock_id"]: r["type"] for r in type_rows}

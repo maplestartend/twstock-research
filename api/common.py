@@ -1,15 +1,20 @@
-"""Router 層共用工具：數值轉換 / 日期格式化 / 批次 SQL helper / 股票名稱查詢。
+"""Router 層共用工具：數值轉換 / 日期格式化 / 批次 SQL helper / 股票名稱查詢 / 分數投影。
 
 把分散在各 router 的小工具集中，避免 5 份雷同的 _sf / _safe_float / _name_map。
 """
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from api.schemas.stock import ScoreParts
 from app.data.db import Database
+from app.data.sql_utils import make_placeholders as _make_placeholders
+
+if TYPE_CHECKING:
+    from app.scoring.engine import ScoreBreakdown
 
 
 def safe_float(v: Any) -> float | None:
@@ -43,9 +48,28 @@ def fmt_date(v: Any) -> str:
         return str(v)[:10]
 
 
-def make_placeholders(n: int) -> str:
-    """產生 "?,?,?,..." 給 SQL `IN (...)`。n=0 回傳空字串。"""
-    return ",".join("?" * n)
+# Re-export 自 app.data.sql_utils；過去 router 都從 api.common import，搬家後保持原 API 不破。
+make_placeholders = _make_placeholders
+
+
+def breakdown_to_view(b: ScoreBreakdown) -> ScoreParts:
+    """ScoreBreakdown(dataclass) → ScoreParts(Pydantic) 的標準投影；
+    /api/stocks/{id}/score 與其他需要 ScoreParts response model 的 endpoint 共用。"""
+    return ScoreParts(
+        total=safe_float(b.total),
+        completeness=b.completeness,
+        parts={k: safe_float(v) for k, v in b.parts.items()},
+    )
+
+
+def breakdown_to_dict(b: ScoreBreakdown) -> dict[str, Any]:
+    """ScoreBreakdown → plain dict；給 LLM prompt 等不需要 Pydantic instance 的 caller。
+    結構與 ScoreParts 對齊（total / completeness / parts），方便兩條路徑互換。"""
+    return {
+        "total": safe_float(b.total),
+        "completeness": b.completeness,
+        "parts": {k: safe_float(v) for k, v in b.parts.items()},
+    }
 
 
 def get_stock_name(db: Database, sid: str) -> str:

@@ -330,13 +330,14 @@ def trades(
         return []
     df = df.head(limit)
     # 撈名稱
+    unique_sids = list(df["stock_id"].unique())
     names: dict[str, str] = {}
-    if not df.empty:
+    if unique_sids:
         with db.connect() as conn:
             rows = conn.execute(
                 "SELECT stock_id, stock_name FROM stock_info "
-                f"WHERE stock_id IN ({','.join('?' * df['stock_id'].nunique())})",
-                list(df["stock_id"].unique()),
+                f"WHERE stock_id IN ({make_placeholders(len(unique_sids))})",
+                unique_sids,
             ).fetchall()
         names = {r["stock_id"]: r["stock_name"] or r["stock_id"] for r in rows}
 
@@ -498,14 +499,16 @@ def realized_pnl(
     if df.empty:
         return RealizedPnlSummary()
 
+    unique_sids = list(df["stock_id"].unique())
     names: dict[str, str] = {}
-    with db.connect() as conn:
-        rows = conn.execute(
-            "SELECT stock_id, stock_name FROM stock_info "
-            f"WHERE stock_id IN ({','.join('?' * df['stock_id'].nunique())})",
-            list(df["stock_id"].unique()),
-        ).fetchall()
-    names = {r["stock_id"]: r["stock_name"] or r["stock_id"] for r in rows}
+    if unique_sids:
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT stock_id, stock_name FROM stock_info "
+                f"WHERE stock_id IN ({make_placeholders(len(unique_sids))})",
+                unique_sids,
+            ).fetchall()
+        names = {r["stock_id"]: r["stock_name"] or r["stock_id"] for r in rows}
 
     out_rows: list[RealizedPnlRow] = []
     for _, r in df.iterrows():

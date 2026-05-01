@@ -13,6 +13,7 @@ import pandas as pd
 
 from app.data.adjuster import load_adjusted_price, read_close_with_adj_coalesced
 from app.data.db import Database
+from app.data.sql_utils import make_placeholders
 from app.indicators import chips as chip_ind
 from app.indicators import technical as tech
 from app.portfolio import tax_rate_for
@@ -671,7 +672,7 @@ def walk_forward(
     with db.connect() as conn:
         rng = conn.execute(
             "SELECT MIN(date) AS mn, MAX(date) AS mx FROM daily_price "
-            f"WHERE stock_id IN ({','.join('?'*len(stock_ids))})",
+            f"WHERE stock_id IN ({make_placeholders(len(stock_ids))})",
             stock_ids,
         ).fetchone()
     if not rng or not rng["mn"]:
