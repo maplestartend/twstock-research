@@ -14,8 +14,17 @@ if str(ROOT) not in sys.path:
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.routers import alerts, backtest, calendar, dashboard, diagnostics, dq, history, market, portfolio, radar, search, stocks, system, watchlist, weight_tuner
+
+# Logger 設定：basicConfig 對 root 已有 handler 時是 no-op，所以 uvicorn 自己接管時不會干擾。
+# 純 python 直跑（測試 / scripts import）才有效，目的就是不要讓 api.* 的 INFO 訊息靜默掉。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 app = FastAPI(
     title="台股研究儀表板 API",
@@ -32,6 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+api_logger = logging.getLogger("api")
 request_logger = logging.getLogger("api.request")
 
 
@@ -52,6 +62,41 @@ async def request_timing_log(request: Request, call_next):
             status_code,
             elapsed_ms,
         )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """攔下所有 HTTPException：把 detail 印到 log，方便用「使用者回報 422」反查後端訊息。
+
+    維持原本 response shape（FastAPI 預設就是 {"detail": ...}），所以前端不用動。
+    headers 會原樣 forward，covers WWW-Authenticate 等 401 場景。
+    """
+    if exc.status_code >= 500:
+        api_logger.error("%s %s -> %d %s", request.method, request.url.path, exc.status_code, exc.detail)
+    elif exc.status_code >= 400:
+        api_logger.warning("%s %s -> %d %s", request.method, request.url.path, exc.status_code, exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """未明確處理的 exception → 完整 traceback 入 log（含類別、檔案、行號）。
+
+    回給前端只有 500 + exception class name；不洩漏內部訊息（避免 stacktrace
+    經由錯誤頁外洩 SQL / path / 環境變數），但 log 端有完整資訊可 grep。
+    """
+    api_logger.exception(
+        "Unhandled exception in %s %s: %s: %s",
+        request.method, request.url.path, type(exc).__name__, exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "type": type(exc).__name__},
+    )
 
 
 app.include_router(market.router)
