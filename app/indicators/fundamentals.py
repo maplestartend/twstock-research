@@ -211,6 +211,43 @@ def _single_q_yoy_from_derived(
     return _yoy_same_quarter(_wide_by_quarter(derived_df), type_name)
 
 
+def _fill_balance_sheet_ratios(snap: dict, cum_df: pd.DataFrame | None) -> None:
+    """從 financials_cumulative 取最新一季的資產負債表科目，算出兩個槓桿/流動性比率。
+
+    - `debt_ratio`     = TotalLiabilities / TotalAssets        （越低越穩；金融業天生偏高）
+    - `current_ratio`  = CurrentAssets   / CurrentLiabilities  （>1 才有短期償債空間）
+
+    為什麼放在這裡而不是評分引擎：這兩個比率是「體質檢查」訊號，不直接進短/中/長分數
+    （已有 ROE / margin 涵蓋獲利能力面），但需要在個股詳情頁與同業比較區塊曝光，作為
+    避雷的第二道防線。
+
+    自由現金流（FCF = OperatingCashFlow − CapEx）暫不納入：MOPS OpenAPI 的
+    t164sb04（現金流量表）目前沒被 fetcher 拉進來，加之需處理累計差分，工程量單獨成
+    一個 PR；待用戶反饋確認需要再補。
+    """
+    if cum_df is None or cum_df.empty:
+        return
+    wide = _wide_by_quarter(cum_df)
+    if wide.empty:
+        return
+
+    total_liab = _latest_value(wide, "TotalLiabilities")
+    total_assets = _latest_value(wide, "TotalAssets")
+    if total_liab is not None and total_assets and total_assets > 0:
+        # 0~1 sanity 區間（>100% 表負債超過總資產，理論上不可能 — 通常是抓資料錯置）
+        ratio = total_liab / total_assets
+        if 0 < ratio < 1.5:
+            snap["debt_ratio"] = ratio
+
+    cur_assets = _latest_value(wide, "CurrentAssets")
+    cur_liab = _latest_value(wide, "CurrentLiabilities")
+    if cur_assets is not None and cur_liab and cur_liab > 0:
+        # 上限給 100x（防止 cur_liab 接近 0 時噴極端值）；下限 0.05 以下視為異常
+        ratio = cur_assets / cur_liab
+        if 0.05 < ratio < 100:
+            snap["current_ratio"] = ratio
+
+
 def _ttm_rolling_from_cumulative(
     cum_df: pd.DataFrame, type_name: str
 ) -> float | None:
@@ -316,6 +353,9 @@ def _fill_from_quarterly_derived(
             if 0 < roe < 0.6:
                 snap["roe_ttm"] = roe
 
+    # 槓桿 / 流動性比率
+    _fill_balance_sheet_ratios(snap, cum_df)
+
     # YoY：單季比對（與主路徑同口徑；之前用累計 YoY 是 bug）
     eps_yoy = _yoy_same_quarter(wide, "EPS")
     rev_yoy = _yoy_same_quarter(wide, "Revenue")
@@ -396,6 +436,9 @@ def _fill_from_cumulative(snap: dict, cum_df: pd.DataFrame) -> None:
         snap["eps_yoy"] = eps_yoy
     if rev_yoy is not None:
         snap["revenue_yoy"] = rev_yoy
+
+    # 槓桿 / 流動性比率（這條 fallback 路徑可能完全沒 BS 資料，helper 會自動 noop）
+    _fill_balance_sheet_ratios(snap, cum_df)
 
 
 # ======================================================================
@@ -528,5 +571,8 @@ def fundamental_snapshot(
             roe = ttm_ni / latest_equity
             if 0 < roe < 0.6:
                 snap["roe_ttm"] = roe
+
+    # 槓桿 / 流動性比率（與 ROE 同來源 financials_cumulative）
+    _fill_balance_sheet_ratios(snap, financials_cumulative)
 
     return snap

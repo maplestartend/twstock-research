@@ -31,13 +31,15 @@ class MetricSpec:
     better: Literal["higher", "lower"]
 
 
-# 顯示順序固定（先估值類、再獲利類、再成長類）
+# 顯示順序固定（估值 → 獲利 → 成長 → 體質）
 _METRIC_SPECS: list[MetricSpec] = [
     MetricSpec("per", "本益比", "倍", "lower"),
     MetricSpec("dividend_yield", "殖利率", "%", "higher"),
     MetricSpec("gross_margin", "毛利率", "%", "higher"),
     MetricSpec("eps_yoy", "EPS 年增", "%", "higher"),
     MetricSpec("revenue_yoy", "營收年增", "%", "higher"),
+    MetricSpec("debt_ratio", "負債比", "%", "lower"),
+    MetricSpec("current_ratio", "流動比", "倍", "higher"),
 ]
 
 
@@ -105,6 +107,57 @@ def _latest_revenue_yoy(conn, sids: list[str]) -> dict[str, float]:
         sids,
     ).fetchall()
     return {r["stock_id"]: float(r["yoy_pct"]) for r in rows}
+
+
+def _latest_balance_ratios(conn, sids: list[str]) -> dict[str, dict]:
+    """從 financials_cumulative 算每檔最新一季的 debt_ratio 與 current_ratio。
+
+    long-format → 以 (stock_id, type) 取 MAX(date) 的 value：要 4 個欄位
+    （TotalLiabilities / TotalAssets / CurrentAssets / CurrentLiabilities）。
+    BS 資料覆蓋率比損益表低（~1000 檔 vs 全市場），缺料時自動跳過該指標、不噴錯。
+    """
+    if not sids:
+        return {}
+    ph = make_placeholders(len(sids))
+    rows = conn.execute(
+        f"""
+        SELECT fc.stock_id, fc.type, fc.value
+        FROM financials_cumulative fc
+        INNER JOIN (
+            SELECT stock_id, type, MAX(date) AS d
+            FROM financials_cumulative
+            WHERE stock_id IN ({ph})
+              AND type IN ('TotalLiabilities','TotalAssets','CurrentAssets','CurrentLiabilities')
+            GROUP BY stock_id, type
+        ) m ON m.stock_id = fc.stock_id AND m.type = fc.type AND m.d = fc.date
+        """,
+        sids,
+    ).fetchall()
+
+    by_sid: dict[str, dict[str, float]] = {}
+    for r in rows:
+        if r["value"] is None:
+            continue
+        by_sid.setdefault(r["stock_id"], {})[r["type"]] = float(r["value"])
+
+    out: dict[str, dict] = {}
+    for sid, vals in by_sid.items():
+        item: dict = {}
+        liab = vals.get("TotalLiabilities")
+        assets = vals.get("TotalAssets")
+        if liab is not None and assets and assets > 0:
+            ratio = liab / assets
+            if 0 < ratio < 1.5:
+                item["debt_ratio"] = ratio
+        cur_a = vals.get("CurrentAssets")
+        cur_l = vals.get("CurrentLiabilities")
+        if cur_a is not None and cur_l and cur_l > 0:
+            ratio = cur_a / cur_l
+            if 0.05 < ratio < 100:
+                item["current_ratio"] = ratio
+        if item:
+            out[sid] = item
+    return out
 
 
 def _latest_quarterly_metrics(conn, sids: list[str]) -> dict[str, dict]:
@@ -192,6 +245,7 @@ def compute_peer_comparison(db: Database, stock_id: str) -> dict | None:
         per_pbr = _latest_per_pbr(conn, peer_ids)
         rev_yoy = _latest_revenue_yoy(conn, peer_ids)
         qmetrics = _latest_quarterly_metrics(conn, peer_ids)
+        bs_ratios = _latest_balance_ratios(conn, peer_ids)
 
     # 把所有 peer 的 metric values 收集成 dict（後面算 median / rank）
     peer_values: dict[str, list[float]] = {spec.key: [] for spec in _METRIC_SPECS}
@@ -200,6 +254,7 @@ def compute_peer_comparison(db: Database, stock_id: str) -> dict | None:
     for sid in peer_ids:
         per_row = per_pbr.get(sid, {})
         q_row = qmetrics.get(sid, {})
+        bs_row = bs_ratios.get(sid, {})
 
         per = per_row.get("per")
         # PER ≤ 0 沒有意義（虧損股 PER 為負或無），剔除避免拖偏 median
@@ -231,6 +286,19 @@ def compute_peer_comparison(db: Database, stock_id: str) -> dict | None:
             peer_values["revenue_yoy"].append(ry)
             if sid == stock_id:
                 self_values["revenue_yoy"] = ry
+
+        # 槓桿 / 流動性比率
+        dr = bs_row.get("debt_ratio")
+        if dr is not None:
+            peer_values["debt_ratio"].append(dr)
+            if sid == stock_id:
+                self_values["debt_ratio"] = dr
+
+        cr = bs_row.get("current_ratio")
+        if cr is not None:
+            peer_values["current_ratio"].append(cr)
+            if sid == stock_id:
+                self_values["current_ratio"] = cr
 
     metrics: list[dict] = []
     for spec in _METRIC_SPECS:

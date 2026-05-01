@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from app.indicators.fundamentals import (
+    _fill_balance_sheet_ratios,
     _fill_from_cumulative,
     _fill_from_quarterly_derived,
     _single_q_yoy_from_derived,
@@ -182,6 +183,68 @@ class TestCumulativeFallbackEnhanced:
         snap = {}
         _fill_from_cumulative(snap, cum)
         assert snap.get("eps_yoy") == 0.2
+
+
+class TestBalanceSheetRatios:
+    """_fill_balance_sheet_ratios 從 financials_cumulative 算 debt_ratio / current_ratio。"""
+
+    def _mk_bs(self, rows: list[tuple[str, float]]) -> pd.DataFrame:
+        """rows = [(type, value), ...]，全部歸到同一季 2025 Q4 簡化 fixture。"""
+        return pd.DataFrame([
+            {"date": "2025-12-31", "year": 2025, "quarter": 4, "type": t, "value": v}
+            for t, v in rows
+        ])
+
+    def test_basic_debt_and_current_ratio(self):
+        snap: dict = {}
+        bs = self._mk_bs([
+            ("TotalLiabilities", 300.0),
+            ("TotalAssets", 1000.0),
+            ("CurrentAssets", 500.0),
+            ("CurrentLiabilities", 200.0),
+        ])
+        _fill_balance_sheet_ratios(snap, bs)
+        assert snap["debt_ratio"] == pytest.approx(0.30)
+        assert snap["current_ratio"] == pytest.approx(2.5)
+
+    def test_skips_when_assets_zero(self):
+        """TotalAssets = 0 → 不該 ZeroDivisionError，靜默 skip。"""
+        snap: dict = {}
+        bs = self._mk_bs([("TotalLiabilities", 100.0), ("TotalAssets", 0.0)])
+        _fill_balance_sheet_ratios(snap, bs)
+        assert "debt_ratio" not in snap
+
+    def test_partial_data_only_one_ratio(self):
+        """只有 BS 的一部分時，能算的指標仍寫進 snap，不能算的省略。"""
+        snap: dict = {}
+        bs = self._mk_bs([("TotalLiabilities", 50.0), ("TotalAssets", 200.0)])
+        _fill_balance_sheet_ratios(snap, bs)
+        assert snap.get("debt_ratio") == pytest.approx(0.25)
+        assert "current_ratio" not in snap
+
+    def test_sanity_clip_extreme_debt_ratio(self):
+        """debt_ratio > 1.5 視為資料錯亂，不寫入（避免拖偏 peer median）。"""
+        snap: dict = {}
+        bs = self._mk_bs([("TotalLiabilities", 5000.0), ("TotalAssets", 100.0)])
+        _fill_balance_sheet_ratios(snap, bs)
+        assert "debt_ratio" not in snap
+
+    def test_sanity_clip_extreme_current_ratio(self):
+        """current_ratio 超過 100x（流動負債接近 0）視為異常。"""
+        snap: dict = {}
+        bs = self._mk_bs([("CurrentAssets", 1000.0), ("CurrentLiabilities", 0.5)])
+        _fill_balance_sheet_ratios(snap, bs)
+        assert "current_ratio" not in snap
+
+    def test_empty_cum_df_noop(self):
+        snap: dict = {"existing": "untouched"}
+        _fill_balance_sheet_ratios(snap, pd.DataFrame())
+        assert snap == {"existing": "untouched"}
+
+    def test_none_cum_df_noop(self):
+        snap: dict = {}
+        _fill_balance_sheet_ratios(snap, None)
+        assert snap == {}
 
 
 class TestEndToEndDerivedSnapshot:
