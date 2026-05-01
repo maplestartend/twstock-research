@@ -25,6 +25,8 @@ type Action = {
 // 跨頁面快捷導航 — 鍵入時也會匹配
 const ACTIONS: Action[] = [
   { id: "go-home", label: "今日戰情室", icon: "dashboard", href: "/", keywords: "home dashboard 戰情" },
+  { id: "go-lab", label: "回測工具室", icon: "science", href: "/lab", keywords: "lab 回測工具室 research" },
+  { id: "go-diagnostics", label: "因子檢定", icon: "insights", href: "/diagnostics", keywords: "diagnostics 因子檢定 ic" },
   { id: "go-radar", label: "雷達掃描", icon: "radar", href: "/radar", keywords: "radar 雷達 個股" },
   { id: "go-radar-etf", label: "雷達 — ETF", icon: "currency_exchange", href: "/radar?type=etf", keywords: "etf radar" },
   { id: "go-sectors", label: "族群輪動", icon: "trending_up", href: "/sectors", keywords: "sector industry 族群" },
@@ -40,6 +42,14 @@ const ACTIONS: Action[] = [
   { id: "go-weight", label: "權重調優", icon: "tune", href: "/weight-tuner", keywords: "weight 權重" },
   { id: "go-dq", label: "資料品質", icon: "fact_check", href: "/dq", keywords: "data quality dq 資料品質 異常" },
 ];
+const DEFAULT_ACTION_IDS = new Set([
+  "go-home",
+  "go-radar",
+  "go-lab",
+  "go-diagnostics",
+  "go-holdings",
+  "go-watchlist",
+]);
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
@@ -132,10 +142,10 @@ export function CommandPalette() {
     };
   }, [q, open]);
 
-  // 過濾頁面 actions（只在有 query 時才顯示）
+  // 過濾頁面 actions。空查詢時顯示常用捷徑，降低新手探索成本。
   const matchedActions = useMemo<Action[]>(() => {
     const query = q.trim().toLowerCase();
-    if (!query) return [];
+    if (!query) return ACTIONS.filter((a) => DEFAULT_ACTION_IDS.has(a.id));
     return ACTIONS.filter((a) =>
       a.label.toLowerCase().includes(query) || a.keywords.toLowerCase().includes(query),
     );
@@ -219,6 +229,11 @@ export function CommandPalette() {
           {items.length === 0 && !loading && (
             <li className="px-4 py-6 text-center text-sm text-[var(--text-tertiary)]">
               {q ? `查不到符合「${q}」的結果` : "輸入關鍵字開始搜尋..."}
+            </li>
+          )}
+          {q.trim() === "" && matchedActions.length > 0 && (
+            <li className="px-4 pt-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--text-tertiary)]">
+              常用頁面捷徑
             </li>
           )}
           {q.trim() === "" && hits.length > 0 && (

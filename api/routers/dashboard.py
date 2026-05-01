@@ -14,6 +14,7 @@ from app import watchlist as wl_mod
 from app.data.clock import taipei_today
 from app.data.db import Database
 from app.scoring.radar_queries import query_radar_hits
+from app.scoring.snapshot_freshness import ensure_fresh
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def radar_hits(
     db: Database = Depends(get_db),
 ) -> list[RadarHit]:
     """戰情室雷達命中。預設只回個股（上市/上櫃），ETF 評分機制不同所以默認排除。"""
+    ensure_fresh(db)
     hits_data = query_radar_hits(db, markets=set(market), limit=limit)
     return [RadarHit(**h) for h in hits_data]
 

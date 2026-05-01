@@ -9,7 +9,7 @@
 - **錯誤格式**：`HTTPException` → `{"detail": "..."}`；常見 status code：`400`（請求錯誤）、`404`（資源不存在）、`409`（衝突，自選股已存在）、`413`（請求過大，回測超量）、`422`（資料不足以計算）、`500`（後端未預期錯誤）
 - **Pydantic 序列化**：所有 response model 繼承 `CamelModel`（[api/schemas/common.py:8](../api/schemas/common.py#L8)）。前端拿到 `stockId` / `stockName` / `compositeScore`；後端內部用 `stock_id` / `stock_name` / `composite_score`。
 - **NaN/inf 處理**：Pydantic v2 拒絕 NaN/inf，router 層用 `safe_float()` ([api/common.py:15](../api/common.py#L15)) 轉成 `None`
-- **snapshot 新鮮度**：列表型 router（radar / watchlist / portfolio）開頭呼叫 `ensure_fresh(db)`（[app/scoring/snapshot_freshness.py:50](../app/scoring/snapshot_freshness.py#L50)），signal_history 比 daily_price 舊時自動補跑當日快照
+- **snapshot 新鮮度**：列表型 router（radar / watchlist / portfolio / dashboard）開頭呼叫 `ensure_fresh(db)`（[app/scoring/snapshot_freshness.py](../app/scoring/snapshot_freshness.py)），signal_history 比 daily_price 舊時自動補跑當日快照
 - **list 預設排序**：雷達 / 自選總覽依 `composite` 降序；交易紀錄依 `trade_date DESC, id DESC`；漲跌排行依 `change_pct` 升/降序
 - **市場分類**：`classify_market(stock_id, type)` ([app/data/market_type.py:22](../app/data/market_type.py#L22)) 回傳 `"上市" | "上櫃" | "ETF" | "其他"`
 
@@ -223,6 +223,7 @@
 - **用途**：戰情室預設只看個股（上市/上櫃），ETF 評分機制不同所以排除
 - **Query params**：`limit` (int, 預設 10)、`market` (list, 預設 `["上市","上櫃"]`)
 - **Response model**：`list[RadarHit]`
+- **副作用**：開頭呼叫 `ensure_fresh()`
 
 #### GET /api/dashboard/ex-dividend
 - **用途**：自選 + 持股近 N 日除權息
@@ -618,9 +619,9 @@
 | `get_holding(db, sid)` | ⚠️ | 未接 — 目前 holdings 回傳整個列表，沒有「單檔細項」endpoint |
 | `record_trade(...)` | ✅ | POST /api/portfolio/trades |
 | `delete_trade(db, id)` | ✅ | DELETE /api/portfolio/trades/{id} |
-| `rebuild_holding(db, sid)` | ⚠️ | 未接 — 目前只在 delete_trade 內部觸發；若交易資料修正後需手動重建沒入口 |
-| `load_trades(db, sid?)` | ✅ | GET /api/portfolio/trades（但無法依 stock_id 過濾） |
-| `realized_pnl(db, sid?)` | ✅ | GET /api/portfolio/realized-pnl（但無法依 stock_id 過濾） |
+| `rebuild_holding(db, sid)` | ✅ | POST /api/system/rebuild-holding/{stock_id} |
+| `load_trades(db, sid?)` | ✅ | GET /api/portfolio/trades（支援 `?stock_id=` 過濾） |
+| `realized_pnl(db, sid?)` | ✅ | GET /api/portfolio/realized-pnl（支援 `?stock_id=` 過濾） |
 | `risk_signals(db, h, close, score)` | — | 已被 `enhanced_risk_signals` 取代，holdings router 直接用後者 |
 
 ### app/watchlist.py — [app/watchlist.py](../app/watchlist.py)
@@ -649,7 +650,7 @@
 
 | Function | 狀態 | 對應 endpoint |
 |---|---|---|
-| `snapshot_today(db)` | ⚠️ | 未接 — 目前由 `ensure_fresh()` 在列表 router 自動觸發；沒有「手動強制重跑當日快照」的 admin endpoint |
+| `snapshot_today(db)` | ✅ | POST /api/system/refresh-snapshot（手動強制重跑） |
 | `load_snapshot(db, as_of)` | ✅ | history/performance 內部使用 |
 | `available_dates(db)` | ✅ | GET /api/history/dates |
 | `track_performance(db, as_of, strategy?)` | ✅ | GET /api/history/performance |
@@ -674,7 +675,7 @@
 
 | Function | 狀態 | 對應 endpoint |
 |---|---|---|
-| `is_stale(db)` | ⚠️ | 未接 — 可考慮接成 `/api/system/snapshot-status` 給前端顯示「資料是否新鮮」 |
+| `is_stale(db)` | ✅ | GET /api/system/snapshot-status（以 `freshness_status` 對外回傳） |
 | `ensure_fresh(db)` | — | 列表 router 內部呼叫 |
 
 ### app/scoring/preset.py — [app/scoring/preset.py](../app/scoring/preset.py)

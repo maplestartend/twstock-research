@@ -27,6 +27,7 @@ const PAGES = [
   { slug: "dividend-calendar", path: "/dividend-calendar", slow: false },
   { slug: "alerts", path: "/alerts", slow: false },
   { slug: "history", path: "/history", slow: true },
+  { slug: "journal", path: "/journal", slow: false },
   { slug: "lab", path: "/lab", slow: false },
   { slug: "watchlist-manage", path: "/watchlist-manage", slow: false },
   { slug: "backtest", path: "/backtest", slow: false },

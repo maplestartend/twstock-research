@@ -11,7 +11,7 @@ export function humanizeApiError(raw: string | unknown): string {
   const msg = typeof raw === "string" ? raw : raw instanceof Error ? raw.message : String(raw);
   // 常見 backend detail patterns
   if (/insufficient.*data|insufficient_data/i.test(msg)) {
-    return "這檔股票的歷史資料還不夠（至少需要 100 個交易日）。如果是新上市股票，請等更多交易日累積後再回測。";
+    return "這檔股票的歷史資料還不夠（至少需要 60 個交易日）。如果是新上市股票，請等更多交易日累積後再回測。";
   }
   if (/not.*found|404/.test(msg)) {
     return "找不到這檔股票或這項資料。確認代號是否正確（如 2330），或先跑一次「market_update」更新資料。";
