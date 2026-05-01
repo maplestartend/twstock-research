@@ -18,6 +18,7 @@ import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { Th, Td } from "@/components/primitives/Table";
 import { TableContainer } from "@/components/primitives/TableContainer";
 import { StockIdCell } from "@/components/primitives/StockIdCell";
+import { DownloadXlsxButton } from "@/components/primitives/DownloadXlsxButton";
 import {
   KpiRowSkeleton,
   TableSkeleton,
@@ -49,7 +50,10 @@ export default function HoldingsPage() {
       </Suspense>
 
       <section className="flex flex-col gap-3">
-        <SectionTitle icon="list_alt">持股明細</SectionTitle>
+        <div className="flex items-end justify-between gap-3">
+          <SectionTitle icon="list_alt">持股明細</SectionTitle>
+          <DownloadXlsxButton href="/api/portfolio/holdings/export.xlsx" size="sm" />
+        </div>
         <Suspense fallback={<TableSkeleton rows={6} cols={9} />}>
           <HoldingsSection />
         </Suspense>

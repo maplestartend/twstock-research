@@ -7141,6 +7141,26 @@
         ]
       }
     },
+    "/api/portfolio/holdings/export.xlsx": {
+      "get": {
+        "description": "匯出持股明細為 .xlsx：與 /holdings 同一份資料，排序 + 計算邏輯都一致。\n用 by_alias=True 走 camelCase，excel 模組讀 stockId / unrealizedPnlPct 等鍵。",
+        "operationId": "export_holdings_xlsx_api_portfolio_holdings_export_xlsx_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Export Holdings Xlsx",
+        "tags": [
+          "portfolio"
+        ]
+      }
+    },
     "/api/portfolio/journal-stats": {
       "get": {
         "description": "依 tag 分組的勝率 / 平均報酬 / 累計損益，給 /journal 頁顯示「哪個策略 tag 真的賺到錢」。",
@@ -7497,6 +7517,81 @@
         "summary": "Update Trade Journal",
         "tags": [
           "portfolio"
+        ]
+      }
+    },
+    "/api/radar/export.xlsx": {
+      "get": {
+        "description": "匯出當前過濾條件下的雷達命中為 .xlsx。\n\n與 /hits 共用 query_radar_hits，所以排序 / 過濾邏輯一致；不同處只在輸出格式\n與「預設不截斷」（top=0 → 全部，避免使用者匯出時還要手動加參數）。",
+        "operationId": "export_xlsx_api_radar_export_xlsx_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "strategy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market",
+            "required": false,
+            "schema": {
+              "default": [
+                "上市",
+                "上櫃",
+                "ETF"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "title": "Market",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "top",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Top",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Xlsx",
+        "tags": [
+          "radar"
         ]
       }
     },

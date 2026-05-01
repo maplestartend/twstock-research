@@ -12,6 +12,7 @@ import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { TableContainer } from "@/components/primitives/TableContainer";
 import { Pagination } from "@/components/primitives/Pagination";
 import { DownloadCsvButton } from "@/components/primitives/DownloadCsvButton";
+import { DownloadXlsxButton } from "@/components/primitives/DownloadXlsxButton";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { PrefetchLink } from "@/components/primitives/PrefetchLink";
 import { FilterChip } from "@/components/primitives/FilterChip";
@@ -238,20 +239,33 @@ export default async function RadarPage({
               {totalPages > 1 && ` · 第 ${safePage} / ${totalPages} 頁（每頁 ${PAGE_SIZE}）`}
             </span>
           </SectionTitle>
-          <DownloadCsvButton
-            headers={showVrMacdCol ? RADAR_CSV_HEADERS_VR : RADAR_CSV_HEADERS}
-            rows={hits.map((h) => showVrMacdCol ? [
-              h.stockId, h.stockName, h.market ?? "", h.close ?? "",
-              h.short ?? "", h.mid ?? "", h.long ?? "", h.composite ?? "", h.vrMacd ?? "",
-              h.recommendation ?? "", h.strategies ?? "",
-            ] : [
-              h.stockId, h.stockName, h.market ?? "", h.close ?? "",
-              h.short ?? "", h.mid ?? "", h.long ?? "", h.composite ?? "",
-              h.recommendation ?? "", h.strategies ?? "",
-            ])}
-            filename={`radar_${activeStrategy || "all"}_${typeTab}`}
-            size="sm"
-          />
+          <div className="flex items-center gap-2">
+            <DownloadCsvButton
+              headers={showVrMacdCol ? RADAR_CSV_HEADERS_VR : RADAR_CSV_HEADERS}
+              rows={hits.map((h) => showVrMacdCol ? [
+                h.stockId, h.stockName, h.market ?? "", h.close ?? "",
+                h.short ?? "", h.mid ?? "", h.long ?? "", h.composite ?? "", h.vrMacd ?? "",
+                h.recommendation ?? "", h.strategies ?? "",
+              ] : [
+                h.stockId, h.stockName, h.market ?? "", h.close ?? "",
+                h.short ?? "", h.mid ?? "", h.long ?? "", h.composite ?? "",
+                h.recommendation ?? "", h.strategies ?? "",
+              ])}
+              filename={`radar_${activeStrategy || "all"}_${typeTab}`}
+              size="sm"
+            />
+            <DownloadXlsxButton
+              href={
+                "/api/radar/export.xlsx?" +
+                new URLSearchParams({
+                  ...(activeStrategy ? { strategy: activeStrategy } : {}),
+                }).toString() +
+                effectiveMarkets.map((m) => `&market=${encodeURIComponent(m)}`).join("")
+              }
+              size="sm"
+              disabled={hits.length === 0}
+            />
+          </div>
         </div>
         {totalHits === 0 ? (
           <EmptyState size="sm">

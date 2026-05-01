@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import contextvars
+from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from api.common import get_stock_name as _stock_name, make_placeholders, safe_float as _safe
@@ -26,6 +27,7 @@ from app import portfolio as pf
 from app import risk as risk_mod
 from app import watchlist as wl_mod
 from app.data.db import Database
+from app.export import excel as excel_export
 from app.risk import (
     atr_stop_loss,
     concentration_warnings,
@@ -264,6 +266,25 @@ def _holdings_cached(db: Database) -> list[HoldingRow]:
 @router.get("/holdings", response_model=list[HoldingRow])
 def holdings(db: Database = Depends(get_db)) -> list[HoldingRow]:
     return _holdings_cached(db)
+
+
+@router.get("/holdings/export.xlsx")
+def export_holdings_xlsx(db: Database = Depends(get_db)) -> Response:
+    """匯出持股明細為 .xlsx：與 /holdings 同一份資料，排序 + 計算邏輯都一致。
+    用 by_alias=True 走 camelCase，excel 模組讀 stockId / unrealizedPnlPct 等鍵。"""
+    rows = _holdings_cached(db)
+    payload = excel_export.holdings_workbook(
+        [r.model_dump(by_alias=True) for r in rows]
+    )
+    today = date.today().isoformat().replace("-", "")
+    filename = f"holdings_{today}.xlsx"
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        # holdings 目前 filename 純 ASCII；保留與 radar 一致的格式以便將來改名為「我的持股」
+        # 之類的中文時不必再回頭修。
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/summary", response_model=PortfolioSummary)
