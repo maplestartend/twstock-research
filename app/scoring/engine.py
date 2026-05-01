@@ -23,10 +23,11 @@ from app.data.market_type import is_etf
 from app.indicators import chips as chip_ind
 from app.indicators import fundamentals as fund_ind
 from app.indicators import technical as tech
+from app.scoring import constants as C
 from app.scoring import rubric as R
 
-# 資料視為過期的天數門檻（例：最新 daily_price 日期距今 > 3 天 → 標記為 stale）
-STALE_THRESHOLD_DAYS = 3
+# 對外 re-export：歷史上有 caller 直接用 `engine.STALE_THRESHOLD_DAYS`，不打破。
+STALE_THRESHOLD_DAYS = C.STALE_THRESHOLD_DAYS
 
 
 @dataclass
@@ -193,14 +194,8 @@ def check_stale(as_of: str, threshold_days: int = STALE_THRESHOLD_DAYS) -> bool:
     return (taipei_today() - d).days > threshold_days
 
 
-# 台股集合競價收盤 13:30，正常給 TWSE OpenAPI 30 分鐘後資料才會釋出，14:00 開始才算「真正收盤」。
-# 在這之前若 daily_price 出現「今天」這筆資料，幾乎可以斷定是某個 ad-hoc 抓取程序灌的盤中部分資料，
-# 此時計算出的分數視為 pending；UI 應該顯示警示，避免使用者照盤中分數做進場決策。
-_MARKET_SETTLED_HOUR_TPE = 14
-
-
 def is_pending_intraday(as_of: str) -> bool:
-    """as_of 等於台北今日且當下 < 14:00 → pending（資料尚未收盤確認）。
+    """as_of 等於台北今日且當下 < MARKET_SETTLED_HOUR_TPE → pending（資料尚未收盤確認）。
 
     這是防禦性檢查：正常 ingestion 走 TWSE OpenAPI 不會有盤中資料，
     但若使用者手動跑 `market_update --date today` 在 13:30 之前，daily_price 會被部分資料填上，
@@ -214,7 +209,7 @@ def is_pending_intraday(as_of: str) -> bool:
     now = taipei_now()
     if d != now.date():
         return False
-    return now.hour < _MARKET_SETTLED_HOUR_TPE
+    return now.hour < C.MARKET_SETTLED_HOUR_TPE
 
 
 # ======================================================================
@@ -222,12 +217,11 @@ def is_pending_intraday(as_of: str) -> bool:
 # ======================================================================
 def recommendation_label(score: Optional[float]) -> str:
     if score is None:
-        return "⚪ 資料不足"
-    if score >= 75: return "🟢 強力偏多"
-    if score >= 60: return "🟢 偏多"
-    if score >= 45: return "🟡 中性"
-    if score >= 30: return "🔴 偏空"
-    return "🔴 強力偏空"
+        return C.RECOMMENDATION_INSUFFICIENT
+    for threshold, label in C.RECOMMENDATION_TIERS:
+        if score >= threshold:
+            return label
+    return C.RECOMMENDATION_BEAR
 
 
 def build_signals(
@@ -249,16 +243,16 @@ def build_signals(
 
     # 進場建議（必須分數存在才考慮）
     entry: list[str] = []
-    if short.total is not None and short.total >= 65 and (short.parts.get("kd") or 0) >= 65:
+    if short.total is not None and short.total >= C.ENTRY_SHORT_TOTAL and (short.parts.get("kd") or 0) >= C.ENTRY_KD_PART:
         entry.append("KD 偏多且短線轉強，可分批布局")
-    if (short.parts.get("volume") or 0) >= 65 and (short.parts.get("ma_alignment") or 0) >= 65:
+    if (short.parts.get("volume") or 0) >= C.ENTRY_VOL_PART and (short.parts.get("ma_alignment") or 0) >= C.ENTRY_MA_ALIGN_PART:
         entry.append("量增+均線多頭排列，追價風險偏低")
     if (not pd.isna(last.get("ma20"))
             and mid.total is not None
-            and close < last["ma20"] * 1.02
-            and mid.total >= 60):
+            and close < last["ma20"] * C.ENTRY_NEAR_MA20_RATIO
+            and mid.total >= C.ENTRY_MID_TOTAL_NEAR_MA20):
         entry.append(f"中期多頭，接近月線（{last['ma20']:.2f}）附近可留意")
-    if mid.total is not None and long_.total is not None and mid.total >= 70 and long_.total >= 60:
+    if mid.total is not None and long_.total is not None and mid.total >= C.ENTRY_MID_TOTAL and long_.total >= C.ENTRY_LONG_TOTAL:
         entry.append("中長期趨勢向上，逢回可布局")
     signals["entry"] = entry or ["目前無明確進場訊號"]
 
@@ -268,34 +262,39 @@ def build_signals(
         stop_loss.append(f"跌破月線 {last['ma20']:.2f}（-{(close-last['ma20'])/close*100:.1f}%）")
     if not pd.isna(last.get("ma60")):
         stop_loss.append(f"跌破季線 {last['ma60']:.2f}")
-    stop_loss.append(f"停損 -8%（{close * 0.92:.2f}）")
+    sl_pct = C.DEFAULT_STOP_LOSS_PCT
+    stop_loss.append(f"停損 -{sl_pct*100:.0f}%（{close * (1 - sl_pct):.2f}）")
     signals["stop_loss"] = stop_loss
 
     # 停利參考
     take_profit: list[str] = []
-    if not pd.isna(last.get("rsi14")) and last["rsi14"] >= 70:
+    if not pd.isna(last.get("rsi14")) and last["rsi14"] >= C.TAKE_PROFIT_RSI:
         take_profit.append(f"RSI {last['rsi14']:.1f} 已過熱，可分批停利")
     if not pd.isna(last.get("bb_upper")):
         take_profit.append(f"布林上軌 {last['bb_upper']:.2f} 附近留意")
-    take_profit.append(f"停利 +15%（{close * 1.15:.2f}）/+25%（{close * 1.25:.2f}）")
+    tp1, tp2 = C.TAKE_PROFIT_TIER1_PCT, C.TAKE_PROFIT_TIER2_PCT
+    take_profit.append(
+        f"停利 +{tp1*100:.0f}%（{close * (1 + tp1):.2f}）/"
+        f"+{tp2*100:.0f}%（{close * (1 + tp2):.2f}）"
+    )
     signals["take_profit"] = take_profit
 
     # 風險提示
     warnings: list[str] = []
-    if not pd.isna(last.get("rsi14")) and last["rsi14"] >= 75:
+    if not pd.isna(last.get("rsi14")) and last["rsi14"] >= C.WARN_RSI_OVERBOUGHT:
         warnings.append(f"⚠️ RSI {last['rsi14']:.1f} 超買")
     if len(price_df) >= 6:
-        ret5 = (close / price_df.iloc[-6]["close"] - 1) * 100
-        if ret5 > 15:
-            warnings.append(f"⚠️ 近 5 日漲幅 {ret5:.1f}%，留意追高")
+        ret5 = (close / price_df.iloc[-6]["close"] - 1)
+        if ret5 > C.WARN_5D_RETURN_PCT:
+            warnings.append(f"⚠️ 近 5 日漲幅 {ret5*100:.1f}%，留意追高")
     chg5 = chip_snap.get("margin_chg5")
-    if chg5 is not None and chg5 > 0.15:
+    if chg5 is not None and chg5 > C.WARN_MARGIN_5D_INC_PCT:
         warnings.append(f"⚠️ 融資 5 日增 {chg5*100:.1f}%，散戶追高")
-    if chip_snap.get("foreign_streak_sell", 0) >= 5:
+    if chip_snap.get("foreign_streak_sell", 0) >= C.WARN_FOREIGN_STREAK_SELL:
         warnings.append(f"⚠️ 外資連賣 {chip_snap['foreign_streak_sell']} 日")
     # 完整度過低則增加提醒
     dim_completeness = overall_completeness(short, mid, long_)
-    if dim_completeness < 0.6:
+    if dim_completeness < C.WARN_LOW_COMPLETENESS:
         warnings.append(f"⚠️ 評分可信度 {dim_completeness*100:.0f}%：部分指標缺資料，請審慎參考")
     signals["warnings"] = warnings
 
