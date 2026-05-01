@@ -4341,6 +4341,33 @@
             "title": "Datasetssynced",
             "type": "boolean"
           },
+          "engineVersionCurrent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engineversioncurrent"
+          },
+          "engineVersionMatch": {
+            "default": false,
+            "title": "Engineversionmatch",
+            "type": "boolean"
+          },
+          "engineVersionSnapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engineversionsnapshot"
+          },
           "isStale": {
             "title": "Isstale",
             "type": "boolean"
