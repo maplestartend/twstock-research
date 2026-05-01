@@ -23,6 +23,7 @@
 | GET | /api/market/industry-rotation | [market.py:86](../api/routers/market.py#L86) | 產業輪動排行（含 totalAmount） |
 | GET | /api/market/industry-members | [market.py:106](../api/routers/market.py#L106) | 指定產業成分股 |
 | GET | /api/portfolio/holdings | [portfolio.py:67](../api/routers/portfolio.py#L67) | 持股總覽 + 風險訊號 |
+| GET | /api/portfolio/holdings/export.xlsx | [portfolio.py](../api/routers/portfolio.py) | **🆕** 持股明細 Excel 匯出（與 /holdings 同份資料） |
 | GET | /api/portfolio/summary | [portfolio.py:117](../api/routers/portfolio.py#L117) | 持股聚合（市值 / 損益） |
 | GET | /api/portfolio/risk-alerts | [portfolio.py:146](../api/routers/portfolio.py#L146) | 風險訊號彙整（含集中度） |
 | GET | /api/portfolio/trades | [portfolio.py:168](../api/routers/portfolio.py#L168) | 交易紀錄列表 |
@@ -36,18 +37,22 @@
 | POST | /api/watchlist/bulk-remove | [watchlist.py:101](../api/routers/watchlist.py#L101) | 批次移除 |
 | GET | /api/watchlist/lookup/{stock_id} | [watchlist.py:107](../api/routers/watchlist.py#L107) | 代號 → 名稱 |
 | GET | /api/watchlist/movers | [watchlist.py:120](../api/routers/watchlist.py#L120) | 自選股漲跌排行 |
-| GET | /api/watchlist/overview | [watchlist.py:186](../api/routers/watchlist.py#L186) | 自選股總覽（分數 + 漲跌） |
+| GET | /api/watchlist/overview | [watchlist.py:186](../api/routers/watchlist.py#L186) | 自選股總覽（分數 + 漲跌；含 tags） |
+| GET | /api/watchlist/tags | [watchlist.py](../api/routers/watchlist.py) | **🆕** 列出所有 tag + 命中檔數（filter chip 用） |
+| PUT | /api/watchlist/{stock_id}/tags | [watchlist.py](../api/routers/watchlist.py) | **🆕** 覆寫單檔 tags（trim + 去重） |
 | GET | /api/stocks/{stock_id}/meta | [stocks.py:27](../api/routers/stocks.py#L27) | 個股 meta（名稱 / 產業） |
 | GET | /api/stocks/{stock_id}/price | [stocks.py:51](../api/routers/stocks.py#L51) | 個股 K 線 + 技術指標 |
 | GET | /api/stocks/{stock_id}/score | [stocks.py:85](../api/routers/stocks.py#L85) | 個股短/中/長期評分（支援 `?live=1` / `?override_price=X` 重算） |
 | GET | /api/stocks/{stock_id}/intraday | [stocks.py](../api/routers/stocks.py) | **🆕** 盤中即時報價（mis.twse.com.tw，30s cache） |
 | GET | /api/stocks/{stock_id}/score-history | [stocks.py:135](../api/routers/stocks.py#L135) | 個股分數歷史曲線 |
+| GET | /api/stocks/{stock_id}/peers | [stocks.py](../api/routers/stocks.py) | **🆕** 同業中位數比較（PER / 殖利率 / 毛利率 / EPS YoY / 營收 YoY / 負債比 / 流動比） |
 | GET | /api/dashboard/radar-hits | [dashboard.py:19](../api/routers/dashboard.py#L19) | 戰情室雷達命中（預設個股） |
 | GET | /api/dashboard/ex-dividend | [dashboard.py:30](../api/routers/dashboard.py#L30) | 自選+持股近 N 日除權息 |
 | GET | /api/dashboard/data-freshness | [dashboard.py:107](../api/routers/dashboard.py#L107) | 各資料表新鮮度燈號 |
 | GET | /api/dashboard/snapshot-delta | [dashboard.py](../api/routers/dashboard.py) | **🆕** 戰情室「今日 vs 昨日」delta（新進命中 / 跌出命中 / 分數 \|Δ\|≥5） |
 | GET | /api/radar/strategies | [radar.py:16](../api/routers/radar.py#L16) | 雷達策略 + 當日命中數 |
 | GET | /api/radar/hits | [radar.py:39](../api/routers/radar.py#L39) | 雷達命中清單（依策略 / 市場過濾） |
+| GET | /api/radar/export.xlsx | [radar.py](../api/routers/radar.py) | **🆕** 雷達命中 Excel 匯出（同 /hits 過濾條件） |
 | GET | /api/history/dates | [history.py:19](../api/routers/history.py#L19) | 可回看的歷史快照日 |
 | GET | /api/history/strategies | [history.py:24](../api/routers/history.py#L24) | 指定 as_of 各策略命中數 |
 | GET | /api/history/performance | [history.py:54](../api/routers/history.py#L54) | 歷史命中股票至今的表現 |
@@ -136,12 +141,21 @@
 - **用途**：FIFO 配對的已實現損益（每筆配對 buy/sell + 該股總損益）
 - **Response model**：`RealizedPnlSummary` { totalPnl, pairCount, winCount, winRate, rows[] }
 
+#### GET /api/portfolio/holdings/export.xlsx
+- **用途**：將 /holdings 的同份資料輸出成 Excel（含 brand-color 表頭、凍結 A:B 兩欄、CJK-aware 自動欄寬）
+- **Response**：`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，`Content-Disposition: attachment`
+- **檔名**：`holdings_YYYYMMDD.xlsx`
+- **欄位**：代號 / 名稱 / 張數 / 成本 / 現價 / 今日漲跌 / 市值 / 未實現損益 / 未實現 % / 扣費後損益 / 扣費後 % / 短期 / 中期 / 長期 / 綜合 / ATR 停損 / 停損距離 / ATR 類型 / 進場日 / 警告
+- **依賴**：[app/export/excel.py](../app/export/excel.py) `holdings_workbook()`
+- **副作用**：與 /holdings 共用 `_holdings_cached`，同 request 內不重算
+
 ---
 
-### watchlist.py — 自選股 CRUD + 排行
+### watchlist.py — 自選股 CRUD + 排行 + tags
 
 #### GET /api/watchlist
-- **Response model**：`list[WatchlistEntry]` { stockId, stockName }
+- **Response model**：`list[WatchlistEntry]` { stockId, stockName, tags[] }
+- **tags 來源**：`watchlist.yaml` 的 `tags:` parallel map（v2 格式，舊檔無此鍵時回 `[]`）
 
 #### POST /api/watchlist
 - **Request body**：`AddBody` { stockId }
@@ -172,7 +186,21 @@
 
 #### GET /api/watchlist/overview
 - **用途**：自選股總覽，每檔最新分數 + 當日漲跌，依 composite 降序
-- **Response model**：`list[WatchlistOverviewRow]`
+- **Response model**：`list[WatchlistOverviewRow]`（含 `tags[]`，前端用來在每列旁渲染 chip）
+
+#### GET /api/watchlist/tags
+- **用途**：列出目前出現過的所有 tag + 每個 tag 命中檔數，供 `/watchlist` 頁的 filter chip 列使用
+- **排序**：依命中數降序，同數字按 tag 字典序
+- **Response model**：`list[TagCount]` { tag, count }
+- **空清單**：無任何 tag 時回 `[]`，前端應把整個 chip 列隱藏
+
+#### PUT /api/watchlist/{stock_id}/tags
+- **用途**：覆寫單檔的所有 tags（empty list = 清空）
+- **Request body**：`TagsUpdateBody` { tags: list[str] }
+- **後端正規化**：trim + 保序去重（「長期持有」與「長期持有 」視為同一個）
+- **錯誤**：404 = 該股不在自選清單
+- **Response model**：`WatchlistEntry`（含 normalized tags）
+- **副作用**：原子寫入 `watchlist.yaml`（`.tmp` → replace）；空 tag list 時把 yaml 的 tags 段整段移除避免噪音
 
 ---
 
@@ -215,6 +243,16 @@
 - **Query params**：`days` (int, 預設 90)
 - **Response model**：`list[ScoreHistoryPoint]`
 
+#### GET /api/stocks/{stock_id}/peers
+- **用途**：個股 vs 同業中位數比較。涵蓋 7 個指標：本益比、殖利率、毛利率、EPS YoY、營收 YoY、負債比、流動比
+- **Response model**：`PeerComparison` { stockId, industry, peerCount, metrics: list[PeerMetric] }
+  - `PeerMetric` { key, label, unit ("倍"|"%"|""), betterDirection ("higher"|"lower"), value, median, rank, outOf }
+  - 個別指標樣本不足（< 5 檔有效資料）→ `median=null`、`rank=null`，前端顯示 N/A
+  - 自己缺資料 → `value=null`，仍會回該指標 row（讓 UI 一致）
+- **錯誤**：404 = 自己是 ETF / 無產業 / 同業樣本 < 5；前端應整段隱藏
+- **產業範圍**：用 `stock_info.industry_category` 同產業；ETF 自動排除（避免「ETF」這個分類值把 250+ 受益憑證當成同業）
+- **依賴**：[app/indicators/peer_medians.py](../app/indicators/peer_medians.py)，直接讀 `per_pbr` / `monthly_revenue` / `financials_quarterly_derived` / `financials_cumulative` 既有 cache，**不重跑** `fundamental_snapshot`
+
 ---
 
 ### dashboard.py — 今日戰情室聚合
@@ -252,6 +290,14 @@
 - **Query params**：`strategy` (str, 可選)、`market` (list, 預設 `["上市","上櫃","ETF"]`)、`top` (int, 預設 50；`top=0` 視為「全部」不截斷)
 - **Response model**：`list[RadarHit]`
 - **副作用**：開頭呼叫 `ensure_fresh()`
+
+#### GET /api/radar/export.xlsx
+- **用途**：把當前過濾條件下的雷達命中匯出為 .xlsx；與 /hits 共用 `query_radar_hits`，排序 / 過濾邏輯一致
+- **Query params**：同 /hits，但 `top` 預設 = 0（不截斷，匯出時通常想拿全部）
+- **Response**：`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，`Content-Disposition: attachment`
+- **檔名**：`radar_<strategy>_YYYYMMDD.xlsx`；中文策略名走 RFC 5987 `filename*=UTF-8''…`，並保留 ASCII fallback `radar_YYYYMMDD.xlsx` 給舊 client（latin-1 嚴格 encode）
+- **Sheet 內容**：第 1 列 metadata（策略 / 市場 / 截止日 / 命中數 / 匯出時間）合併儲存格、第 2 列為表頭，並凍結 A:B 欄
+- **依賴**：[app/export/excel.py](../app/export/excel.py) `radar_hits_workbook()`
 
 ---
 

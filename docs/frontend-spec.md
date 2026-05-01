@@ -77,14 +77,16 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 - **檔案**：[web/app/stocks/[stockId]/page.tsx](../web/app/stocks/[stockId]/page.tsx)（263 行）
 - **類型**：RSC（`revalidate: 60`），動態路由
 - **API 呼叫**：全 `apiGetOptional`
-  - `/api/stocks/{id}/meta`、`/api/stocks/{id}/score`、`/api/stocks/{id}/price?days=180`、`/api/stocks/{id}/score-history?days=90`
+  - `/api/stocks/{id}/meta`、`/api/stocks/{id}/score`、`/api/stocks/{id}/price?days=180`、`/api/stocks/{id}/score-history?days=90`、**🆕** `/api/stocks/{id}/peers`（同業比較區塊；ETF/興櫃/樣本不足回 404 → 整段隱藏）
 - **主要 sections**：
-  - StockHeader（line 153）：代號 + 名稱 + PriceCell expanded
-  - 5-KPI row（line 74）：短/中/長/綜合分數 + 建議卡
-  - K 線（line 97）：`<CandlestickChart>` 含 MA20/MA60 + 成交量
-  - 評分拆解（line 111）：3 區（短/中/長）`<ScoreBreakdownBars>`
-  - 進出場建議（line 121）：4 卡（進場/停損/停利/風險）
-  - 分數走勢（line 137）：`<ScoreTimelineChart>`
+  - StockHeader：代號 + 名稱 + PriceCell expanded
+  - StockScorePanel（client）：模式切換（收盤/即時/假設）+ 5-KPI row + 評分拆解 + 進出場建議
+    - **🆕** loading 時 KPI/Breakdown 卡降透明度 (`opacity-60` + `aria-busy`)
+  - NarrativeSection（client）：AI 解讀（on-demand）
+  - **🆕** PeerComparisonSection（[PeerComparisonSection.tsx](../web/app/stocks/[stockId]/PeerComparisonSection.tsx)）：7 列 horizontal bar pair（value vs 同業中位數）+ #rank/N 徽章；單列 unit="%" → 0.xx 自動轉百分比，unit="倍" → `2.62×`
+  - K 線：`<CandlestickChart>` 含 MA20/MA60 + 成交量
+  - ATR 動態出場 + 部位試算
+  - 分數走勢：`<ScoreTimelineChart>`
 - **fallback**：meta 但無 price → 顯示「資料不足」訊息；有 price 無 score → 顯示「尚未產生快照」
 - **用到 components**：`PriceCell`、`ScoreBadge`、`RecommendationTag`、`ScoreBreakdownBars`、`Icon`、`CandlestickChart`、`ScoreTimelineChart`
 
@@ -95,13 +97,13 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 - **searchParams**：`strategy, market[], top (30/50/100/all), type (stock/etf), page`
 - **API 呼叫**：`apiGet<RadarStrategy[]>("/api/radar/strategies")`、`apiGet<RadarHit[]>("/api/radar/hits?...")`
 - **主要 sections**：
-  - PageHeader（line 97）
-  - Type tabs：個股 / ETF（line 109）—— ETF 過濾掉 `stocksOnly` 策略
-  - Strategy chips（line 137）含命中數
-  - Filters（line 186）：板別（上市/上櫃）+ Top N 切換
-  - Hits table（line 237）含 client-side 50/頁分頁、`<Pagination>`
+  - PageHeader
+  - Type tabs：個股 / ETF —— ETF 過濾掉 `stocksOnly` 策略
+  - Strategy chips 含命中數
+  - Filters：板別（上市/上櫃）+ Top N 切換
+  - Hits table 含 client-side 50/頁分頁、`<Pagination>`，標題列右側 `<DownloadCsvButton>` + **🆕** `<DownloadXlsxButton href="/api/radar/export.xlsx?strategy=...&market=...">`（保留當前過濾條件）
 - **欄寬**：`table-fixed`，固定欄寬；ETF tab 隱藏「長期」欄
-- **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`BackendDownError`、`Th/Td`、`Pagination`
+- **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`BackendDownError`、`Th/Td`、`Pagination`、`DownloadCsvButton`、`DownloadXlsxButton`
 
 ### `/history` — 歷史追蹤
 
@@ -128,33 +130,34 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 - **主要 sections**：
   - PageHeader（line 41）
   - KPI row × 4（line 48）：持股檔數/成本/市值/未實現損益
-  - 持股明細 `<HoldingsTable>`（line 75）
-  - 風險提醒卡（line 81）
-  - 已實現損益（line 93）含 mini KPI + 配對表
+  - 持股明細 `<HoldingsTable>`，標題列右側 **🆕** `<DownloadXlsxButton href="/api/portfolio/holdings/export.xlsx">`
+  - 風險提醒卡
+  - 已實現損益 含 mini KPI + 配對表
   - `<TradesPanel>`：新增交易表單 + 最近 50 筆交易刪除
-- **用到 components**：`PageHeader`、`EmptyState`、`KPIStat`、`HoldingsTable`、`RiskAlertList`、`Th/Td`、`Icon`
+- **用到 components**：`PageHeader`、`EmptyState`、`KPIStat`、`HoldingsTable`、`RiskAlertList`、`DownloadXlsxButton`、`Th/Td`、`Icon`
 
 ### `/watchlist` — 自選股總覽
 
-- **檔案**：[web/app/watchlist/page.tsx](../web/app/watchlist/page.tsx)（236 行）
+- **檔案**：[web/app/watchlist/page.tsx](../web/app/watchlist/page.tsx)
 - **類型**：RSC（`revalidate: 60`）
-- **searchParams**：`type (stock/etf)`
-- **API 呼叫**：`apiGet<WatchlistOverviewRow[]>("/api/watchlist/overview")`
+- **searchParams**：`type (stock/etf)`、**🆕** `tag`（過濾僅顯示帶該 tag 的檔；切 type tab 時保留）
+- **API 呼叫**：`apiGet<WatchlistOverviewRow[]>("/api/watchlist/overview")`、**🆕** `apiGetOptional<TagCount[]>("/api/watchlist/tags")`
 - **主要 sections**：
-  - PageHeader（line 47）
-  - Type tabs：個股 / ETF（line 58）
-  - 綜合評分前三 / 後三 RankingCard（line 96）
-  - 全部自選股表（line 113）含「今日%」`<PriceCell>`
-- **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`Th/Td`
+  - PageHeader
+  - Type tabs：個股 / ETF
+  - **🆕** Tag filter chip 列：`<FilterChip>`「全部」+ 每個 tag 一個 chip（含命中數 badge）；無 tag 時整段隱藏
+  - 綜合評分前三 / 後三 RankingCard
+  - 全部自選股表，每列代號旁 **🆕** 渲染 tag chips（brand-tint 底色），含「今日%」`<PriceCell>`
+- **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`FilterChip`、`Th/Td`
 
 ### `/watchlist-manage` — 自選股管理
 
-- **檔案**：[web/app/watchlist-manage/page.tsx](../web/app/watchlist-manage/page.tsx)（27 行 RSC shell）+ [client.tsx](../web/app/watchlist-manage/client.tsx)（互動主體）
+- **檔案**：[web/app/watchlist-manage/page.tsx](../web/app/watchlist-manage/page.tsx) + [client.tsx](../web/app/watchlist-manage/client.tsx)
 - **類型**：RSC（`revalidate: 0`，每次重抓） + Client
 - **API 呼叫**：
-  - RSC：`/api/watchlist`
-  - Client：`/api/watchlist/lookup/{id}`（單檔 lookup，輸入時自動帶名稱）、POST `/api/watchlist`（單筆）、POST `/api/watchlist/bulk-add`、POST `/api/watchlist/bulk-remove`
-- **主要 sections**：新增/批次新增、批次移除、列表（client component 內）
+  - RSC：`/api/watchlist`（含 tags）
+  - Client：`/api/watchlist/lookup/{id}`、POST `/api/watchlist`、POST `/api/watchlist/bulk-add`、POST `/api/watchlist/bulk-remove`、**🆕** PUT `/api/watchlist/{id}/tags`
+- **主要 sections**：新增 / 批次新增、批次移除、列表（含 **🆕** 「標籤」欄位 `<TagsEditor>`：chip + × 移除、Enter / blur 新增；樂觀更新 + 失敗 rollback）
 
 ### `/dq` — 資料品質
 
@@ -303,6 +306,9 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 | [Field.tsx](../web/components/primitives/Field.tsx) | RSC | 表單欄位 wrapper（含 hint + InfoTip） | `label, hint, term, children, className` |
 | [NextStepCard.tsx](../web/components/primitives/NextStepCard.tsx) | RSC | 「下一步試試」卡片群 | `items: NextStep[], heading` |
 | [BackendDownError.tsx](../web/components/primitives/BackendDownError.tsx) | RSC | 後端掛掉時的友善錯誤頁 | `error, pageTitle` |
+| [DownloadCsvButton.tsx](../web/components/primitives/DownloadCsvButton.tsx) | Client | 純前端 CSV 下載（Blob + BOM） | `headers, rows, filename, label, size, disabled` |
+| [DownloadXlsxButton.tsx](../web/components/primitives/DownloadXlsxButton.tsx) | RSC | 🆕 Excel 下載（後端 API → `<a download>`，無 hooks） | `href, label, size, disabled` |
+| [FilterChip.tsx](../web/components/primitives/FilterChip.tsx) | RSC | 統一 filter chip（active/inactive；focus-visible ring + aria-current） | `href, onClick, active, size, tone, icon, count, prefetch, ariaLabel` |
 | [InfoTip.tsx](../web/components/primitives/InfoTip.tsx) | Client | 名詞解釋 tooltip（hover/click） | `term?, text?, inline, className` |
 | [ThemeToggle.tsx](../web/components/primitives/ThemeToggle.tsx) | Client | 淺/系統/深 主題切換 | — |
 | [SearchTrigger.tsx](../web/components/primitives/SearchTrigger.tsx) | Client | Topbar 搜尋按鈕（派發 event） | — |

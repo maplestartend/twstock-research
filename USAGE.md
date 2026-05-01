@@ -159,6 +159,7 @@ python -m scripts.backfill_financials_history --quarters 8
 
 ### 📊 自選股總覽
 個股 / ETF tab 分流（評分機制不同；ETF tab 隱藏「長期」欄）。顯示短/中/長/綜合，依綜合分降序，下方 Top 3 / Bottom 3。
+**🆕 標籤分組**：tab 列下方多一排 tag filter chip（如「長期持有」「配息」「短線」），點擊只顯示帶該 tag 的檔；切 type tab 時保留 tag。每列代號旁也會渲染該檔的 tag chips 方便辨識。tag 在 `/watchlist-manage` 編輯。
 
 ### 🔍 個股詳情（決策工作台）
 - K 線圖（可勾「使用還原價」）
@@ -169,6 +170,7 @@ python -m scripts.backfill_financials_history --quarters 8
   - 長期分數固定不動（吃 ROE/EPS/股利等財報指標，盤中價無關）；KPI 卡會顯示與收盤分數的 Δ 差
 - 評分拆解（短/中/長 三 tab，每個子項分數）
 - 進出場建議、風險提示
+- **🆕 同業比較區塊**：個股 vs 同產業中位數的 7 個指標（本益比 / 殖利率 / 毛利率 / EPS YoY / 營收 YoY / 負債比 / 流動比），每列以 horizontal bar 視覺化兩者相對位置 + 「#rank/N」徽章排名。ETF / 興櫃 / 同業 < 5 檔自動隱藏。資料源：`per_pbr` / `monthly_revenue` / `financials_quarterly_derived` / `financials_cumulative` 既有 cache，**不重跑** `fundamental_snapshot`，~30ms 完成
 - 籌碼/基本面明細（可折疊）
 - 📈 月營收柱狀 + YoY 折線
 - 📉 近 90 天分數折線 + 預設策略近 1 年勝率/Alpha/B&H 快照
@@ -183,11 +185,12 @@ python -m scripts.backfill_financials_history --quarters 8
 - **刪除交易**：每列右側「刪除」鈕，二次確認後以 trade_log 重建該股 holdings
 - **加入/移除自選**：每列代號左側 ⭐，點一下即 toggle（樂觀更新 + router.refresh）
 - **已實現損益**：FIFO 配對
+- **🆕 下載 Excel**：「持股明細」標題列右側「下載 Excel」鈕，匯出含 brand-color 表頭、凍結 A:B 兩欄、CJK 自動欄寬的 .xlsx；資料與螢幕上同份（排序 / 計算邏輯一致）
 
 ### 🎯 雷達掃描
 個股 / ETF tab 分流（ETF 識別：代號 `00` 開頭且長度 ≥ 4）。預設策略 = 短線強勢。
 **內建策略**：短線強勢、中期波段、長期價值、外資連買（≥5 日 + 20 日淨買超）、回檔布局、三榜俱佳、相對強勢（20 日跑贏指數 >5%）、月營收爆發（YoY >20%）、營收持續成長（≥3 月 YoY>0）、營收高速加速（≥3 月 YoY>20%）。
-過濾器：市場類型、顯示前 N 名、是否含基本面。可批次加入自選。命中表上方右側可「下載 CSV」（前端產出，含 BOM 對齊 Excel 繁中）。
+過濾器：市場類型、顯示前 N 名、是否含基本面。可批次加入自選。命中表上方右側可「下載 CSV」（前端產出，含 BOM 對齊 Excel 繁中）或 **🆕 「下載 Excel」**（後端 openpyxl 產出，第一列含策略/市場/截止日/命中數 metadata、凍結代號名稱與表頭，預設帶全部命中而非只當前頁）。
 > 首次掃描 ~20-30 秒（~2300 檔上市+上櫃），結果寫 `data/cache/radar_*.parquet`，DB 推進日期/月營收時自動失效。
 
 ### 📅 除權息行事曆
@@ -202,6 +205,7 @@ python -m scripts.backfill_financials_history --quarters 8
 
 ### 📝 自選股管理
 新增（代號→名稱由 stock_info 自動帶出）、批次貼上、勾選刪除。原子寫入 `watchlist.yaml`。
+**🆕 標籤編輯**：每列「標籤」欄可直接編輯：chip 上點 × 移除、輸入框輸入新 tag 後 Enter / blur 加入。後端會自動 trim + 去重（保序）。空 list 視為清空。樂觀更新 + 失敗自動 rollback。watchlist.yaml 用 parallel `tags:` map 儲存，舊格式（只有 `stocks:`）仍可正常讀取。
 
 ### ⏮ 策略回測 / 📊 投組回測 / 🔬 參數掃描
 - **🎨 情景預設**：頁首 3 卡（短線快手 / 波段獵人 / 長期持有），一鍵套用避免手調 7 個 slider
