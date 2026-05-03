@@ -20,7 +20,12 @@ import { NarrativeSection } from "./NarrativeSection";
 import { PeerComparisonSection } from "./PeerComparisonSection";
 import { PositionSuggestCard } from "./PositionSuggestCard";
 
-export const revalidate = 60;
+// 個股頁的分數是使用者最在意的即時資訊；若沿用 ISR/RSC cache，
+// 軟導頁可能暫時看到舊分數（需 Ctrl+F5 才刷新）。改成 dynamic + noCache，
+// 確保每次進頁都拿到最新 score_stock 結果。
+export const dynamic = "force-dynamic";
+
+const SCORE_NOCACHE = { noCache: true } as const;
 
 export default async function StockDetailPage({ params }: { params: Promise<{ stockId: string }> }) {
   const { stockId } = await params;
@@ -28,7 +33,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
   // 先平行抓不依賴 entry context 的東西
   const [meta, score, price, history, myHolding] = await Promise.all([
     apiGetOptional<StockMeta>(`/api/stocks/${stockId}/meta`),
-    apiGetOptional<StockScoreView>(`/api/stocks/${stockId}/score`),
+    apiGetOptional<StockScoreView>(`/api/stocks/${stockId}/score`, SCORE_NOCACHE),
     apiGetOptional<StockPriceBundle>(`/api/stocks/${stockId}/price?days=180`),
     apiGetOptional<ScoreHistoryPoint[]>(`/api/stocks/${stockId}/score-history?days=90`, {
       tags: ["snapshot"],
