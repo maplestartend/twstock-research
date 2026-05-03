@@ -1,9 +1,9 @@
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import Link from "next/link";
 import {
   apiGet,
-  apiGetOptional,
   humanizeApiError,
+  type DashboardHomePayload,
   type PortfolioSummary,
   type HoldingRow,
   type RadarHit,
@@ -30,11 +30,14 @@ import {
   TableSkeleton,
   ListSkeleton,
   CardSkeleton,
-  Skeleton,
 } from "@/components/primitives/Skeleton";
 import { fmtDateShort, fmtMoney, fmtPrice, tone } from "@/lib/format";
 
 export const revalidate = 60;
+
+const getDashboardHome = cache(() =>
+  apiGet<DashboardHomePayload>("/api/dashboard/home", { tags: ["snapshot", "watchlist"] }),
+);
 
 export default function DashboardPage() {
   return (
@@ -120,18 +123,15 @@ function SectionError({ error }: { error: unknown }) {
 }
 
 async function KpiSection() {
-  let summary: PortfolioSummary;
-  let radarHits: RadarHit[];
-  let freshness: DataFreshness[];
+  let data: DashboardHomePayload;
   try {
-    [summary, radarHits, freshness] = await Promise.all([
-      apiGet<PortfolioSummary>("/api/portfolio/summary"),
-      apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=6", { tags: ["snapshot"] }),
-      apiGet<DataFreshness[]>("/api/dashboard/data-freshness", { tags: ["snapshot"] }),
-    ]);
+    data = await getDashboardHome();
   } catch (e) {
     return <SectionError error={e} />;
   }
+  const summary: PortfolioSummary = data.summary;
+  const radarHits: RadarHit[] = data.radarHits;
+  const freshness: DataFreshness[] = data.freshness;
   const freshest = freshness.find((f) => f.table === "daily_price");
   return (
     <section className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
@@ -183,19 +183,15 @@ async function KpiSection() {
 }
 
 async function HoldingsSnapshotSection() {
-  let holdings: HoldingRow[];
-  let risks: RiskAlert[];
-  let delta: SnapshotDelta | null;
+  let data: DashboardHomePayload;
   try {
-    [holdings, risks, delta] = await Promise.all([
-      // holdings 含 in_watchlist 旗標，加 'watchlist' tag 讓 toggleWatchlistAction 能精準清快取
-      apiGet<HoldingRow[]>("/api/portfolio/holdings", { tags: ["watchlist", "snapshot"] }),
-      apiGet<RiskAlert[]>("/api/portfolio/risk-alerts", { tags: ["snapshot"] }),
-      apiGetOptional<SnapshotDelta>("/api/dashboard/snapshot-delta?top=8", { tags: ["snapshot"] }),
-    ]);
+    data = await getDashboardHome();
   } catch (e) {
     return <SectionError error={e} />;
   }
+  const holdings: HoldingRow[] = data.holdings;
+  const risks: RiskAlert[] = data.risks;
+  const delta: SnapshotDelta | null = data.snapshotDelta;
   return (
     <>
       <HoldingsTable rows={holdings} />
@@ -211,12 +207,13 @@ async function HoldingsSnapshotSection() {
 }
 
 async function RadarHitsSection() {
-  let radarHits: RadarHit[];
+  let data: DashboardHomePayload;
   try {
-    radarHits = await apiGet<RadarHit[]>("/api/dashboard/radar-hits?limit=6", { tags: ["snapshot"] });
+    data = await getDashboardHome();
   } catch (e) {
     return <SectionError error={e} />;
   }
+  const radarHits: RadarHit[] = data.radarHits;
   if (radarHits.length === 0) {
     return (
       <EmptyState size="sm">
@@ -241,20 +238,19 @@ async function RadarHitsSection() {
 }
 
 async function MoversSection({ direction }: { direction: "up" | "down" }) {
-  const movers = (await apiGetOptional<WatchlistMover[]>(
-    `/api/watchlist/movers?top=5&direction=${direction}`,
-    { tags: ["watchlist", "snapshot"] },
-  )) ?? [];
+  const data = await getDashboardHome();
+  const movers: WatchlistMover[] = direction === "up" ? data.moversUp : data.moversDown;
   return <MoversCard movers={movers} />;
 }
 
 async function MyScoreChangesSection() {
-  let changes: ScoreChange[];
+  let data: DashboardHomePayload;
   try {
-    changes = await apiGet<ScoreChange[]>("/api/dashboard/my-score-changes?days=7", { tags: ["snapshot"] });
+    data = await getDashboardHome();
   } catch (e) {
     return <SectionError error={e} />;
   }
+  const changes: ScoreChange[] = data.myScoreChanges;
   if (changes.length === 0) {
     return (
       <EmptyState size="sm">
@@ -318,22 +314,24 @@ async function MyScoreChangesSection() {
 }
 
 async function ExDividendSection() {
-  let events: ExDividendEvent[];
+  let data: DashboardHomePayload;
   try {
-    events = await apiGet<ExDividendEvent[]>("/api/dashboard/ex-dividend?days_ahead=7");
+    data = await getDashboardHome();
   } catch (e) {
     return <SectionError error={e} />;
   }
+  const events: ExDividendEvent[] = data.exDividend;
   return <ExDividendCard events={events} />;
 }
 
 async function FreshnessFooterSection() {
-  let freshness: DataFreshness[];
+  let data: DashboardHomePayload;
   try {
-    freshness = await apiGet<DataFreshness[]>("/api/dashboard/data-freshness", { tags: ["snapshot"] });
+    data = await getDashboardHome();
   } catch (e) {
     return <SectionError error={e} />;
   }
+  const freshness: DataFreshness[] = data.freshness;
   return (
     <div className="rounded-xl border border-[var(--border-default)] bg-surface p-4 flex flex-wrap gap-3">
       {freshness.map((f) => (

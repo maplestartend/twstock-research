@@ -8,8 +8,11 @@ from fastapi import APIRouter, Depends, Query
 
 from api.common import make_placeholders
 from api.deps import get_db
+from api.routers import portfolio as portfolio_router
+from api.routers import watchlist as watchlist_router
 from api.schemas.common import CamelModel, StockRef
-from api.schemas.stock import DataFreshness, ExDividendEvent, RadarHit
+from api.schemas.portfolio import HoldingRow, PortfolioSummary, RiskAlert
+from api.schemas.stock import DataFreshness, ExDividendEvent, RadarHit, WatchlistMover
 from app import watchlist as wl_mod
 from app.data.clock import taipei_today
 from app.data.db import Database
@@ -129,6 +132,12 @@ class SnapshotDelta(CamelModel):
     big_movers: list[ScoreMover] = []      # 綜合分數變化 ≥ 5
 
 
+def _parse_strategies(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return sorted({s.strip() for s in raw.split(",") if s and s.strip()})
+
+
 class ScoreChange(StockRef):
     """單檔股票在 7 日窗口內的分數變化。給戰情室「我的關注本週分數變化」widget 用。"""
     in_watchlist: bool = False
@@ -138,6 +147,47 @@ class ScoreChange(StockRef):
     delta: float | None = None
     as_of_latest: str | None = None
     as_of_prev: str | None = None
+
+
+class DashboardHomePayload(CamelModel):
+    summary: PortfolioSummary
+    radar_hits: list[RadarHit]
+    freshness: list[DataFreshness]
+    holdings: list[HoldingRow]
+    risks: list[RiskAlert]
+    snapshot_delta: SnapshotDelta | None = None
+    my_score_changes: list[ScoreChange]
+    movers_up: list[WatchlistMover]
+    movers_down: list[WatchlistMover]
+    ex_dividend: list[ExDividendEvent]
+
+
+@router.get("/home", response_model=DashboardHomePayload)
+def home(
+    radar_limit: int = Query(default=6, ge=1, le=30),
+    movers_top: int = Query(default=5, ge=1, le=20),
+    delta_top: int = Query(default=8, ge=1, le=30),
+    changes_days: int = Query(default=7, ge=1, le=30),
+    ex_days_ahead: int = Query(default=7, ge=1, le=30),
+    db: Database = Depends(get_db),
+) -> DashboardHomePayload:
+    """首頁聚合資料：一次回傳戰情室所有區塊，降低前端多支 API 往返成本。"""
+    ensure_fresh(db)
+    summary_data = portfolio_router.summary(db=db)
+    holdings_data = portfolio_router.holdings(db=db)
+    risks_data = portfolio_router.risk_alerts(db=db)
+    return DashboardHomePayload(
+        summary=summary_data,
+        radar_hits=[RadarHit(**h) for h in query_radar_hits(db, markets={"上市", "上櫃"}, limit=radar_limit)],
+        freshness=data_freshness(db=db),
+        holdings=holdings_data,
+        risks=risks_data,
+        snapshot_delta=snapshot_delta(top=delta_top, db=db),
+        my_score_changes=my_score_changes(days=changes_days, db=db),
+        movers_up=watchlist_router.movers(top=movers_top, direction="up", db=db),
+        movers_down=watchlist_router.movers(top=movers_top, direction="down", db=db),
+        ex_dividend=ex_dividend(days_ahead=ex_days_ahead, db=db),
+    )
 
 
 @router.get("/my-score-changes", response_model=list[ScoreChange])
@@ -223,6 +273,7 @@ def snapshot_delta(top: int = 10, db: Database = Depends(get_db)) -> SnapshotDel
     回傳：新進命中 / 跌出命中 / 綜合分數大幅變化（|Δ|≥5），各取 top N。
     若 signal_history 只有一天 → prev_as_of=null、各 list 為空。
     """
+    top_n = max(0, int(top))
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT DISTINCT as_of FROM signal_history ORDER BY as_of DESC LIMIT 2"
@@ -233,79 +284,126 @@ def snapshot_delta(top: int = 10, db: Database = Depends(get_db)) -> SnapshotDel
         prev = rows[1]["as_of"] if len(rows) > 1 else None
         if prev is None:
             return SnapshotDelta(latest_as_of=latest)
+        if top_n == 0:
+            return SnapshotDelta(latest_as_of=latest, prev_as_of=prev)
 
-        latest_rows = conn.execute(
-            "SELECT stock_id, stock_name, composite, strategies FROM signal_history WHERE as_of=?",
-            (latest,),
+        fetch_n = max(1, top_n) * 4  # 先多撈一些，給策略字串清洗後再裁切 top
+        new_hit_rows = conn.execute(
+            """
+            WITH latest_rows AS (
+                SELECT stock_id, stock_name, composite, strategies
+                FROM signal_history
+                WHERE as_of = ?
+            ),
+            prev_rows AS (
+                SELECT stock_id, stock_name, composite, strategies
+                FROM signal_history
+                WHERE as_of = ?
+            )
+            SELECT l.stock_id,
+                   COALESCE(l.stock_name, p.stock_name, l.stock_id) AS stock_name,
+                   l.composite AS composite,
+                   l.strategies AS latest_strategies
+            FROM latest_rows l
+            LEFT JOIN prev_rows p ON p.stock_id = l.stock_id
+            WHERE COALESCE(TRIM(l.strategies), '') <> ''
+              AND COALESCE(TRIM(p.strategies), '') = ''
+            ORDER BY (l.composite IS NULL), l.composite DESC, l.stock_id
+            LIMIT ?
+            """,
+            (latest, prev, fetch_n),
         ).fetchall()
-        prev_rows = conn.execute(
-            "SELECT stock_id, stock_name, composite, strategies FROM signal_history WHERE as_of=?",
-            (prev,),
+        dropped_rows = conn.execute(
+            """
+            WITH latest_rows AS (
+                SELECT stock_id, stock_name, composite, strategies
+                FROM signal_history
+                WHERE as_of = ?
+            ),
+            prev_rows AS (
+                SELECT stock_id, stock_name, composite, strategies
+                FROM signal_history
+                WHERE as_of = ?
+            )
+            SELECT p.stock_id,
+                   COALESCE(p.stock_name, l.stock_name, p.stock_id) AS stock_name,
+                   COALESCE(l.composite, p.composite) AS composite,
+                   p.strategies AS prev_strategies
+            FROM prev_rows p
+            LEFT JOIN latest_rows l ON l.stock_id = p.stock_id
+            WHERE COALESCE(TRIM(p.strategies), '') <> ''
+              AND COALESCE(TRIM(l.strategies), '') = ''
+            ORDER BY (COALESCE(l.composite, p.composite) IS NULL),
+                     COALESCE(l.composite, p.composite) DESC,
+                     p.stock_id
+            LIMIT ?
+            """,
+            (latest, prev, fetch_n),
         ).fetchall()
-
-    def _hits(strategies: str | None) -> set[str]:
-        if not strategies:
-            return set()
-        return {s.strip() for s in strategies.split(",") if s.strip()}
-
-    latest_map = {r["stock_id"]: r for r in latest_rows}
-    prev_map = {r["stock_id"]: r for r in prev_rows}
+        mover_rows = conn.execute(
+            """
+            SELECT l.stock_id,
+                   COALESCE(l.stock_name, p.stock_name, l.stock_id) AS stock_name,
+                   l.composite AS latest_composite,
+                   p.composite AS prev_composite
+            FROM signal_history l
+            JOIN signal_history p ON p.stock_id = l.stock_id AND p.as_of = ?
+            WHERE l.as_of = ?
+              AND l.composite IS NOT NULL
+              AND p.composite IS NOT NULL
+              AND ABS(l.composite - p.composite) >= 5
+            ORDER BY ABS(l.composite - p.composite) DESC, l.stock_id
+            LIMIT ?
+            """,
+            (prev, latest, top_n),
+        ).fetchall()
 
     new_hits: list[HitChange] = []
     dropped_hits: list[HitChange] = []
     big_movers: list[ScoreMover] = []
 
-    for sid, r in latest_map.items():
-        latest_strats = _hits(r["strategies"])
-        prev_r = prev_map.get(sid)
-        prev_strats = _hits(prev_r["strategies"]) if prev_r else set()
-
-        added = latest_strats - prev_strats
-        if added and not prev_strats:
-            # 整檔從「無命中」變「有命中」
-            new_hits.append(HitChange(
-                stock_id=sid, stock_name=r["stock_name"],
-                composite=r["composite"], strategies=sorted(added),
-            ))
-
-        # 大幅變化
-        prev_c = prev_r["composite"] if prev_r else None
-        latest_c = r["composite"]
-        if prev_c is not None and latest_c is not None:
-            delta = float(latest_c) - float(prev_c)
-            if abs(delta) >= 5:
-                big_movers.append(ScoreMover(
-                    stock_id=sid, stock_name=r["stock_name"],
-                    prev_composite=float(prev_c), latest_composite=float(latest_c),
-                    delta=round(delta, 2),
-                ))
-
-    for sid, prev_r in prev_map.items():
-        prev_strats = _hits(prev_r["strategies"])
-        if not prev_strats:
+    for r in new_hit_rows:
+        strategies = _parse_strategies(r["latest_strategies"])
+        if not strategies:
             continue
-        latest_r = latest_map.get(sid)
-        latest_strats = _hits(latest_r["strategies"]) if latest_r else set()
-        if latest_strats:
-            continue
-        # 整檔從「有命中」變「無命中」
-        dropped_hits.append(HitChange(
-            stock_id=sid, stock_name=prev_r["stock_name"],
-            composite=latest_r["composite"] if latest_r else None,
-            strategies=sorted(prev_strats),
+        new_hits.append(HitChange(
+            stock_id=r["stock_id"],
+            stock_name=r["stock_name"] or r["stock_id"],
+            composite=(float(r["composite"]) if r["composite"] is not None else None),
+            strategies=strategies,
         ))
+        if len(new_hits) >= top_n:
+            break
 
-    # 排序 + 取 top
-    new_hits.sort(key=lambda h: (h.composite or 0), reverse=True)
-    dropped_hits.sort(key=lambda h: (h.composite or 0), reverse=True)
-    big_movers.sort(key=lambda m: abs(m.delta or 0), reverse=True)
+    for r in dropped_rows:
+        strategies = _parse_strategies(r["prev_strategies"])
+        if not strategies:
+            continue
+        dropped_hits.append(HitChange(
+            stock_id=r["stock_id"],
+            stock_name=r["stock_name"] or r["stock_id"],
+            composite=(float(r["composite"]) if r["composite"] is not None else None),
+            strategies=strategies,
+        ))
+        if len(dropped_hits) >= top_n:
+            break
+
+    for r in mover_rows:
+        delta = float(r["latest_composite"]) - float(r["prev_composite"])
+        big_movers.append(ScoreMover(
+            stock_id=r["stock_id"],
+            stock_name=r["stock_name"] or r["stock_id"],
+            prev_composite=float(r["prev_composite"]),
+            latest_composite=float(r["latest_composite"]),
+            delta=round(delta, 2),
+        ))
 
     return SnapshotDelta(
         latest_as_of=latest,
         prev_as_of=prev,
-        new_hits=new_hits[:top],
-        dropped_hits=dropped_hits[:top],
-        big_movers=big_movers[:top],
+        new_hits=new_hits,
+        dropped_hits=dropped_hits,
+        big_movers=big_movers,
     )
 
 

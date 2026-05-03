@@ -158,6 +158,8 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_signal_asof ON signal_history(as_of)",
     "CREATE INDEX IF NOT EXISTS idx_signal_stock ON signal_history(stock_id)",
     "CREATE INDEX IF NOT EXISTS idx_signal_stock_asof ON signal_history(stock_id, as_of DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_signal_hit_asof ON signal_history(as_of, stock_id) "
+    "WHERE strategies IS NOT NULL AND strategies <> ''",
     # 子因子分數歷史（給 /diagnostics 算 sub-factor IC 用）。
     # 長格式：每檔 × 每天 × 每個 horizon × 每個 sub-factor 一列。
     # short ~10 個 sub-factor + mid 6 + long 5 = 21 個 → 2300 檔 × 21 = ~48k 列/天，

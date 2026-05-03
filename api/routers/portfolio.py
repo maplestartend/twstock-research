@@ -12,6 +12,7 @@ from api.common import get_stock_name as _stock_name, make_placeholders, safe_fl
 from api.deps import get_db
 from api.schemas.common import CamelModel
 from api.schemas.portfolio import (
+    HoldingContext,
     HoldingRow,
     JournalStatRow,
     JournalUpdateBody,
@@ -261,6 +262,20 @@ def _holdings_cached(db: Database) -> list[HoldingRow]:
     rows = _compute_holdings(db)
     _holdings_ctx.set(rows)
     return rows
+
+
+@router.get("/holding-context/{stock_id}", response_model=HoldingContext | None)
+def holding_context(stock_id: str, db: Database = Depends(get_db)) -> HoldingContext | None:
+    """個股頁輕量持倉查詢：只回 entry/cost/shares，避免拉整包 holdings。"""
+    h = pf.get_holding(db, stock_id)
+    if h is None:
+        return None
+    return HoldingContext(
+        stock_id=h.stock_id,
+        shares=h.shares,
+        avg_cost=h.avg_cost,
+        entry_date=h.entry_date,
+    )
 
 
 @router.get("/holdings", response_model=list[HoldingRow])

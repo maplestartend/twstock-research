@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import {
   apiGetOptional,
   type AtrStopView,
-  type HoldingRow,
+  type HoldingContext,
   type StockMeta,
   type StockPriceBundle,
   type StockScoreView,
@@ -26,20 +26,19 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
   const { stockId } = await params;
 
   // 先平行抓不依賴 entry context 的東西
-  const [meta, score, price, history, holdings] = await Promise.all([
+  const [meta, score, price, history, myHolding] = await Promise.all([
     apiGetOptional<StockMeta>(`/api/stocks/${stockId}/meta`),
     apiGetOptional<StockScoreView>(`/api/stocks/${stockId}/score`),
     apiGetOptional<StockPriceBundle>(`/api/stocks/${stockId}/price?days=180`),
     apiGetOptional<ScoreHistoryPoint[]>(`/api/stocks/${stockId}/score-history?days=90`, {
       tags: ["snapshot"],
     }).then((v) => v ?? []),
-    apiGetOptional<HoldingRow[]>(`/api/portfolio/holdings`, {
+    apiGetOptional<HoldingContext>(`/api/portfolio/holding-context/${stockId}`, {
       tags: ["watchlist", "snapshot"],
     }),
   ]);
 
   // 若使用者持有此檔，把 entry_date / entry_price 拿來算 trailing 停損 + Chandelier 動態停利
-  const myHolding = holdings?.find((h) => h.stockId === stockId) ?? null;
   const atrParams = new URLSearchParams({ multiplier: "2.0" });
   if (myHolding?.entryDate && myHolding.avgCost > 0) {
     atrParams.set("entry_date", myHolding.entryDate);

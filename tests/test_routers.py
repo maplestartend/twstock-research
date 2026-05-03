@@ -106,6 +106,22 @@ def test_dashboard_radar_hits_excludes_etf_by_default():
         assert h.get("market") in ("上市", "上櫃", "其他", None)
 
 
+def test_dashboard_home_payload_shape():
+    r = client.get("/api/dashboard/home")
+    assert r.status_code == 200
+    data = r.json()
+    assert "summary" in data
+    assert "radarHits" in data
+    assert "freshness" in data
+    assert "holdings" in data
+    assert "risks" in data
+    assert "snapshotDelta" in data
+    assert "myScoreChanges" in data
+    assert "moversUp" in data
+    assert "moversDown" in data
+    assert "exDividend" in data
+
+
 def test_data_freshness_monthly_revenue_threshold_relaxed():
     """月營收 lag 不該用日表的 1/3 天門檻；至少 lag <= 70 天的 tone 不該是 error。"""
     r = client.get("/api/dashboard/data-freshness")
@@ -253,3 +269,53 @@ def test_holdings_endpoint_includes_atr_fields():
                     assert row["atrDistancePct"] >= 0
         else:
             assert row["atrKind"] is None
+
+
+def test_holding_context_endpoint_matches_holdings_row():
+    """個股頁輕量持倉 endpoint 應回傳與 /holdings 同一檔的核心欄位。"""
+    r = client.get("/api/portfolio/holdings")
+    assert r.status_code == 200
+    rows = r.json()
+    if not rows:
+        pytest.skip("沒持股可測 holding-context")
+    first = rows[0]
+    sid = first["stockId"]
+
+    ctx = client.get(f"/api/portfolio/holding-context/{sid}")
+    assert ctx.status_code == 200
+    data = ctx.json()
+    assert data["stockId"] == sid
+    assert data["shares"] == first["shares"]
+    assert data["avgCost"] == first["avgCost"]
+    assert data["entryDate"] == first["entryDate"]
+
+
+def test_holding_context_endpoint_returns_null_when_not_held():
+    r = client.get("/api/portfolio/holding-context/ZZZZ")
+    assert r.status_code == 200
+    assert r.json() is None
+
+
+def test_snapshot_delta_respects_top_limit():
+    r = client.get("/api/dashboard/snapshot-delta", params={"top": 3})
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data["newHits"]) <= 3
+    assert len(data["droppedHits"]) <= 3
+    assert len(data["bigMovers"]) <= 3
+
+
+def test_weight_tuner_breakdown_endpoint_shape():
+    r = client.get("/api/weight-tuner/breakdown")
+    assert r.status_code == 200
+    data = r.json()
+    assert "stocks" in data
+    assert "defaultWeights" in data
+    assert {"short", "mid", "long"} <= set(data["defaultWeights"].keys())
+    if data["stocks"]:
+        s = data["stocks"][0]
+        assert "stockId" in s
+        assert "shortParts" in s
+        assert "midParts" in s
+        assert "longParts" in s
+        assert "compositeDefault" in s

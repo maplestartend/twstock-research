@@ -79,6 +79,7 @@ def price(stock_id: str, days: int = 180, db: Database = Depends(get_db)) -> Sto
 
     # 向量化序列化：避免 N 次 row-by-row 建立 dict / Pydantic instance
     df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    rows = df.to_dict("records")
     ohlcv = [
         OHLCV(
             date=row["date"],
@@ -88,7 +89,7 @@ def price(stock_id: str, days: int = 180, db: Database = Depends(get_db)) -> Sto
             close=_safe_float(row.get("close")) or 0.0,
             volume=_safe_float(row.get("volume")),
         )
-        for row in df.to_dict("records")
+        for row in rows
     ]
     indicators = [
         IndicatorPoint(
@@ -102,7 +103,7 @@ def price(stock_id: str, days: int = 180, db: Database = Depends(get_db)) -> Sto
             bb_upper=_safe_float(row.get("bb_upper")),
             bb_lower=_safe_float(row.get("bb_lower")),
         )
-        for row in df.to_dict("records")
+        for row in rows
     ]
     return StockPriceBundle(stock_id=stock_id, ohlcv=ohlcv, indicators=indicators)
 

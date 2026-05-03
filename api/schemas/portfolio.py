@@ -43,6 +43,14 @@ class HoldingRow(StockRef):
     in_watchlist: bool = False           # 該檔是否已在 watchlist.yaml
 
 
+class HoldingContext(CamelModel):
+    """個股頁所需的最小持倉資訊（避免每次拉整包 /holdings）。"""
+    stock_id: str
+    shares: float
+    avg_cost: float
+    entry_date: str | None = None
+
+
 class RiskAlert(CamelModel):
     severity: str  # "info" | "warning" | "critical"
     title: str

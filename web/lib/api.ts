@@ -191,6 +191,19 @@ export type ScoreChange = {
   asOfPrev: string | null;
 };
 
+export type DashboardHomePayload = {
+  summary: PortfolioSummary;
+  radarHits: RadarHit[];
+  freshness: DataFreshness[];
+  holdings: HoldingRow[];
+  risks: RiskAlert[];
+  snapshotDelta: SnapshotDelta | null;
+  myScoreChanges: ScoreChange[];
+  moversUp: WatchlistMover[];
+  moversDown: WatchlistMover[];
+  exDividend: ExDividendEvent[];
+};
+
 /* ===============================================================
    Response types — 手寫版（未來可換成 openapi-typescript 自動產生）
    欄位為 camelCase，因為 FastAPI 的 alias_generator = to_camel。
@@ -243,6 +256,13 @@ export type HoldingRow = {
   atrKind: "trailing" | "fixed" | null;
   atrBelowStop: boolean;
   inWatchlist: boolean;
+};
+
+export type HoldingContext = {
+  stockId: string;
+  shares: number;
+  avgCost: number;
+  entryDate: string | null;
 };
 
 export type AtrStopView = {

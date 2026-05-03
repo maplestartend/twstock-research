@@ -60,14 +60,19 @@ _SCORING_DATASETS: tuple[str, ...] = (
 )
 
 
+def _dataset_dates_with_conn(conn) -> dict[str, str | None]:
+    union_parts = [f"SELECT '{table}' AS t, MAX(date) AS m FROM {table}" for table in _SCORING_DATASETS]
+    rows = conn.execute(" UNION ALL ".join(union_parts)).fetchall()
+    out: dict[str, str | None] = {t: None for t in _SCORING_DATASETS}
+    for r in rows:
+        out[r["t"]] = r["m"] if r and r["m"] else None
+    return out
+
+
 def latest_dataset_dates(db: Database) -> dict[str, str | None]:
     """每張 scoring 用 dataset 的最新一筆日期，給 UI dq 頁與診斷用。"""
-    out: dict[str, str | None] = {}
     with db.connect() as conn:
-        for table in _SCORING_DATASETS:
-            row = conn.execute(f"SELECT MAX(date) AS m FROM {table}").fetchone()
-            out[table] = row["m"] if row and row["m"] else None
-    return out
+        return _dataset_dates_with_conn(conn)
 
 
 def all_datasets_synced(db: Database) -> bool:
@@ -81,11 +86,16 @@ def all_datasets_synced(db: Database) -> bool:
 
 def freshness_status(db: Database) -> dict[str, object]:
     """回傳 snapshot 新鮮度完整狀態，供 API/前端顯示明確 stale 原因。"""
-    price = _latest_price_date(db)
-    snap = _latest_snapshot_date(db)
-    snap_engine = _latest_snapshot_engine_version(db)
+    with db.connect() as conn:
+        dataset_dates = _dataset_dates_with_conn(conn)
+        snap_row = conn.execute(
+            "SELECT as_of, engine_version FROM signal_history ORDER BY as_of DESC LIMIT 1"
+        ).fetchone()
+
+    price = dataset_dates.get("daily_price")
+    snap = snap_row["as_of"] if snap_row and snap_row["as_of"] else None
+    snap_engine = str(snap_row["engine_version"]) if snap_row and snap_row["engine_version"] else None
     current_engine = current_engine_version()
-    dataset_dates = latest_dataset_dates(db)
     values = list(dataset_dates.values())
     datasets_synced = bool(values) and all(v is not None for v in values) and (max(values) == min(values))
     engine_match = bool(snap_engine) and (snap_engine == current_engine)
