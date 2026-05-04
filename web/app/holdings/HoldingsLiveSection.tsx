@@ -12,13 +12,20 @@
  * 表格本體抽到 components/primitives/LiveHoldingsTable，今日戰情室共用同一支。
  */
 import { useMemo } from "react";
-import type { HoldingRow } from "@/lib/api";
+import type { HoldingRow, IntradayQuoteView } from "@/lib/api";
 import { KPIStat } from "@/components/primitives/KPIStat";
 import { LiveHoldingsTable, useLiveHoldings } from "@/components/primitives/LiveHoldingsTable";
 import { fmtMoney, tone } from "@/lib/format";
 
-export function HoldingsLiveSection({ initialRows }: { initialRows: HoldingRow[] }) {
-  const live = useLiveHoldings(initialRows);
+export function HoldingsLiveSection({
+  initialRows,
+  initialQuotes,
+}: {
+  initialRows: HoldingRow[];
+  /** Server 端 prefetch 的批次報價；client 第一次渲染就用即時值，不會出現昨收→即時的閃爍。 */
+  initialQuotes?: Record<string, IntradayQuoteView>;
+}) {
+  const live = useLiveHoldings(initialRows, true, initialQuotes);
   const summary = useMemo(() => deriveSummary(live.rows), [live.rows]);
 
   return (

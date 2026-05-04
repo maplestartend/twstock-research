@@ -1,8 +1,10 @@
 import { Suspense } from "react";
 import {
   apiGet,
+  apiGetOptional,
   humanizeApiError,
   type HoldingRow,
+  type IntradayQuoteView,
   type RealizedPnlSummary,
   type RiskAlert,
   type TradeRow,
@@ -82,12 +84,20 @@ function SectionError({ error }: { error: unknown }) {
 
 async function LiveSection() {
   let holdings: HoldingRow[];
+  let quotesList: IntradayQuoteView[] | null;
+  // 並行抓 snapshot 持股 + 批次盤中報價：client 第一次 render 就是即時價，
+  // 不會「先看到昨收、輪詢一回後跳成即時」的肉眼可見閃爍。
   try {
-    holdings = await apiGet<HoldingRow[]>("/api/portfolio/holdings", NOCACHE);
+    [holdings, quotesList] = await Promise.all([
+      apiGet<HoldingRow[]>("/api/portfolio/holdings", NOCACHE),
+      apiGetOptional<IntradayQuoteView[]>("/api/portfolio/holdings/intraday", NOCACHE),
+    ]);
   } catch (e) {
     return <SectionError error={e} />;
   }
-  return <HoldingsLiveSection initialRows={holdings} />;
+  const initialQuotes: Record<string, IntradayQuoteView> = {};
+  for (const q of quotesList ?? []) initialQuotes[q.stockId] = q;
+  return <HoldingsLiveSection initialRows={holdings} initialQuotes={initialQuotes} />;
 }
 
 async function RisksSection() {

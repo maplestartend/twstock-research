@@ -20,12 +20,15 @@ export function LivePriceHeader({
   stockId,
   initialClose,
   initialPrevClose,
+  initialIntraday,
 }: {
   stockId: string;
   initialClose: number;
   initialPrevClose: number | null;
+  /** Server prefetch 過的盤中報價；提供時 client 第一次 render 就用即時值，不會「先收盤再跳即時」閃爍。 */
+  initialIntraday?: IntradayQuoteView | null;
 }) {
-  const live = useIntradayQuote(stockId);
+  const live = useIntradayQuote(stockId, initialIntraday ?? null);
   const price = live?.price ?? initialClose;
   const prev = live?.prevClose ?? initialPrevClose ?? undefined;
   return (

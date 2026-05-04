@@ -2,10 +2,12 @@ import { Suspense, cache } from "react";
 import Link from "next/link";
 import {
   apiGet,
+  apiGetOptional,
   humanizeApiError,
   type DashboardHomePayload,
   type PortfolioSummary,
   type HoldingRow,
+  type IntradayQuoteView,
   type RadarHit,
   type ExDividendEvent,
   type DataFreshness,
@@ -179,14 +181,28 @@ async function KpiSection() {
 
 async function HoldingsDetailSection() {
   let data: DashboardHomePayload;
+  let quotesList: IntradayQuoteView[] | null = null;
   try {
-    data = await getDashboardHome();
+    // 並行：snapshot 持股（走 dashboard/home cache）+ 批次盤中報價（noCache，每次 SSR 都新鮮）。
+    // intraday 端點失敗（後端掛 / 興櫃整批沒有 mis）就吞掉回 null，client 仍會自己輪詢。
+    [data, quotesList] = await Promise.all([
+      getDashboardHome(),
+      apiGetOptional<IntradayQuoteView[]>("/api/portfolio/holdings/intraday", { noCache: true }),
+    ]);
   } catch (e) {
     return <SectionError error={e} />;
   }
   const holdings: HoldingRow[] = data.holdings;
+  const initialQuotes: Record<string, IntradayQuoteView> = {};
+  for (const q of quotesList ?? []) initialQuotes[q.stockId] = q;
   // 整個區塊 = LiveHoldingsTable（標頭 + 即時徽章 + 表格），與「我的持股」頁的「持股明細」一致
-  return <LiveHoldingsTable initialRows={holdings} titleIcon="account_balance_wallet" />;
+  return (
+    <LiveHoldingsTable
+      initialRows={holdings}
+      initialQuotes={initialQuotes}
+      titleIcon="account_balance_wallet"
+    />
+  );
 }
 
 async function RadarHitsSection() {

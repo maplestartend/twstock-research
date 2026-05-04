@@ -12,7 +12,7 @@
  * - 個別 row 失敗（興櫃 / mis 撈不到）→ 該 row 退回 snapshot；其餘 row 用即時
  */
 import { useMemo } from "react";
-import type { HoldingRow } from "@/lib/api";
+import type { HoldingRow, IntradayQuoteView } from "@/lib/api";
 import { useHoldingsIntraday } from "@/lib/hooks/useIntraday";
 import { HoldingsTable } from "./HoldingsTable";
 import { Icon } from "./Icon";
@@ -26,9 +26,14 @@ export type LiveHoldingsResult = {
 
 /** Pure hook：拿到原始 rows + 即時 quotes 後回傳 merged rows + 計數，不負責渲染。
  *  HoldingsLiveSection 用這支 derive KPIs；dashboard / holdings 表格也是同一份合併結果。
- *  enabled=false：父層已在輪詢，這支不啟動第二份 timer，僅做 merge 與計數。 */
-export function useLiveHoldings(initialRows: HoldingRow[], enabled = true): LiveHoldingsResult {
-  const quotes = useHoldingsIntraday(enabled);
+ *  enabled=false：父層已在輪詢，這支不啟動第二份 timer，僅做 merge 與計數。
+ *  initialQuotes：server 端已 prefetch 過的批次報價；提供時 mount 時不發 request，避免閃爍。 */
+export function useLiveHoldings(
+  initialRows: HoldingRow[],
+  enabled = true,
+  initialQuotes: Record<string, IntradayQuoteView> = {},
+): LiveHoldingsResult {
+  const quotes = useHoldingsIntraday(enabled, initialQuotes);
   return useMemo(() => {
     const rows = mergeLiveQuotes(initialRows, quotes);
     return { rows, liveCount: Object.keys(quotes).length, totalCount: initialRows.length };
@@ -37,17 +42,20 @@ export function useLiveHoldings(initialRows: HoldingRow[], enabled = true): Live
 
 export function LiveHoldingsTable({
   initialRows,
+  initialQuotes,
   title = "持股明細",
   titleIcon = "list_alt",
   shared,
 }: {
   initialRows: HoldingRow[];
+  /** Server 端 prefetch 的批次報價；提供時 client 第一次渲染就用即時值，不會「先收盤再跳成即時」閃爍。 */
+  initialQuotes?: Record<string, IntradayQuoteView>;
   title?: string;
   titleIcon?: string;
   /** 父層已 useLiveHoldings 時把結果傳進來；本元件就不會再啟動第二份輪詢 timer。 */
   shared?: LiveHoldingsResult;
 }) {
-  const own = useLiveHoldings(initialRows, !shared);
+  const own = useLiveHoldings(initialRows, !shared, initialQuotes);
   const { rows, liveCount, totalCount } = shared ?? own;
   return (
     <section className="flex flex-col gap-3">

@@ -3,6 +3,7 @@ import {
   apiGetOptional,
   type AtrStopView,
   type HoldingContext,
+  type IntradayQuoteView,
   type StockMeta,
   type StockPriceBundle,
   type StockScoreView,
@@ -29,8 +30,9 @@ const SCORE_NOCACHE = { noCache: true } as const;
 export default async function StockDetailPage({ params }: { params: Promise<{ stockId: string }> }) {
   const { stockId } = await params;
 
-  // 先平行抓不依賴 entry context 的東西
-  const [meta, score, price, history, myHolding] = await Promise.all([
+  // 先平行抓不依賴 entry context 的東西。intraday 一起 prefetch：client mount 第一次渲染就用即時值，
+  // 不會「先看到昨收、輪詢一回後跳成即時」的肉眼可見閃爍。422（興櫃 / 休市）會 fallback null，client 仍會自己輪詢。
+  const [meta, score, price, history, myHolding, intraday] = await Promise.all([
     apiGetOptional<StockMeta>(`/api/stocks/${stockId}/meta`),
     apiGetOptional<StockScoreView>(`/api/stocks/${stockId}/score`, SCORE_NOCACHE),
     apiGetOptional<StockPriceBundle>(`/api/stocks/${stockId}/price?days=180`),
@@ -40,6 +42,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
     apiGetOptional<HoldingContext>(`/api/portfolio/holding-context/${stockId}`, {
       tags: ["watchlist", "snapshot"],
     }),
+    apiGetOptional<IntradayQuoteView>(`/api/stocks/${stockId}/intraday`, { noCache: true }),
   ]);
 
   // 若使用者持有此檔，把 entry_date / entry_price 拿來算 trailing 停損 + Chandelier 動態停利
@@ -92,7 +95,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
 
   return (
     <div className="p-4 lg:p-8 max-w-[1600px] mx-auto flex flex-col gap-8">
-      <StockHeader meta={meta} price={price} score={score} />
+      <StockHeader meta={meta} price={price} score={score} initialIntraday={intraday} />
 
       {/* Mode toggle + 5-KPI row + breakdown + signals（client：可切收盤/即時/假設） */}
       <StockScorePanel stockId={stockId} initialScore={score} />
@@ -128,6 +131,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
             atr={atr}
             stockId={stockId}
             fallbackClose={price.ohlcv[price.ohlcv.length - 1]?.close ?? null}
+            initialIntraday={intraday}
           />
           {/* 把停損自動帶入「現在買的話該買幾張」決策卡：使用者不必跳到新增交易表單試算 */}
           {!myHolding && atr.fixed && (
@@ -163,7 +167,17 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
   );
 }
 
-function StockHeader({ meta, price, score }: { meta: StockMeta; price: StockPriceBundle; score?: StockScoreView }) {
+function StockHeader({
+  meta,
+  price,
+  score,
+  initialIntraday,
+}: {
+  meta: StockMeta;
+  price: StockPriceBundle;
+  score?: StockScoreView;
+  initialIntraday?: IntradayQuoteView | null;
+}) {
   const last = price.ohlcv[price.ohlcv.length - 1];
   const prev = price.ohlcv[price.ohlcv.length - 2];
   return (
@@ -184,6 +198,7 @@ function StockHeader({ meta, price, score }: { meta: StockMeta; price: StockPric
           stockId={meta.stockId}
           initialClose={last.close}
           initialPrevClose={prev?.close ?? null}
+          initialIntraday={initialIntraday ?? null}
         />
       )}
     </section>

@@ -11,19 +11,22 @@ import { useIntradayQuote } from "@/lib/hooks/useIntraday";
 import { Icon } from "@/components/primitives/Icon";
 import { fmtPct, fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { AtrStopView } from "@/lib/api";
+import type { AtrStopView, IntradayQuoteView } from "@/lib/api";
 import { LiveQuoteBadge } from "./LivePriceHeader";
 
 export function AtrStopSection({
   atr,
   stockId,
   fallbackClose,
+  initialIntraday,
 }: {
   atr: AtrStopView;
   stockId: string;
   fallbackClose: number | null;
+  /** Server prefetch 過的盤中報價；client 第一次渲染就用即時價算停損距離，不會閃爍。 */
+  initialIntraday?: IntradayQuoteView | null;
 }) {
-  const live = useIntradayQuote(stockId);
+  const live = useIntradayQuote(stockId, initialIntraday ?? null);
   const latestClose = live?.price ?? fallbackClose;
 
   type StopBlock = {
