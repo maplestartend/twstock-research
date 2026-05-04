@@ -28,7 +28,7 @@ schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
 
 REM Create the task.
 REM   /sc DAILY        - run every day
-REM   /st 15:30        - start time
+REM   /st %TASK_TIME%  - start time (16:45 = TWSE final 16:30 + 15 min buffer)
 REM   /rl LIMITED      - use the current logon user's rights (no admin)
 REM   /f               - force create
 REM XML-based creation would allow "wake to run" + "run if missed", but
