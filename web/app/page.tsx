@@ -10,15 +10,11 @@ import {
   type ExDividendEvent,
   type DataFreshness,
   type WatchlistMover,
-  type RiskAlert,
-  type SnapshotDelta,
   type ScoreChange,
 } from "@/lib/api";
 import { KPIStat } from "@/components/primitives/KPIStat";
-import { HoldingsTable } from "@/components/primitives/HoldingsTable";
+import { LiveHoldingsTable } from "@/components/primitives/LiveHoldingsTable";
 import { RadarHitChip } from "@/components/primitives/RadarHitChip";
-import { RiskAlertList } from "@/components/primitives/RiskAlertList";
-import { SnapshotDeltaPanel } from "@/components/primitives/SnapshotDeltaPanel";
 import { DataFreshnessBadge } from "@/components/primitives/DataFreshnessBadge";
 import { PriceCell } from "@/components/primitives/PriceCell";
 import { Icon } from "@/components/primitives/Icon";
@@ -50,9 +46,8 @@ export default function DashboardPage() {
 
       <section className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-6">
         <div className="flex flex-col gap-4">
-          <SectionTitle icon="account_balance_wallet">持股快照</SectionTitle>
           <Suspense fallback={<TableSkeleton rows={4} cols={6} />}>
-            <HoldingsSnapshotSection />
+            <HoldingsDetailSection />
           </Suspense>
         </div>
         <div className="flex flex-col gap-4">
@@ -182,7 +177,7 @@ async function KpiSection() {
   );
 }
 
-async function HoldingsSnapshotSection() {
+async function HoldingsDetailSection() {
   let data: DashboardHomePayload;
   try {
     data = await getDashboardHome();
@@ -190,20 +185,8 @@ async function HoldingsSnapshotSection() {
     return <SectionError error={e} />;
   }
   const holdings: HoldingRow[] = data.holdings;
-  const risks: RiskAlert[] = data.risks;
-  const delta: SnapshotDelta | null = data.snapshotDelta;
-  return (
-    <>
-      <HoldingsTable rows={holdings} />
-      <RiskAlertList alerts={risks} />
-      {delta && (
-        <>
-          <SectionTitle icon="compare_arrows">今日 vs 昨日</SectionTitle>
-          <SnapshotDeltaPanel delta={delta} />
-        </>
-      )}
-    </>
-  );
+  // 整個區塊 = LiveHoldingsTable（標頭 + 即時徽章 + 表格），與「我的持股」頁的「持股明細」一致
+  return <LiveHoldingsTable initialRows={holdings} titleIcon="account_balance_wallet" />;
 }
 
 async function RadarHitsSection() {

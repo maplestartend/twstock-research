@@ -255,6 +255,11 @@ export type HoldingRow = {
   atrDistancePct: number | null;   // (price - stop) / price，正值=安全、負值=已破停損
   atrKind: "trailing" | "fixed" | null;
   atrBelowStop: boolean;
+  // ATR 動態停利（Chandelier 3×ATR；無進場日 / 浮盈不足會 null + armed=false）
+  atrTakeProfit: number | null;
+  atrTakeProfitDistancePct: number | null;   // (price - tp) / price，正=還有獲利空間、負=已跌穿
+  atrTakeProfitArmed: boolean;               // 浮盈 ≥ 8% AND 持有 ≥ 5 日才啟動
+  atrTakeProfitTriggered: boolean;           // armed AND price ≤ tp → 建議出場
   inWatchlist: boolean;
 };
 

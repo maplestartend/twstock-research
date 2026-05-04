@@ -71,7 +71,10 @@ def holdings_workbook(rows: list[dict]) -> bytes:
     """持股明細匯出。rows 來自 /api/portfolio/holdings 的 HoldingRow.model_dump()。
 
     欄位順序模擬使用者在 holdings 頁從左到右掃讀：
-    身分 → 部位 → 即時市值 → 損益 → 評分 → 風控 → 備註。
+    身分 → 部位 → 即時市值 → 損益 → 風控（停損 / 停利）→ 進場日 → 備註。
+
+    與前端表格保持一致：短/中/長/綜合 評分欄已移除（使用者透過個股詳情頁查看分數），
+    新增 ATR 停利欄（Chandelier 3×ATR，需進場日 + 浮盈 ≥ 8% + 持有 ≥ 5 日才啟動）。
     """
     wb = Workbook()
     ws = wb.active
@@ -81,8 +84,9 @@ def holdings_workbook(rows: list[dict]) -> bytes:
         "代號", "名稱",
         "張數", "成本", "現價", "今日漲跌",
         "市值", "未實現損益", "未實現 %", "扣費後損益", "扣費後 %",
-        "短期", "中期", "長期", "綜合",
-        "ATR 停損", "停損距離", "ATR 類型", "進場日",
+        "ATR 停損", "停損距離", "ATR 類型",
+        "ATR 停利", "停利距離", "停利狀態",
+        "進場日",
         "警告",
     ]
     ws.append(headers)
@@ -102,13 +106,12 @@ def holdings_workbook(rows: list[dict]) -> bytes:
             _pct(r.get("unrealizedPnlPct")),
             r.get("netUnrealizedPnl"),
             _pct(r.get("netUnrealizedPnlPct")),
-            r.get("shortScore"),
-            r.get("midScore"),
-            r.get("longScore"),
-            r.get("compositeScore"),
             r.get("atrStop"),
             _pct(r.get("atrDistancePct")),
             _atr_kind_label(r.get("atrKind")),
+            r.get("atrTakeProfit"),
+            _pct(r.get("atrTakeProfitDistancePct")),
+            _atr_take_profit_label(r.get("atrTakeProfitArmed"), r.get("atrTakeProfitTriggered")),
             r.get("entryDate"),
             "; ".join(r.get("warnings") or []),
         ]
@@ -126,6 +129,15 @@ def _atr_kind_label(kind: str | None) -> str | None:
     if kind == "fixed":
         return "固定"
     return None
+
+
+def _atr_take_profit_label(armed: Any, triggered: Any) -> str | None:
+    """停利狀態：未啟動（armed=False，浮盈 < 8% 或持有 < 5 日）/ 觀察中 / 建議出場。"""
+    if not armed:
+        return "未啟動"
+    if triggered:
+        return "建議出場"
+    return "觀察中"
 
 
 def radar_hits_workbook(

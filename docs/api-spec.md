@@ -108,9 +108,16 @@
 ### portfolio.py — 持股總覽 + 損益 + 風險
 
 #### GET /api/portfolio/holdings
-- **用途**：持股每檔的市值、毛/淨損益、最新分數、風險訊號
+- **用途**：持股每檔的市值、毛/淨損益、最新分數、風險訊號、ATR 停損 + ATR 停利
 - **Response model**：`list[HoldingRow]`
 - **副作用**：開頭呼叫 `ensure_fresh()`
+
+#### GET /api/portfolio/holdings/intraday
+- **用途**：批次撈所有持股的 TWSE mis 盤中即時報價（給「我的持股」+「今日戰情室」前端 30s 輪詢用）
+- **Response model**：`list[IntradayQuoteView]`（與單檔 `/api/stocks/{id}/intraday` 同形狀）
+- **失敗處理**：個股 mis 撈不到（興櫃 / 休市 / 上游異常）→ 該檔不在回傳列表中（caller 自行 fallback 收盤）；整批失敗仍回 `[]`，不丟 4xx
+- **快取**：每檔 30 秒 in-memory cache（`app/data/intraday.py`），ThreadPoolExecutor 8 worker 並行
+- **依賴**：`app/data/intraday.py` `fetch_quote()`
 
 #### GET /api/portfolio/summary
 - **用途**：持股聚合（總市值、總成本、毛/淨未實現損益、當日損益、預估賣出成本）
@@ -145,7 +152,7 @@
 - **用途**：將 /holdings 的同份資料輸出成 Excel（含 brand-color 表頭、凍結 A:B 兩欄、CJK-aware 自動欄寬）
 - **Response**：`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，`Content-Disposition: attachment`
 - **檔名**：`holdings_YYYYMMDD.xlsx`
-- **欄位**：代號 / 名稱 / 張數 / 成本 / 現價 / 今日漲跌 / 市值 / 未實現損益 / 未實現 % / 扣費後損益 / 扣費後 % / 短期 / 中期 / 長期 / 綜合 / ATR 停損 / 停損距離 / ATR 類型 / 進場日 / 警告
+- **欄位**：代號 / 名稱 / 張數 / 成本 / 現價 / 今日漲跌 / 市值 / 未實現損益 / 未實現 % / 扣費後損益 / 扣費後 % / ATR 停損 / 停損距離 / ATR 類型 / ATR 停利 / 停利距離 / 停利狀態 / 進場日 / 警告（與螢幕表格同欄位；短/中/長 評分欄已移除）
 - **依賴**：[app/export/excel.py](../app/export/excel.py) `holdings_workbook()`
 - **副作用**：與 /holdings 共用 `_holdings_cached`，同 request 內不重算
 
@@ -527,10 +534,12 @@
 - `holding_count: int`
 
 #### HoldingRow (StockRef)
-- `shares, avg_cost: float`
+- `shares, avg_cost: float`、`entry_date: str | None`
 - `price, prev_close, today_pct, market_value, unrealized_pnl, unrealized_pnl_pct, net_unrealized_pnl, net_unrealized_pnl_pct, estimated_sell_costs: float | None`
-- `short_score, mid_score, long_score, composite_score: float | None`
+- `short_score, mid_score, long_score, composite_score: float | None`（後端仍回傳供舊 caller 使用，但前端持股表格已不再渲染這 4 欄）
 - `warnings: list[str]`
+- ATR 停損：`atr_stop, atr_distance_pct: float | None`、`atr_kind: "trailing" | "fixed" | None`、`atr_below_stop: bool`
+- ATR 停利（Chandelier 3×ATR；需 entry_date + avg_cost）：`atr_take_profit, atr_take_profit_distance_pct: float | None`、`atr_take_profit_armed, atr_take_profit_triggered: bool`
 
 #### RiskAlert
 - `severity: str`（"info" / "warning" / "critical"）

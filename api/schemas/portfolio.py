@@ -40,6 +40,11 @@ class HoldingRow(StockRef):
     atr_distance_pct: float | None = None  # (latest_close - stop) / latest_close，正值表示距停損還有空間
     atr_kind: str | None = None          # "trailing" | "fixed" | None
     atr_below_stop: bool = False         # latest_close < stop → UI 應顯示紅色警示
+    # ATR 動態停利（Chandelier 3×ATR；需 entry_date + entry_price 才算得出）
+    atr_take_profit: float | None = None       # 停利價
+    atr_take_profit_distance_pct: float | None = None  # (latest_close - tp) / latest_close
+    atr_take_profit_armed: bool = False         # 浮盈 ≥ 8% AND 持有 ≥ 5 日才啟動
+    atr_take_profit_triggered: bool = False     # armed AND latest_close ≤ tp → 建議出場
     in_watchlist: bool = False           # 該檔是否已在 watchlist.yaml
 
 

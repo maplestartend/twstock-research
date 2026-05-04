@@ -830,6 +830,92 @@
         "title": "DailyReportResponse",
         "type": "object"
       },
+      "DashboardHomePayload": {
+        "properties": {
+          "exDividend": {
+            "items": {
+              "$ref": "#/components/schemas/ExDividendEvent"
+            },
+            "title": "Exdividend",
+            "type": "array"
+          },
+          "freshness": {
+            "items": {
+              "$ref": "#/components/schemas/DataFreshness"
+            },
+            "title": "Freshness",
+            "type": "array"
+          },
+          "holdings": {
+            "items": {
+              "$ref": "#/components/schemas/HoldingRow"
+            },
+            "title": "Holdings",
+            "type": "array"
+          },
+          "moversDown": {
+            "items": {
+              "$ref": "#/components/schemas/WatchlistMover"
+            },
+            "title": "Moversdown",
+            "type": "array"
+          },
+          "moversUp": {
+            "items": {
+              "$ref": "#/components/schemas/WatchlistMover"
+            },
+            "title": "Moversup",
+            "type": "array"
+          },
+          "myScoreChanges": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreChange"
+            },
+            "title": "Myscorechanges",
+            "type": "array"
+          },
+          "radarHits": {
+            "items": {
+              "$ref": "#/components/schemas/RadarHit"
+            },
+            "title": "Radarhits",
+            "type": "array"
+          },
+          "risks": {
+            "items": {
+              "$ref": "#/components/schemas/RiskAlert"
+            },
+            "title": "Risks",
+            "type": "array"
+          },
+          "snapshotDelta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotDelta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PortfolioSummary"
+          }
+        },
+        "required": [
+          "summary",
+          "radarHits",
+          "freshness",
+          "holdings",
+          "risks",
+          "myScoreChanges",
+          "moversUp",
+          "moversDown",
+          "exDividend"
+        ],
+        "title": "DashboardHomePayload",
+        "type": "object"
+      },
       "DataFreshness": {
         "properties": {
           "label": {
@@ -1956,6 +2042,41 @@
         "title": "HitChange",
         "type": "object"
       },
+      "HoldingContext": {
+        "description": "個股頁所需的最小持倉資訊（避免每次拉整包 /holdings）。",
+        "properties": {
+          "avgCost": {
+            "title": "Avgcost",
+            "type": "number"
+          },
+          "entryDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entrydate"
+          },
+          "shares": {
+            "title": "Shares",
+            "type": "number"
+          },
+          "stockId": {
+            "title": "Stockid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stockId",
+          "shares",
+          "avgCost"
+        ],
+        "title": "HoldingContext",
+        "type": "object"
+      },
       "HoldingRow": {
         "properties": {
           "atrBelowStop": {
@@ -1995,6 +2116,38 @@
               }
             ],
             "title": "Atrstop"
+          },
+          "atrTakeProfit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Atrtakeprofit"
+          },
+          "atrTakeProfitArmed": {
+            "default": false,
+            "title": "Atrtakeprofitarmed",
+            "type": "boolean"
+          },
+          "atrTakeProfitDistancePct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Atrtakeprofitdistancepct"
+          },
+          "atrTakeProfitTriggered": {
+            "default": false,
+            "title": "Atrtakeprofittriggered",
+            "type": "boolean"
           },
           "avgCost": {
             "title": "Avgcost",
@@ -6458,6 +6611,100 @@
         ]
       }
     },
+    "/api/dashboard/home": {
+      "get": {
+        "description": "首頁聚合資料：一次回傳戰情室所有區塊，降低前端多支 API 往返成本。",
+        "operationId": "home_api_dashboard_home_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "radar_limit",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Radar Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "movers_top",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Movers Top",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "delta_top",
+            "required": false,
+            "schema": {
+              "default": 8,
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Delta Top",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "changes_days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Changes Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ex_days_ahead",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Ex Days Ahead",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardHomePayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Home",
+        "tags": [
+          "dashboard"
+        ]
+      }
+    },
     "/api/dashboard/my-score-changes": {
       "get": {
         "description": "自選股 + 持股近 N 日綜合分數變化，依絕對值排序。\n\n為什麼不直接給「全市場 mover top 10」（snapshot-delta 已有）：\n- 使用者真正在意的只有自己關注的標的；全市場 mover 多半是不持有的\n- 結合 watchlist.yaml + holdings 來過濾，UI 可分流標示",
@@ -7168,6 +7415,57 @@
         ]
       }
     },
+    "/api/portfolio/holding-context/{stock_id}": {
+      "get": {
+        "description": "個股頁輕量持倉查詢：只回 entry/cost/shares，避免拉整包 holdings。",
+        "operationId": "holding_context_api_portfolio_holding_context__stock_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stock_id",
+            "required": true,
+            "schema": {
+              "title": "Stock Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HoldingContext"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Holding Context Api Portfolio Holding Context  Stock Id  Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Holding Context",
+        "tags": [
+          "portfolio"
+        ]
+      }
+    },
     "/api/portfolio/holdings": {
       "get": {
         "operationId": "holdings_api_portfolio_holdings_get",
@@ -7208,6 +7506,32 @@
           }
         },
         "summary": "Export Holdings Xlsx",
+        "tags": [
+          "portfolio"
+        ]
+      }
+    },
+    "/api/portfolio/holdings/intraday": {
+      "get": {
+        "description": "目前所有持股的批次盤中即時報價。\n\n- 並行打 mis（共用 30s per-stock cache，避免重複 hammer）\n- 興櫃 / mis 失敗的個別檔案會直接被略過（不在回傳列裡），caller 端用「有就覆蓋、沒有就維持快照」邏輯\n- 回 [] 表示沒有持股；不會 422 整批失敗（個股失敗在前端是「該列保留收盤」）",
+        "operationId": "holdings_intraday_api_portfolio_holdings_intraday_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IntradayQuoteView"
+                  },
+                  "title": "Response Holdings Intraday Api Portfolio Holdings Intraday Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Holdings Intraday",
         "tags": [
           "portfolio"
         ]

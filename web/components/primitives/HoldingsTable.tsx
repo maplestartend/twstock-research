@@ -1,6 +1,5 @@
 import type { HoldingRow } from "@/lib/api";
 import { fmtMoney, fmtPrice, fmtPct, toneClass } from "@/lib/format";
-import { ScoreBadge } from "./ScoreBadge";
 import { Th, Td } from "./Table";
 import { StockIdCell } from "./StockIdCell";
 import { TableContainer } from "./TableContainer";
@@ -37,6 +36,37 @@ function stopBucket(distPct: number | null, below: boolean): {
   };
 }
 
+/** 停利距離 → 三段：未啟動灰、安全綠、接近黃、觸發紅。
+ *  與 stopBucket 不同：停利的「已破/觸發」表示「建議出場」，仍是紅色但語意是獲利出場。 */
+function takeProfitBucket(
+  distPct: number | null,
+  armed: boolean,
+  triggered: boolean,
+): { cls: string; label: string } {
+  if (!armed || distPct == null) {
+    return {
+      cls: "text-[var(--text-tertiary)] bg-subtle border-[var(--border-default)]",
+      label: armed ? "—" : "未啟動",
+    };
+  }
+  if (triggered || distPct <= 0) {
+    return {
+      cls: "text-[var(--color-down)] bg-[var(--color-down-bg)] border-[var(--color-down-border)]",
+      label: `出場 ${(distPct * 100).toFixed(1)}%`,
+    };
+  }
+  if (distPct < 0.03) {
+    return {
+      cls: "text-[var(--warning-fg)] bg-[var(--warning-bg)] border-[var(--warning-border)]",
+      label: `+${(distPct * 100).toFixed(1)}%`,
+    };
+  }
+  return {
+    cls: "text-[var(--color-up)] bg-[var(--color-up-bg)] border-[var(--color-up-border)]",
+    label: `+${(distPct * 100).toFixed(1)}%`,
+  };
+}
+
 export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
   if (rows.length === 0) {
     return (
@@ -62,12 +92,21 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
                 ATR 停損 ⓘ
               </span>
             </Th>
-            <Th align="center">短 / 中 / 長</Th>
+            <Th align="right" className="w-[128px]">
+              <span title="3×ATR Chandelier 動態停利。需進場日 + 浮盈 ≥ 8% + 持有 ≥ 5 日才啟動">
+                ATR 停利 ⓘ
+              </span>
+            </Th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => {
-            const bucket = stopBucket(r.atrDistancePct, r.atrBelowStop);
+            const stopB = stopBucket(r.atrDistancePct, r.atrBelowStop);
+            const tpB = takeProfitBucket(
+              r.atrTakeProfitDistancePct,
+              r.atrTakeProfitArmed,
+              r.atrTakeProfitTriggered,
+            );
             return (
             <tr key={r.stockId} className="group border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
               <Td sticky>
@@ -107,21 +146,40 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
                     <span
                       className={cn(
                         "inline-flex items-center px-1.5 py-0.5 rounded border text-[11px] font-medium",
-                        bucket.cls,
+                        stopB.cls,
                       )}
                       title={`${r.atrKind === "trailing" ? "追蹤式" : "固定式"} ATR 停損`}
                     >
-                      {bucket.label}
+                      {stopB.label}
                     </span>
                   </div>
                 )}
               </Td>
-              <Td align="center">
-                <div className="flex gap-1 justify-center">
-                  <ScoreBadge score={r.shortScore} size="sm" horizon="short" />
-                  <ScoreBadge score={r.midScore} size="sm" horizon="mid" />
-                  <ScoreBadge score={r.longScore} size="sm" horizon="long" />
-                </div>
+              <Td align="right" numeric>
+                {r.atrTakeProfit == null ? (
+                  <span className="text-[var(--text-tertiary)]">—</span>
+                ) : (
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className="font-semibold text-[var(--text-primary)]">
+                      {fmtPrice(r.atrTakeProfit)}
+                    </span>
+                    <span
+                      className={cn(
+                        "inline-flex items-center px-1.5 py-0.5 rounded border text-[11px] font-medium",
+                        tpB.cls,
+                      )}
+                      title={
+                        !r.atrTakeProfitArmed
+                          ? "尚未啟動：浮盈 < 8% 或持有 < 5 日"
+                          : r.atrTakeProfitTriggered
+                          ? "建議出場：現價已跌穿停利線"
+                          : "Chandelier 3×ATR 動態停利"
+                      }
+                    >
+                      {tpB.label}
+                    </span>
+                  </div>
+                )}
               </Td>
             </tr>
           );

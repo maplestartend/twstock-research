@@ -8,17 +8,16 @@ import {
   type StockScoreView,
   type ScoreHistoryPoint,
 } from "@/lib/api";
-import { PriceCell } from "@/components/primitives/PriceCell";
 import { Icon } from "@/components/primitives/Icon";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { CandlestickChart } from "@/components/charts/CandlestickChartLazy";
 import { ScoreTimelineChart } from "@/components/charts/ScoreTimelineChartLazy";
-import { fmtPct, fmtPrice } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { StockScorePanel } from "./StockScorePanel";
 import { NarrativeSection } from "./NarrativeSection";
 import { PeerComparisonSection } from "./PeerComparisonSection";
 import { PositionSuggestCard } from "./PositionSuggestCard";
+import { LivePriceHeader } from "./LivePriceHeader";
+import { AtrStopSection } from "./AtrStopSection";
 
 // 個股頁的分數是使用者最在意的即時資訊；若沿用 ISR/RSC cache，
 // 軟導頁可能暫時看到舊分數（需 Ctrl+F5 才刷新）。改成 dynamic + noCache，
@@ -125,7 +124,11 @@ export default async function StockDetailPage({ params }: { params: Promise<{ st
           <SectionTitle icon="shield">
             ATR 動態出場（停損 2×、停利 {atr.takeProfit ? atr.takeProfit.multiplier.toFixed(1) : "3.0"}× ATR-{atr.period}）
           </SectionTitle>
-          <AtrStopBlock atr={atr} latestClose={price.ohlcv[price.ohlcv.length - 1]?.close ?? null} />
+          <AtrStopSection
+            atr={atr}
+            stockId={stockId}
+            fallbackClose={price.ohlcv[price.ohlcv.length - 1]?.close ?? null}
+          />
           {/* 把停損自動帶入「現在買的話該買幾張」決策卡：使用者不必跳到新增交易表單試算 */}
           {!myHolding && atr.fixed && (
             <PositionSuggestCard
@@ -177,7 +180,11 @@ function StockHeader({ meta, price, score }: { meta: StockMeta; price: StockPric
         </div>
       </div>
       {last && (
-        <PriceCell price={last.close} prevClose={prev?.close} variant="expanded" />
+        <LivePriceHeader
+          stockId={meta.stockId}
+          initialClose={last.close}
+          initialPrevClose={prev?.close ?? null}
+        />
       )}
     </section>
   );
@@ -192,156 +199,5 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function AtrStopBlock({ atr, latestClose }: { atr: AtrStopView; latestClose: number | null }) {
-  type StopBlock = {
-    kind: "fixed" | "trailing";
-    label: string;
-    desc: string;
-    stop: number;
-    distancePct: number | null;
-    below: boolean;
-  };
-  const stopBlocks: StopBlock[] = [];
-  if (atr.fixed) {
-    const dist = latestClose != null && latestClose > 0
-      ? (latestClose - atr.fixed.stopPrice) / latestClose
-      : null;
-    stopBlocks.push({
-      kind: "fixed",
-      label: "固定式停損",
-      desc: `進場參考 ${fmtPrice(atr.fixed.entryRef)} − ${(2.0).toFixed(1)}×ATR(${fmtPrice(atr.fixed.atr)})`,
-      stop: atr.fixed.stopPrice,
-      distancePct: dist,
-      below: latestClose != null && latestClose < atr.fixed.stopPrice,
-    });
-  }
-  if (atr.trailing) {
-    stopBlocks.push({
-      kind: "trailing",
-      label: "追蹤式停損",
-      desc: `進場後高點 ${fmtPrice(atr.trailing.peakSinceEntry)} − 2×ATR(${fmtPrice(atr.trailing.atr)})`,
-      stop: atr.trailing.stopPrice,
-      distancePct: latestClose != null && latestClose > 0
-        ? (latestClose - atr.trailing.stopPrice) / latestClose
-        : null,
-      below: atr.trailing.belowStop,
-    });
-  }
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-      {stopBlocks.map((b) => {
-        const dist = b.distancePct;
-        const tone =
-          b.below ? "down" :
-          dist != null && dist < 0.03 ? "down" :
-          dist != null && dist < 0.08 ? "warning" :
-          "up";
-        const cls =
-          tone === "down" ? "text-[var(--color-down)] bg-[var(--color-down-bg)] border-[var(--color-down-border)]" :
-          tone === "warning" ? "text-[var(--warning-fg)] bg-[var(--warning-bg)] border-[var(--warning-border)]" :
-          "text-[var(--color-up)] bg-[var(--color-up-bg)] border-[var(--color-up-border)]";
-        return (
-          <div
-            key={b.kind}
-            className={cn(
-              "rounded-xl border bg-surface p-4 flex flex-col gap-3",
-              "border-[var(--border-default)]",
-            )}
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-sm font-semibold text-[var(--text-primary)]">{b.label}</span>
-              <span className={cn("inline-flex items-center px-2 py-0.5 rounded border text-xs font-semibold", cls)}>
-                {b.below ? "已破" : dist != null ? `距 ${fmtPct(dist, 1)}` : "—"}
-              </span>
-            </div>
-            <div className="flex items-baseline gap-3">
-              <span className="numeric text-[26px] font-bold leading-none text-[var(--text-primary)]">
-                {fmtPrice(b.stop)}
-              </span>
-              {latestClose != null && (
-                <span className="text-xs text-[var(--text-tertiary)]">
-                  現價 {fmtPrice(latestClose)}
-                </span>
-              )}
-            </div>
-            <span className="text-xs text-[var(--text-tertiary)] leading-relaxed">{b.desc}</span>
-          </div>
-        );
-      })}
-      {atr.takeProfit && (
-        <TakeProfitBlock tp={atr.takeProfit} latestClose={latestClose} />
-      )}
-    </div>
-  );
-}
-
-function TakeProfitBlock({
-  tp,
-  latestClose,
-}: {
-  tp: NonNullable<AtrStopView["takeProfit"]>;
-  latestClose: number | null;
-}) {
-  // 距停利線：正值=還有獲利空間、負值=已跌穿（觸發）
-  const dist = latestClose != null && latestClose > 0
-    ? (latestClose - tp.takeProfitPrice) / latestClose
-    : null;
-  // 三段配色：未啟動 = neutral；已啟動但安全 = up；已觸發 = down（建議出場）
-  const tone: "neutral" | "up" | "warning" | "down" =
-    !tp.armed ? "neutral" :
-    tp.triggered ? "down" :
-    dist != null && dist < 0.03 ? "warning" :
-    "up";
-  const cls =
-    tone === "down" ? "text-[var(--color-down)] bg-[var(--color-down-bg)] border-[var(--color-down-border)]" :
-    tone === "warning" ? "text-[var(--warning-fg)] bg-[var(--warning-bg)] border-[var(--warning-border)]" :
-    tone === "up" ? "text-[var(--color-up)] bg-[var(--color-up-bg)] border-[var(--color-up-border)]" :
-    "text-[var(--text-secondary)] bg-subtle border-[var(--border-default)]";
-  const armedPctTxt = `${(tp.armPnlThreshold * 100).toFixed(0)}%`;
-  return (
-    <div className="rounded-xl border border-[var(--border-default)] bg-surface p-4 flex flex-col gap-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5">
-          <Icon name="flag" size={14} filled />
-          動態停利
-        </span>
-        <span className={cn("inline-flex items-center px-2 py-0.5 rounded border text-xs font-semibold", cls)}>
-          {!tp.armed ? "尚未啟動" :
-           tp.triggered ? "建議出場" :
-           dist != null ? `距 ${fmtPct(dist, 1)}` : "—"}
-        </span>
-      </div>
-      <div className="flex items-baseline gap-3">
-        <span className="numeric text-[26px] font-bold leading-none text-[var(--text-primary)]">
-          {fmtPrice(tp.takeProfitPrice)}
-        </span>
-        {latestClose != null && (
-          <span className="text-xs text-[var(--text-tertiary)]">
-            現價 {fmtPrice(latestClose)}
-          </span>
-        )}
-      </div>
-      <span className="text-xs text-[var(--text-tertiary)] leading-relaxed">
-        進場後高點 {fmtPrice(tp.peakSinceEntry)} − {tp.multiplier.toFixed(1)}×ATR({fmtPrice(tp.atr)})
-      </span>
-      {/* armed 狀態：浮盈 / 持有日 */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--text-tertiary)] pt-1 border-t border-[var(--border-default)]/60">
-        <span>
-          浮盈 <span className={cn("numeric font-medium", tp.unrealizedPnlPct >= 0 ? "text-[var(--color-up)]" : "text-[var(--color-down)]")}>
-            {fmtPct(tp.unrealizedPnlPct, 1)}
-          </span>
-          {!tp.armed && tp.unrealizedPnlPct < tp.armPnlThreshold && (
-            <span className="ml-1">/ 需 {armedPctTxt}</span>
-          )}
-        </span>
-        <span>
-          持有 <span className="numeric font-medium text-[var(--text-secondary)]">{tp.daysHeld} 日</span>
-          {!tp.armed && tp.daysHeld < tp.armDaysThreshold && (
-            <span className="ml-1">/ 需 {tp.armDaysThreshold} 日</span>
-          )}
-        </span>
-      </div>
-    </div>
-  );
-}
+// AtrStopBlock / TakeProfitBlock 已抽到 ./AtrStopSection.tsx 客戶端覆蓋層
 

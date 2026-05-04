@@ -3,7 +3,6 @@ import {
   apiGet,
   humanizeApiError,
   type HoldingRow,
-  type PortfolioSummary,
   type RealizedPnlSummary,
   type RiskAlert,
   type TradeRow,
@@ -11,8 +10,6 @@ import {
 import { Icon } from "@/components/primitives/Icon";
 import { PageHeader } from "@/components/primitives/PageHeader";
 import { EmptyState } from "@/components/primitives/EmptyState";
-import { KPIStat } from "@/components/primitives/KPIStat";
-import { HoldingsTable } from "@/components/primitives/HoldingsTable";
 import { RiskAlertList } from "@/components/primitives/RiskAlertList";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { Th, Td } from "@/components/primitives/Table";
@@ -22,12 +19,12 @@ import { DownloadXlsxButton } from "@/components/primitives/DownloadXlsxButton";
 import {
   KpiRowSkeleton,
   TableSkeleton,
-  ListSkeleton,
   CardSkeleton,
 } from "@/components/primitives/Skeleton";
 import { fmtMoney, fmtPct, fmtPrice, tone, toneClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { TradesPanel } from "./TradesPanel";
+import { HoldingsLiveSection } from "./HoldingsLiveSection";
 
 // 持股頁是「頻繁編輯」場景：使用者新增 / 刪除交易後預期立刻看到結果。
 // 用 ISR cache（revalidate=60）會讓 router.refresh() 在 60s 內讀到舊 fetch 結果，
@@ -45,19 +42,16 @@ export default function HoldingsPage() {
         description="持股總覽、新增/刪除交易、已實現損益"
       />
 
-      <Suspense fallback={<KpiRowSkeleton count={4} />}>
-        <KpiSection />
-      </Suspense>
+      <div className="flex justify-end">
+        <DownloadXlsxButton href="/api/portfolio/holdings/export.xlsx" size="sm" />
+      </div>
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-end justify-between gap-3">
-          <SectionTitle icon="list_alt">持股明細</SectionTitle>
-          <DownloadXlsxButton href="/api/portfolio/holdings/export.xlsx" size="sm" />
-        </div>
-        <Suspense fallback={<TableSkeleton rows={6} cols={9} />}>
-          <HoldingsSection />
-        </Suspense>
-      </section>
+      <Suspense fallback={<>
+        <KpiRowSkeleton count={4} />
+        <TableSkeleton rows={6} cols={9} />
+      </>}>
+        <LiveSection />
+      </Suspense>
 
       <Suspense fallback={null}>
         <RisksSection />
@@ -86,42 +80,14 @@ function SectionError({ error }: { error: unknown }) {
   );
 }
 
-async function KpiSection() {
-  let summary: PortfolioSummary;
-  try {
-    summary = await apiGet<PortfolioSummary>("/api/portfolio/summary", NOCACHE);
-  } catch (e) {
-    return <SectionError error={e} />;
-  }
-  return (
-    <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <KPIStat label="持股檔數" value={summary.holdingCount.toString()} tone="neutral" />
-      <KPIStat label="成本總額" value={fmtMoney(summary.totalCost, 0)} tone="neutral" />
-      <KPIStat
-        label="目前市值"
-        value={fmtMoney(summary.totalMarketValue, 0)}
-        deltaPct={summary.todayPnlPct}
-        tone={tone(summary.todayPnl)}
-        footnote={`今日 ${fmtMoney(summary.todayPnl, 0)}`}
-      />
-      <KPIStat
-        label="未實現損益"
-        value={fmtMoney(summary.unrealizedPnl, 0)}
-        deltaPct={summary.unrealizedPnlPct}
-        tone={tone(summary.unrealizedPnl)}
-      />
-    </section>
-  );
-}
-
-async function HoldingsSection() {
+async function LiveSection() {
   let holdings: HoldingRow[];
   try {
     holdings = await apiGet<HoldingRow[]>("/api/portfolio/holdings", NOCACHE);
   } catch (e) {
     return <SectionError error={e} />;
   }
-  return <HoldingsTable rows={holdings} />;
+  return <HoldingsLiveSection initialRows={holdings} />;
 }
 
 async function RisksSection() {

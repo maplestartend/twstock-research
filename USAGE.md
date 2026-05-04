@@ -145,7 +145,7 @@ python -m scripts.backfill_financials_history --quarters 8
 > 各頁的 UI 結構、API 呼叫、用到的元件詳見 [docs/frontend-spec.md](docs/frontend-spec.md)。下面只列重點。
 
 ### 🏠 今日戰情室（預設頁）
-全部讀 DB，秒開。包含：大盤體質燈號、KPI 條（指數/持股/自選/資料新鮮度）、💼 持股快照（含風險警示+集中度提醒、ATR 停損 badge）、⭐ 自選股 Top/Bottom 5、🎯 雷達命中 Top 10、🔄 **今日 vs 昨日 delta**（新進命中 / 跌出命中 / 分數大幅變化）、📅 5 日除權息、🔧 資料更新狀態。
+全部讀 DB，秒開。包含：大盤體質燈號、KPI 條（指數/持股/自選/資料新鮮度）、💼 **持股明細**（與「我的持股」頁同一個 LiveHoldingsTable 元件、ATR 停損 + ATR 停利 badge、盤中即時報價 30s 輪詢）、⭐ 自選股 Top/Bottom 5、🎯 雷達命中 Top 10、📅 5 日除權息、🔧 資料更新狀態。
 
 > 持股「未實現損益」顯示**淨值**（毛 − 預估賣出手續費 − 證交稅）。**證交稅依代號自動分流**：一般股 0.3%、股票型 ETF 0.1%、債券 ETF 0%。
 > 集中度提醒：單檔 >25% 或單一產業 >40%。同 severity 的多筆風險合併成 list 卡（避免 4 張 2x2 噪音）。
@@ -162,6 +162,8 @@ python -m scripts.backfill_financials_history --quarters 8
 **🆕 標籤分組**：tab 列下方多一排 tag filter chip（如「長期持有」「配息」「短線」），點擊只顯示帶該 tag 的檔；切 type tab 時保留 tag。每列代號旁也會渲染該檔的 tag chips 方便辨識。tag 在 `/watchlist-manage` 編輯。
 
 ### 🔍 個股詳情（決策工作台）
+- **🆕 標頭即時報價**：股票名稱右側的大字價格、漲跌% 跟著 30 秒輪詢 `/api/stocks/{id}/intraday`（盤後 2 分鐘、tab 隱藏暫停）；mis 撈不到（興櫃 / 休市）退回昨日收盤
+- **🆕 ATR 動態出場區塊「現價」即時化**：固定式 / 追蹤式停損、Chandelier 動態停利的「距 X% / 已破 / 建議出場」狀態都用即時價重判；不必等盤後才看到「現在跌穿停損沒」
 - K 線圖（可勾「使用還原價」）
 - **🆕 評分模式切換**：頂端三按鈕「收盤 / 即時 / 假設」
   - **收盤**（預設）：依昨日收盤算出的分數（雷達/自選看到的也是這個版本）
@@ -185,7 +187,9 @@ python -m scripts.backfill_financials_history --quarters 8
 - **刪除交易**：每列右側「刪除」鈕，二次確認後以 trade_log 重建該股 holdings
 - **加入/移除自選**：每列代號左側 ⭐，點一下即 toggle（樂觀更新 + router.refresh）
 - **已實現損益**：FIFO 配對
-- **🆕 下載 Excel**：「持股明細」標題列右側「下載 Excel」鈕，匯出含 brand-color 表頭、凍結 A:B 兩欄、CJK 自動欄寬的 .xlsx；資料與螢幕上同份（排序 / 計算邏輯一致）
+- **🆕 盤中即時報價**：持股明細 + KPI 摘要會 30 秒輪詢 `/api/portfolio/holdings/intraday`（盤後 2 分鐘、tab 隱藏暫停），現價 / 今日% / 市值 / 未實現損益 / ATR 停損距離 / ATR 停利距離全部跟著即時變動。標頭顯示「即時 N/M」徽章；mis 撈不到（興櫃 / 休市）的 row 退回昨日收盤
+- **🆕 ATR 停利欄**：Chandelier 3×ATR 動態停利（進場後高點 − 3×ATR）。需「進場日 + 浮盈 ≥ 8% + 持有 ≥ 5 日」才啟動；觸發顯示「建議出場」紅字。短/中/長 評分欄已從表格移除（請從個股詳情頁查看）
+- **下載 Excel**：「持股明細」標題列右側「下載 Excel」鈕，匯出含 brand-color 表頭、凍結 A:B 兩欄、CJK 自動欄寬的 .xlsx；資料與螢幕上同份（含 ATR 停損 / ATR 停利欄）
 
 ### 🎯 雷達掃描
 個股 / ETF tab 分流（ETF 識別：代號 `00` 開頭且長度 ≥ 4）。預設策略 = 短線強勢。

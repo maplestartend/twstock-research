@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextvars
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Literal
 
@@ -22,11 +23,13 @@ from api.schemas.portfolio import (
     RiskAlert,
     TradeRow,
 )
+from api.schemas.stock import IntradayQuoteView
 import pandas as pd
 
 from app import portfolio as pf
 from app import risk as risk_mod
 from app import watchlist as wl_mod
+from app.data import intraday as intraday_mod
 from app.data.db import Database
 from app.export import excel as excel_export
 from app.risk import (
@@ -34,6 +37,7 @@ from app.risk import (
     concentration_warnings,
     enhanced_risk_signals,
     trailing_atr_stop,
+    trailing_atr_take_profit,
 )
 from app.scoring.snapshot_freshness import ensure_fresh
 
@@ -120,6 +124,27 @@ def _atr_for_holding(
     stop = float(info["stop_price"])
     dist = (latest_close - stop) / latest_close if latest_close > 0 else None
     return stop, dist, "fixed", latest_close < stop
+
+
+def _atr_take_profit_for_holding(
+    price_df: pd.DataFrame,
+    entry_date: str | None,
+    avg_cost: float,
+    latest_close: float | None,
+) -> tuple[float | None, float | None, bool, bool]:
+    """ATR 動態停利（Chandelier 3×ATR）。需 entry_date + avg_cost > 0 才算得出。
+
+    回 (take_profit, distance_pct, armed, triggered)。沒進場日 / 資料不足 / latest 未知 → 全 None / False。
+    distance_pct = (latest_close - tp) / latest_close。正值=還有獲利空間，負值/0=已跌穿。
+    """
+    if price_df is None or price_df.empty or latest_close is None or not entry_date or avg_cost <= 0:
+        return None, None, False, False
+    info = trailing_atr_take_profit(price_df, entry_date, entry_price=avg_cost, multiplier=3.0)
+    if info is None:
+        return None, None, False, False
+    tp = float(info["take_profit_price"])
+    dist = (latest_close - tp) / latest_close if latest_close > 0 else None
+    return tp, dist, bool(info.get("armed", False)), bool(info.get("triggered", False))
 
 
 def _compute_holdings(db: Database) -> list[HoldingRow]:
@@ -216,6 +241,9 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
         atr_stop, atr_dist, atr_kind, atr_below = _atr_for_holding(
             price_df, h.entry_date, h.avg_cost, close,
         )
+        atr_tp, atr_tp_dist, atr_tp_armed, atr_tp_triggered = _atr_take_profit_for_holding(
+            price_df, h.entry_date, h.avg_cost, close,
+        )
         out.append(HoldingRow(
             stock_id=h.stock_id,
             stock_name=names_by_sid.get(h.stock_id, h.stock_id),
@@ -240,6 +268,10 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
             atr_distance_pct=atr_dist,
             atr_kind=atr_kind,
             atr_below_stop=atr_below,
+            atr_take_profit=atr_tp,
+            atr_take_profit_distance_pct=atr_tp_dist,
+            atr_take_profit_armed=atr_tp_armed,
+            atr_take_profit_triggered=atr_tp_triggered,
             in_watchlist=h.stock_id in watchlist_ids,
         ))
     return out
@@ -281,6 +313,58 @@ def holding_context(stock_id: str, db: Database = Depends(get_db)) -> HoldingCon
 @router.get("/holdings", response_model=list[HoldingRow])
 def holdings(db: Database = Depends(get_db)) -> list[HoldingRow]:
     return _holdings_cached(db)
+
+
+@router.get("/holdings/intraday", response_model=list[IntradayQuoteView])
+def holdings_intraday(db: Database = Depends(get_db)) -> list[IntradayQuoteView]:
+    """目前所有持股的批次盤中即時報價。
+
+    - 並行打 mis（共用 30s per-stock cache，避免重複 hammer）
+    - 興櫃 / mis 失敗的個別檔案會直接被略過（不在回傳列裡），caller 端用「有就覆蓋、沒有就維持快照」邏輯
+    - 回 [] 表示沒有持股；不會 422 整批失敗（個股失敗在前端是「該列保留收盤」）
+    """
+    holdings_list = list(pf.list_holdings(db))
+    if not holdings_list:
+        return []
+    sids = [h.stock_id for h in holdings_list]
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT stock_id, type FROM stock_info WHERE stock_id IN ({make_placeholders(len(sids))})",
+            sids,
+        ).fetchall()
+    type_by_sid = {r["stock_id"]: r["type"] for r in rows}
+
+    def _fetch(sid: str) -> tuple[str, intraday_mod.IntradayQuote | None]:
+        try:
+            return sid, intraday_mod.fetch_quote(sid, type_by_sid.get(sid))
+        except Exception:
+            return sid, None
+
+    # 8 個 worker：實務上持股很少超過 ~20 檔；30s cache hit 時這層幾乎是 no-op
+    out: list[IntradayQuoteView] = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for sid, q in ex.map(_fetch, sids):
+            if q is None:
+                continue
+            chg_pct = None
+            if q.prev_close and q.prev_close > 0 and q.price is not None:
+                chg_pct = (q.price - q.prev_close) / q.prev_close
+            out.append(IntradayQuoteView(
+                stock_id=sid,
+                price=q.price,
+                prev_close=q.prev_close,
+                open=q.open,
+                high=q.high,
+                low=q.low,
+                bid1=q.bid1,
+                ask1=q.ask1,
+                volume_lots=q.volume_lots,
+                quote_time=q.quote_time,
+                is_live=q.is_live,
+                quote_source=q.quote_source,
+                change_pct=chg_pct,
+            ))
+    return out
 
 
 @router.get("/holdings/export.xlsx")

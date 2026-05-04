@@ -58,19 +58,20 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/` — 今日戰情室（dashboard）
 
-- **檔案**：[web/app/page.tsx](../web/app/page.tsx)（227 行）
+- **檔案**：[web/app/page.tsx](../web/app/page.tsx)
 - **類型**：RSC（`revalidate: 60`）
 - **API 呼叫**：
-  - `apiGet`：`/api/portfolio/summary`、`/api/portfolio/holdings`、`/api/portfolio/risk-alerts`、`/api/dashboard/radar-hits?limit=8`、`/api/dashboard/ex-dividend?days_ahead=7`、`/api/dashboard/data-freshness`
-  - `apiGetOptional`：`/api/watchlist/movers?top=5&direction=up|down`
+  - `apiGet`：`/api/dashboard/home`（KPI / 持股 / 雷達命中 / movers / 除權息 / freshness 一站式）
+  - 客戶端輪詢：`<LiveHoldingsTable>` 內部 30s（盤後 2 min）打 `/api/portfolio/holdings/intraday`
 - **主要 sections**：
-  - PageHeader（line 50）
-  - KPI row × 5（line 53）：總市值/今日損益/未實現/雷達命中/資料狀態
-  - 持股快照 + 風險提醒（line 97）
-  - 今日雷達命中側欄（line 114）
-  - 自選漲幅榜 / 跌幅榜 / 近 7 日除權息（line 145）
-  - 各表新鮮度 footer（line 161）
-- **用到 components**：`KPIStat`、`HoldingsTable`、`RadarHitChip`、`RiskAlertList`、`DataFreshnessBadge`、`PriceCell`、`PageHeader`、`EmptyState`、`BackendDownError`
+  - PageHeader
+  - KPI row × 5：總市值 / 今日損益 / 未實現 / 雷達命中 / 資料狀態
+  - **🆕 持股明細**：渲染 `<LiveHoldingsTable>`（與 /holdings 頁共用同一元件，標題自帶「即時 N/M」徽章），原本的 `RiskAlertList` + `SnapshotDeltaPanel` 副面板已移出此區塊
+  - 今日雷達命中側欄
+  - 我的關注 7 日分數變化
+  - 自選漲幅榜 / 跌幅榜 / 近 7 日除權息
+  - 各表新鮮度 footer
+- **用到 components**：`KPIStat`、`LiveHoldingsTable`、`RadarHitChip`、`DataFreshnessBadge`、`PriceCell`、`PageHeader`、`EmptyState`、`BackendDownError`
 
 ### `/stocks/[stockId]` — 個股詳情
 
@@ -79,13 +80,14 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 - **API 呼叫**：全 `apiGetOptional`
   - `/api/stocks/{id}/meta`、`/api/stocks/{id}/score`、`/api/stocks/{id}/price?days=180`、`/api/stocks/{id}/score-history?days=90`、**🆕** `/api/stocks/{id}/peers`（同業比較區塊；ETF/興櫃/樣本不足回 404 → 整段隱藏）
 - **主要 sections**：
-  - StockHeader：代號 + 名稱 + PriceCell expanded
+  - StockHeader：代號 + 名稱 + **🆕** `<LivePriceHeader>`（client，30s 輪詢 mis 盤中價、漲跌% 即時更新；mis 撈不到 fallback 收盤）
   - StockScorePanel（client）：模式切換（收盤/即時/假設）+ 5-KPI row + 評分拆解 + 進出場建議
-    - **🆕** loading 時 KPI/Breakdown 卡降透明度 (`opacity-60` + `aria-busy`)
+    - loading 時 KPI/Breakdown 卡降透明度 (`opacity-60` + `aria-busy`)
   - NarrativeSection（client）：AI 解讀（on-demand）
-  - **🆕** PeerComparisonSection（[PeerComparisonSection.tsx](../web/app/stocks/[stockId]/PeerComparisonSection.tsx)）：7 列 horizontal bar pair（value vs 同業中位數）+ #rank/N 徽章；單列 unit="%" → 0.xx 自動轉百分比，unit="倍" → `2.62×`
+  - PeerComparisonSection（[PeerComparisonSection.tsx](../web/app/stocks/[stockId]/PeerComparisonSection.tsx)）：7 列 horizontal bar pair（value vs 同業中位數）+ #rank/N 徽章；單列 unit="%" → 0.xx 自動轉百分比，unit="倍" → `2.62×`
   - K 線：`<CandlestickChart>` 含 MA20/MA60 + 成交量
-  - ATR 動態出場 + 部位試算
+  - **🆕** ATR 動態出場：`<AtrStopSection>`（client）— 固定/追蹤式停損 + Chandelier 動態停利的「現價 / 距 X% / 已破 / 建議出場」狀態都用即時價重判，與 LivePriceHeader 共用 `useIntradayQuote`
+  - 部位試算（`<PositionSuggestCard>`）
   - 分數走勢：`<ScoreTimelineChart>`
 - **fallback**：meta 但無 price → 顯示「資料不足」訊息；有 price 無 score → 顯示「尚未產生快照」
 - **用到 components**：`PriceCell`、`ScoreBadge`、`RecommendationTag`、`ScoreBreakdownBars`、`Icon`、`CandlestickChart`、`ScoreTimelineChart`
@@ -122,19 +124,20 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/holdings` — 我的持股
 
-- **檔案**：[web/app/holdings/page.tsx](../web/app/holdings/page.tsx)（200 行）+ [TradesPanel.tsx](../web/app/holdings/TradesPanel.tsx)（client child，新增/刪除交易）
-- **類型**：RSC（`revalidate: 60`），含 1 個 `"use client"` child
+- **檔案**：[web/app/holdings/page.tsx](../web/app/holdings/page.tsx) + [HoldingsLiveSection.tsx](../web/app/holdings/HoldingsLiveSection.tsx)（client，KPI + 持股明細覆蓋層）+ [TradesPanel.tsx](../web/app/holdings/TradesPanel.tsx)（client child，新增/刪除交易）
+- **類型**：`force-dynamic` 不快取，含 client children
 - **API 呼叫**：
-  - RSC：`/api/portfolio/{summary,holdings,risk-alerts,trades?limit=50,realized-pnl}`
+  - RSC：`/api/portfolio/{holdings,risk-alerts,trades?limit=50,realized-pnl}`
+  - Client（HoldingsLiveSection）：30s 輪詢 `/api/portfolio/holdings/intraday`（盤後 2 min、tab 隱藏暫停）→ overlay price/today%/市值/損益/ATR 距離
   - Client（TradesPanel）：POST `/api/portfolio/trades`、DELETE `/api/portfolio/trades/{id}`
 - **主要 sections**：
-  - PageHeader（line 41）
-  - KPI row × 4（line 48）：持股檔數/成本/市值/未實現損益
-  - 持股明細 `<HoldingsTable>`，標題列右側 **🆕** `<DownloadXlsxButton href="/api/portfolio/holdings/export.xlsx">`
+  - PageHeader
+  - 「下載 Excel」鈕（右上）
+  - **🆕** `<HoldingsLiveSection>`：KPI row × 4（持股檔數/成本/市值/未實現損益，從即時價即時 derive）+ 持股明細 `<LiveHoldingsTable>`（標頭即時徽章「即時 N/M」+ 表格欄：代號/張數/均價/現價/今日%/市值/未實現損益/ATR 停損/ATR 停利）
   - 風險提醒卡
   - 已實現損益 含 mini KPI + 配對表
   - `<TradesPanel>`：新增交易表單 + 最近 50 筆交易刪除
-- **用到 components**：`PageHeader`、`EmptyState`、`KPIStat`、`HoldingsTable`、`RiskAlertList`、`DownloadXlsxButton`、`Th/Td`、`Icon`
+- **用到 components**：`PageHeader`、`EmptyState`、`KPIStat`、`LiveHoldingsTable`、`HoldingsTable`、`RiskAlertList`、`DownloadXlsxButton`、`Th/Td`、`Icon`
 
 ### `/watchlist` — 自選股總覽
 
@@ -294,11 +297,11 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 | [ScoreBreakdownBars.tsx](../web/components/primitives/ScoreBreakdownBars.tsx) | RSC | 子項分數橫條 | `parts: Record<string, number\|null>` |
 | [RecommendationTag.tsx](../web/components/primitives/RecommendationTag.tsx) | RSC | 建議 tag（強買到強賣） | `raw, size (sm/md)` |
 | [PriceCell.tsx](../web/components/primitives/PriceCell.tsx) | RSC | 價格 + 漲跌 | `price, prevClose, deltaPct, variant (compact/default/expanded), align` |
-| [HoldingsTable.tsx](../web/components/primitives/HoldingsTable.tsx) | RSC | 持股表（首頁/持股共用） | `rows: HoldingRow[]` |
+| [HoldingsTable.tsx](../web/components/primitives/HoldingsTable.tsx) | RSC | 持股表純渲染（欄：代號/張數/均價/現價/今日%/市值/未實現損益/ATR 停損/ATR 停利；短中長分數欄已移除） | `rows: HoldingRow[]` |
+| [LiveHoldingsTable.tsx](../web/components/primitives/LiveHoldingsTable.tsx) | Client | 持股表 + 即時報價覆蓋層（30s 輪詢 `/api/portfolio/holdings/intraday`、merge 後重算 today%/市值/損益/ATR 距離；首頁 + 持股頁共用，可由父層 `useLiveHoldings` 把結果用 `shared` prop 傳下避免重複輪詢） | `initialRows, title?, titleIcon?, shared?` |
 | [RadarHitChip.tsx](../web/components/primitives/RadarHitChip.tsx) | RSC | 首頁雷達命中 chip | `hit: RadarHit` |
 | [RiskAlertList.tsx](../web/components/primitives/RiskAlertList.tsx) | RSC | 風險提醒（同 severity 合併成 list 卡） | `alerts: RiskAlert[]` |
 | [SnapshotFreshnessIndicator.tsx](../web/components/primitives/SnapshotFreshnessIndicator.tsx) | Client | Topbar 快照新鮮度指示 + 一鍵重算 | `initial: SnapshotStatus \| null` |
-| [SnapshotDeltaPanel.tsx](../web/components/primitives/SnapshotDeltaPanel.tsx) | RSC | 戰情室「今日 vs 昨日」delta | `delta: SnapshotDelta` |
 | [TableScrollHint.tsx](../web/components/primitives/TableScrollHint.tsx) | Client | mobile 表格水平捲漸層 + 箭頭提示 | `children` |
 | [SectionTitle.tsx](../web/components/primitives/SectionTitle.tsx) | RSC | 區塊標題（icon + 文字） | `children, icon` |
 | [DataFreshnessBadge.tsx](../web/components/primitives/DataFreshnessBadge.tsx) | RSC | 資料新鮮度 badge | `tone (ok/warning/error/neutral), latestDate, lagDays` |
