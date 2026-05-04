@@ -14,6 +14,7 @@ from api.schemas.common import CamelModel, StockRef
 from api.schemas.portfolio import HoldingRow, PortfolioSummary, RiskAlert
 from api.schemas.stock import DataFreshness, ExDividendEvent, RadarHit, WatchlistMover
 from app import watchlist as wl_mod
+from app.data import trading_calendar
 from app.data.clock import taipei_today
 from app.data.db import Database
 from app.scoring.radar_queries import query_radar_hits
@@ -87,9 +88,13 @@ _TABLE_LABELS = {
 }
 
 
-def _expected_lag(table: str, today: date) -> tuple[int, int]:
+def _expected_lag(table: str, today: date, db: Database) -> tuple[int, int]:
     """各資料表的「正常 / 警告」延遲門檻（天）。
-    - 日表：扣掉週末（週六最新資料是週五，今天週一最新仍是週五）
+
+    - 日表：以「最近一個交易日」為基準（trading_calendar 模組會把週末 + 國定假日都當休市），
+      只要 latest_date 跟得上預期交易日就 ok。例：今天週一 5/4，上週五 5/1 是勞動節 +
+      週末，預期最新 = 4/30 → lag=4 calendar 天但仍 ok（trading-day lag = 0）。
+      避免 5/1 勞動節 / 春節 / 雙十假期把資料狀態誤判成 warning。
     - 月營收：每月 1~10 號公告上月，所以資料最舊可達 ~40 天仍正常
     - 季財報：上市每季最晚公告日 Q1=5/15、Q2=8/14、Q3=11/14、Q4(年報)=次年 3/31。
       最壞情況：剛過 4/1 還在等 Q4 年報、距 Q3 公告日已 ~140 天 → 用 145 / 180 天
@@ -100,16 +105,16 @@ def _expected_lag(table: str, today: date) -> tuple[int, int]:
         return (45, 70)
     if table == "financials_quarterly_derived":
         return (145, 180)
-    # 一般日表：扣掉今天/昨天可能是週末
-    weekday = today.weekday()  # Mon=0 ... Sun=6
-    extra = 0
-    if weekday == 5:    # Sat
-        extra = 1
-    elif weekday == 6:  # Sun
-        extra = 2
-    elif weekday == 0:  # Mon (上週五最新)
-        extra = 2
-    return (1 + extra, 3 + extra)
+    # 日表：以「上一個交易日」為基準。
+    #
+    # 為什麼不是 expected_latest_close_date（會回傳「今天若是交易日就回今天」）：
+    # 今天的 OpenAPI final 要 16:30 後才有，盤中跑 freshness 不該因為 latest=昨天就誤
+    # 報 warning。基準改成 previous_trading_day → ok 門檻 = 今天 − 上一個交易日的
+    # calendar 差（2 calendar day for 一般 Tue、4 day for 勞動節後 Mon），讓 latest_date
+    # 是上一個交易日（甚至更新到今天 = lag 0）都算 fresh。
+    prev_trading = trading_calendar.previous_trading_day(today, db)
+    expected_lag = (today - prev_trading).days
+    return (expected_lag, expected_lag + 2)
 
 
 class HitChange(StockRef):
@@ -436,7 +441,7 @@ def data_freshness(db: Database = Depends(get_db)) -> list[DataFreshness]:
             try:
                 d = datetime.fromisoformat(mx[:10]).date()
                 lag = (today - d).days
-                ok_thr, warn_thr = _expected_lag(table, today)
+                ok_thr, warn_thr = _expected_lag(table, today, db)
                 if lag <= ok_thr:
                     tone = "ok"
                 elif lag <= warn_thr:

@@ -13,6 +13,8 @@
 | `app/scoring/radar_cache.py` | radar 命中清單 parquet cache（key=`MAX(monthly_revenue.date)+MAX(daily_price.date)`） |
 | `app/scoring/market_scope_cache.py` | 🆕 industry_rotation + market_breadth parquet/JSON cache（key=`MAX(daily_price.date)`，每日只算一次） |
 | `app/scoring/snapshot_freshness.py` | 列表 API 開頭呼叫 `ensure_fresh()`，snapshot 落後 daily_price 時自動補跑（with lock） |
+| `app/data/trading_calendar.py` | 🆕 台股交易日 / 休市日判斷：DB 觀察過去工作日缺資料 = 休市；今天 / 未來查 `INLINE_TWSE_HOLIDAYS`（每年由 TWSE 公告，每年 Q4 人工更新）。dashboard freshness 用此模組計算 ok 門檻避免 5/1 勞動節 / 春節等假期被誤判為「資料過舊」 |
+| `app/data/market_updater.py` | TWSE/TPEx OpenAPI 增量抓取。`fetch_date_range` 預設 `update_progress=False`：`--date / --from..--to / --days` 這類 cherry-pick 補洞**不會**改寫 fetch_log 進度指標；只有 `update_incremental`（線性增量）才會推進。避免 `--date 2025-02-05` 把進度拖回中間某天 → 隔天 daily-update 從那裡開始爬一年多的 footgun |
 | `web/` | Next.js 15 App Router，TypeScript，Tailwind v4，自家 design tokens |
 | `web/components/primitives/` | 通用 UI：PageHeader、EmptyState、Field、Th/Td、🆕 TableContainer（Th + bg + overflow + 內建 ScrollHint）、🆕 StockIdCell（13 個 listing 表共用「代號/名稱」cell）、Pagination、Icon、KPIStat、ScoreBadge、PriceCell、ThemeToggle、RiskAlertList、SnapshotFreshnessIndicator、SnapshotDeltaPanel、TableScrollHint（Taiwan 漲紅跌綠硬編進 token） |
 | `web/components/charts/` | CandlestickChart（lightweight-charts，陽紅陰綠）+ ScoreTimelineChart / BacktestEquityChart（Recharts）+ IndustryHeatmap（d3-hierarchy 自繪 SVG） |

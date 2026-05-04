@@ -48,6 +48,7 @@ cd web && npx tsc --noEmit     # frontend type check
 - 紅漲綠跌（與美股顏色相反）
 - 漲跌停 ±10%（以前一日收盤計算），開盤即漲跌停 = 流動性蒸發
 - 0050 是 ETF 代號 4 碼，大多數股票代號 4 碼（上市/上櫃）
+- 休市日：週末 + 國定假日（5/1 勞動節、春節、雙十、清明、端午、中秋等）。`holidays.TW` 不可靠（5/1 在不同年份結果不同），統一走 [app/data/trading_calendar.py](app/data/trading_calendar.py)：過去日期看 `daily_price` 工作日缺資料 → 休市；今天 / 未來看 `INLINE_TWSE_HOLIDAYS` 對照表（每年 Q4 由 TWSE 公告新一年行事曆，需要人工更新）。dashboard freshness、未來新功能要算「上一個交易日 / 預期最新收盤」一律用這個模組
 - 月營收**最遲次月 10 號公告**（系統 publish_date 也以 10 號 stamp，避免 look-ahead bias）；季財報 Q1=05-15、Q2=08-14、Q3=11-14、Q4=次年 03-31 公告（`financials_cumulative.publish_date` 同樣按法定下限 stamp，SQL 一律 `WHERE COALESCE(publish_date, date) <= ?` 過濾）
 - 證交稅賣方依代號分流：**一般股 0.3% / 股票型 ETF 0.1% / 債券 ETF (00xxxB) 0%** — 統一走 `tax_rate_for(stock_id)` in [app/portfolio.py](app/portfolio.py)，回測引擎、持股估值、新增交易自動扣稅都吃這個 helper。手續費雙向 0.1425%（券商通常會折扣）。
 
