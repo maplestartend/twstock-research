@@ -29,6 +29,8 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 ### 5. 改 `app/scoring/*` / `app/backtest/*` / `app/risk.py` / `app/portfolio.py` 後跑 `restart.bat`
 `signal_history` 是上次 `score_all` 寫進去的快照；engine 改了但 `as_of` 日期沒變 → 雷達/自選讀舊快照、個股詳情即時呼叫新 engine，兩邊分數會分歧。`restart.bat` 會 stop → 強制 `snapshot_today()` → relaunch。完整 SOP（含 `score_stock` 與 `score_all` 必須吃同一份 `fund_snap` 的同步規則）：[`.claude/skills/scoring-restart/`](.claude/skills/scoring-restart/SKILL.md)。
 
+> **Snapshot 必須含基本面**：`snapshot_today` / `radar.score_all` 預設 `include_fundamentals=True`；改成 False 會讓 `signal_history.long` 整欄 NULL（雷達/自選的長期分數欄全空）。`market_update.py` 的旗標 2026-05-04 修過 — 預設改成含基本面、`--skip-snapshot-fundamentals` 才 opt-out（之前是 `--snapshot-with-fundamentals` opt-in，造成每天 daily-update 都寫壞 long）。
+
 ### 6. .bat 工具
 公開（雙擊）：`launch` / `stop` / `restart` / `status` / `daily-update` / `install-schedule` / `uninstall-schedule`。私有（被 call）：`_launch-servers` / `_kill-servers`。改 stop / restart 共用的殺 process 邏輯時改 `_kill-servers.bat`，兩邊都會吃到。
 

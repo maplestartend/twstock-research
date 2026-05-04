@@ -92,7 +92,19 @@ def main() -> int:
     parser.add_argument("--days", type=int, help="回補最近 N 天")
     parser.add_argument("--delay", type=float, default=1.0, help="每個 request 間隔（秒）")
     parser.add_argument("--no-snapshot", action="store_true", help="更新完不要自動拍訊號快照")
-    parser.add_argument("--snapshot-with-fundamentals", action="store_true", help="訊號快照含基本面（較慢）")
+    # 預設 True：snapshot 一定要含基本面，否則 signal_history.long 全是 NULL（雷達 / 自選的長期分數欄全空）。
+    # backfill 大量歷史日想犧牲長期分換 ~30s/天速度時才用 --skip-snapshot-fundamentals。
+    # 舊旗標 --snapshot-with-fundamentals 保留為 no-op alias，避免破壞外部使用者的 cron。
+    parser.add_argument(
+        "--skip-snapshot-fundamentals",
+        action="store_true",
+        help="訊號快照不含基本面（快 ~30s/天，但 long 分數會全 NULL — 不建議）",
+    )
+    parser.add_argument(
+        "--snapshot-with-fundamentals",
+        action="store_true",
+        help=argparse.SUPPRESS,  # 舊旗標：以前是 opt-in；現在是預設行為，留著只為向後相容
+    )
     parser.add_argument("--no-adj", action="store_true", help="更新完不要順手算自選股還原價")
     parser.add_argument("--no-financials", action="store_true", help="不要自動檢測最新季財報（MOPS bulk）")
     parser.add_argument("--no-report", action="store_true", help="不要產每日早報")
@@ -166,7 +178,9 @@ def main() -> int:
                 try:
                     log.info("計算訊號快照 (~40s)…")
                     t_snap = time.time()
-                    snapshot_today(db, include_fundamentals=args.snapshot_with_fundamentals)
+                    # 預設含基本面 — 不含的話 signal_history.long 會整欄 NULL（雷達/自選看不到長期分數）。
+                    # 只有顯式 --skip-snapshot-fundamentals 才退回快速但無 long 的版本。
+                    snapshot_today(db, include_fundamentals=not args.skip_snapshot_fundamentals)
                     log.info("訊號快照完成 (%.1fs)", time.time() - t_snap)
                 except Exception as e:
                     log.warning("訊號快照失敗: %s", e)
@@ -282,6 +296,7 @@ def _describe_args(args) -> str:
     if args.date_from: parts.append(f"from={args.date_from}")
     if args.date_to: parts.append(f"to={args.date_to}")
     if args.no_snapshot: parts.append("no-snapshot")
+    if args.skip_snapshot_fundamentals: parts.append("skip-snapshot-fundamentals")
     if args.no_adj: parts.append("no-adj")
     if args.no_financials: parts.append("no-financials")
     if args.no_report: parts.append("no-report")
