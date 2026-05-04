@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { KPIStat } from "@/components/primitives/KPIStat";
 import { LiveHoldingsTable } from "@/components/primitives/LiveHoldingsTable";
+import { LivePortfolioKpis } from "./LivePortfolioKpis";
 import { RadarHitChip } from "@/components/primitives/RadarHitChip";
 import { DataFreshnessBadge } from "@/components/primitives/DataFreshnessBadge";
 import { PriceCell } from "@/components/primitives/PriceCell";
@@ -35,6 +36,13 @@ export const revalidate = 60;
 
 const getDashboardHome = cache(() =>
   apiGet<DashboardHomePayload>("/api/dashboard/home", { tags: ["snapshot", "watchlist"] }),
+);
+
+// 戰情室同 request 內的 KpiSection 與 HoldingsDetailSection 都需要這份批次盤中報價；
+// React `cache` dedupe 可確保只打一次 mis（內部還有 30s per-stock 快取）。
+// noCache 讓每一次 SSR 都拿新鮮值，避免戰情室 ISR 把報價凍 60 秒。
+const getHoldingsIntradayQuotes = cache(() =>
+  apiGetOptional<IntradayQuoteView[]>("/api/portfolio/holdings/intraday", { noCache: true }),
 );
 
 export default function DashboardPage() {
@@ -121,8 +129,14 @@ function SectionError({ error }: { error: unknown }) {
 
 async function KpiSection() {
   let data: DashboardHomePayload;
+  let quotesList: IntradayQuoteView[] | null = null;
   try {
-    data = await getDashboardHome();
+    // 並行：dashboard payload（持股 / 雷達 / 新鮮度）+ 批次盤中報價（noCache）。
+    // intraday 失敗 → quotesList=null → LivePortfolioKpis 退回 snapshot summary，client 仍會自輪詢
+    [data, quotesList] = await Promise.all([
+      getDashboardHome(),
+      getHoldingsIntradayQuotes(),
+    ]);
   } catch (e) {
     return <SectionError error={e} />;
   }
@@ -130,35 +144,17 @@ async function KpiSection() {
   const radarHits: RadarHit[] = data.radarHits;
   const freshness: DataFreshness[] = data.freshness;
   const freshest = freshness.find((f) => f.table === "daily_price");
+  const initialQuotes: Record<string, IntradayQuoteView> = {};
+  for (const q of quotesList ?? []) initialQuotes[q.stockId] = q;
   return (
     <section className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-      <div className="col-span-2">
-        <KPIStat
-          label="持股總市值"
-          value={fmtMoney(summary.totalMarketValue, 0)}
-          deltaPct={summary.todayPnlPct}
-          tone={tone(summary.todayPnlPct)}
-          footnote={`${summary.holdingCount} 檔`}
-          size="lg"
-        />
-      </div>
-      <KPIStat
-        label="今日損益"
-        value={fmtMoney(summary.todayPnl, 0)}
-        deltaPct={summary.todayPnlPct}
-        tone={tone(summary.todayPnl)}
+      {/* 前 3 張 KPI（持股總市值 / 今日損益 / 累積未實現損益）需跟隨即時報價變動 */}
+      <LivePortfolioKpis
+        initialRows={data.holdings}
+        initialQuotes={initialQuotes}
+        initialSummary={summary}
       />
-      <KPIStat
-        label="累積未實現損益"
-        value={fmtMoney(summary.netUnrealizedPnl ?? summary.unrealizedPnl, 0)}
-        deltaPct={summary.netUnrealizedPnlPct ?? summary.unrealizedPnlPct}
-        tone={tone(summary.netUnrealizedPnl ?? summary.unrealizedPnl)}
-        footnote={
-          summary.estimatedSellCosts
-            ? `毛 ${fmtMoney(summary.unrealizedPnl, 0)}・賣出稅費 ${fmtMoney(summary.estimatedSellCosts, 0)}`
-            : `成本 ${fmtMoney(summary.totalCost, 0)}`
-        }
-      />
+      {/* 雷達命中 / 資料狀態跟報價無關，server-render 即可 */}
       <KPIStat
         label="雷達命中"
         value={radarHits.length.toString()}
@@ -183,11 +179,10 @@ async function HoldingsDetailSection() {
   let data: DashboardHomePayload;
   let quotesList: IntradayQuoteView[] | null = null;
   try {
-    // 並行：snapshot 持股（走 dashboard/home cache）+ 批次盤中報價（noCache，每次 SSR 都新鮮）。
-    // intraday 端點失敗（後端掛 / 興櫃整批沒有 mis）就吞掉回 null，client 仍會自己輪詢。
+    // 與 KpiSection 共用同一份 getHoldingsIntradayQuotes（cache 過，同 request 內只打一次）
     [data, quotesList] = await Promise.all([
       getDashboardHome(),
-      apiGetOptional<IntradayQuoteView[]>("/api/portfolio/holdings/intraday", { noCache: true }),
+      getHoldingsIntradayQuotes(),
     ]);
   } catch (e) {
     return <SectionError error={e} />;

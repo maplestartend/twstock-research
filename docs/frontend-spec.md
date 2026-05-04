@@ -58,20 +58,20 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/` — 今日戰情室（dashboard）
 
-- **檔案**：[web/app/page.tsx](../web/app/page.tsx)
-- **類型**：RSC（`revalidate: 60`）
+- **檔案**：[web/app/page.tsx](../web/app/page.tsx) + [LivePortfolioKpis.tsx](../web/app/LivePortfolioKpis.tsx)（client，前 3 張 KPI 即時覆蓋層）
+- **類型**：RSC（含動態 fetch，`revalidate: 60` 形同失效）
 - **API 呼叫**：
-  - `apiGet`：`/api/dashboard/home`（KPI / 持股 / 雷達命中 / movers / 除權息 / freshness 一站式）
-  - 客戶端輪詢：`<LiveHoldingsTable>` 內部 30s（盤後 2 min）打 `/api/portfolio/holdings/intraday`
+  - SSR：`/api/dashboard/home`（持股 / 雷達 / movers / 除權息 / freshness 一站式，走 cache）+ `/api/portfolio/holdings/intraday`（noCache，每次 render 都新鮮）。後者用 React `cache()` 包過，KpiSection + HoldingsDetailSection 同一 request 內共用同一回應
+  - 客戶端輪詢：`<LivePortfolioKpis>` 與 `<LiveHoldingsTable>` 各自 30s（盤後 2 min）`useHoldingsIntraday()`
 - **主要 sections**：
   - PageHeader
-  - KPI row × 5：總市值 / 今日損益 / 未實現 / 雷達命中 / 資料狀態
-  - **🆕 持股明細**：渲染 `<LiveHoldingsTable>`（與 /holdings 頁共用同一元件，標題自帶「即時 N/M」徽章），原本的 `RiskAlertList` + `SnapshotDeltaPanel` 副面板已移出此區塊
+  - **🆕 KPI row × 5**：`<LivePortfolioKpis>`（持股總市值 / 今日損益 / 累積未實現損益，由即時 row merge 後 derive；server 端先帶一份 initialQuotes 進去，client 第一個 frame 就是即時值不閃爍）+ 雷達命中 + 資料狀態（後兩張不依賴報價，純 server-render）
+  - **持股明細**：`<LiveHoldingsTable>`（與 /holdings 頁共用同一元件，標題自帶「即時 N/M」徽章）；舊的 `RiskAlertList` + `SnapshotDeltaPanel` 副面板已移出此區塊
   - 今日雷達命中側欄
   - 我的關注 7 日分數變化
   - 自選漲幅榜 / 跌幅榜 / 近 7 日除權息
   - 各表新鮮度 footer
-- **用到 components**：`KPIStat`、`LiveHoldingsTable`、`RadarHitChip`、`DataFreshnessBadge`、`PriceCell`、`PageHeader`、`EmptyState`、`BackendDownError`
+- **用到 components**：`KPIStat`、`LivePortfolioKpis`、`LiveHoldingsTable`、`RadarHitChip`、`DataFreshnessBadge`、`PriceCell`、`PageHeader`、`EmptyState`、`BackendDownError`
 
 ### `/stocks/[stockId]` — 個股詳情
 

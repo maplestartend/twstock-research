@@ -145,7 +145,9 @@ python -m scripts.backfill_financials_history --quarters 8
 > 各頁的 UI 結構、API 呼叫、用到的元件詳見 [docs/frontend-spec.md](docs/frontend-spec.md)。下面只列重點。
 
 ### 🏠 今日戰情室（預設頁）
-全部讀 DB，秒開。包含：大盤體質燈號、KPI 條（指數/持股/自選/資料新鮮度）、💼 **持股明細**（與「我的持股」頁同一個 LiveHoldingsTable 元件、ATR 停損 + ATR 停利 badge、盤中即時報價 30s 輪詢）、⭐ 自選股 Top/Bottom 5、🎯 雷達命中 Top 10、📅 5 日除權息、🔧 資料更新狀態。
+全部讀 DB，秒開。包含：大盤體質燈號、**🆕 KPI 條（持股總市值 / 今日損益 / 累積未實現損益 跟著盤中即時報價 30s 重算；雷達命中 / 資料狀態 server 端產出）**、💼 **持股明細**（與「我的持股」頁同一個 LiveHoldingsTable 元件、ATR 停損 + ATR 停利 badge、盤中即時報價 30s 輪詢）、⭐ 自選股 Top/Bottom 5、🎯 雷達命中 Top 10、📅 5 日除權息、🔧 資料更新狀態。
+
+> KPI 與持股表共用同一份 server-prefetch 即時報價（React `cache` dedupe，同 request 內只打一次 mis 批次），第一次 render 就是即時值，沒有「先昨收後跳即時」閃爍。
 
 > 持股「未實現損益」顯示**淨值**（毛 − 預估賣出手續費 − 證交稅）。**證交稅依代號自動分流**：一般股 0.3%、股票型 ETF 0.1%、債券 ETF 0%。
 > 集中度提醒：單檔 >25% 或單一產業 >40%。同 severity 的多筆風險合併成 list 卡（避免 4 張 2x2 噪音）。
