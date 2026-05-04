@@ -159,8 +159,22 @@ class MarketUpdater:
     # ======================================================================
     # 日期範圍批次
     # ======================================================================
-    def fetch_date_range(self, start: str | date, end: str | date, skip_weekends: bool = True) -> None:
-        """抓取日期範圍（含端點）。遇到非交易日（假日）會被 TWSE/TPEx 回傳空資料自動跳過。"""
+    def fetch_date_range(
+        self,
+        start: str | date,
+        end: str | date,
+        skip_weekends: bool = True,
+        update_progress: bool = False,
+    ) -> None:
+        """抓取日期範圍（含端點）。遇到非交易日（假日）會被 TWSE/TPEx 回傳空資料自動跳過。
+
+        update_progress：是否寫 fetch_log。
+            - True：給 update_incremental 用（連續增量、進度指標的真實來源）
+            - False（預設）：給 --date / --from..--to / --days 這類「補洞」場景用
+              這些都不是線性進度，舊行為會把 fetch_log 拖回中間某天 → 下次 daily-update 會
+              從那天起重抓 N 個月。實際 case：cherry-pick 跑 --date 2025-02-05 把 fetch_log
+              改寫成 2/5，隔天 daily-update 就從 2/6 開始往今天爬一年多。
+        """
         if isinstance(start, str):
             start = datetime.strptime(start, "%Y-%m-%d").date()
         if isinstance(end, str):
@@ -179,9 +193,10 @@ class MarketUpdater:
                 logger.info("  %s", ", ".join(f"{k}={v}" for k, v in res.items()))
             else:
                 logger.info("  （非交易日或無資料）")
-            # 更新 fetch_log：每個 table 各記一次 last_date
-            for table in res:
-                self.db.set_last_fetch_date("__market__", table, d.isoformat())
+            if update_progress:
+                # 更新 fetch_log：每個 table 各記一次 last_date
+                for table in res:
+                    self.db.set_last_fetch_date("__market__", table, d.isoformat())
             n_days += 1
             d += timedelta(days=1)
         logger.info("完成 %d 個日期", n_days)
@@ -219,4 +234,5 @@ class MarketUpdater:
         if start > today:
             logger.info("已經是最新")
             return
-        self.fetch_date_range(start, today)
+        # update_progress=True：這條是線性增量，要把 fetch_log 推進當作下次的起點
+        self.fetch_date_range(start, today, update_progress=True)
