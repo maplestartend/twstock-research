@@ -22,6 +22,7 @@ import pandas as pd
 from app.data.clock import taipei_today
 from app.data.db import Database
 from app.data.tpex_fetcher import TpexFetcher, TpexError
+from app.data.trading_calendar import is_trading_day
 from app.data.twse_fetcher import TwseFetcher, TwseError
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,11 @@ class MarketUpdater:
         skip_weekends: bool = True,
         update_progress: bool = False,
     ) -> None:
-        """抓取日期範圍（含端點）。遇到非交易日（假日）會被 TWSE/TPEx 回傳空資料自動跳過。
+        """抓取日期範圍（含端點）。週末與已知休市日（trading_calendar）直接跳過不發 HTTP。
+
+        為什麼要看 trading_calendar：以前只跳週末，5/1 / 端午 / 中秋 等國定假日仍會打 8 個
+        HTTP request 拿空表，且 fetch_log 不會推進（res 是空 dict）→ 隔天 incremental
+        從同一個 4/30 起點重來，每次都白打 5/1。
 
         update_progress：是否寫 fetch_log。
             - True：給 update_incremental 用（連續增量、進度指標的真實來源）
@@ -186,13 +191,17 @@ class MarketUpdater:
             if skip_weekends and d.weekday() >= 5:
                 d += timedelta(days=1)
                 continue
+            if not is_trading_day(d, self.db):
+                logger.info("跳過 %s（非交易日 / 休市）", d.isoformat())
+                d += timedelta(days=1)
+                continue
             date_ymd = d.strftime("%Y%m%d")
             logger.info("抓取 %s", d.isoformat())
             res = self.fetch_one_date(date_ymd)
             if res:
                 logger.info("  %s", ", ".join(f"{k}={v}" for k, v in res.items()))
             else:
-                logger.info("  （非交易日或無資料）")
+                logger.info("  （無資料）")
             if update_progress:
                 # 更新 fetch_log：每個 table 各記一次 last_date
                 for table in res:
