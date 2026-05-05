@@ -59,6 +59,7 @@ python -m scripts.backfill_financials_history --quarters 5
 | `daily-update.bat` | 只抓當日資料（不開 UI），給排程跑 |
 | `install-schedule.bat` | 安裝 Windows 工作排程，每日 15:30 自動 daily-update |
 | `uninstall-schedule.bat` | 移除排程 |
+| `check-holdings.bat [本金]` | 盤後一鍵檢查持股：列出 ATR 停損 / 結構警戒線 / Chandelier 鎖利狀態與隔日動作清單。本金預設 760,000，可帶參數覆蓋 |
 
 > **找不到 uvicorn / next dev 在哪？** 不必翻 cmd 視窗，雙擊 `stop.bat` 就好（用 port 找 PID）。
 >
