@@ -1,19 +1,20 @@
 import { Suspense } from "react";
-import { apiGetOptional, type MarketSnapshot, type MarketBreadth, type SnapshotStatus } from "@/lib/api";
-import { fmtNum, fmtPrice, fmtPct, taipeiDate, taipeiWeekday, tone, toneIcon, toneLabel } from "@/lib/format";
+import {
+  apiGetOptional,
+  type MarketSnapshot,
+  type MarketBreadth,
+  type MarketIntradayQuote,
+  type SnapshotStatus,
+} from "@/lib/api";
+import { fmtNum, taipeiDate, taipeiWeekday } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Icon } from "@/components/primitives/Icon";
 import { ThemeToggle } from "@/components/primitives/ThemeToggle";
 import { SearchTrigger } from "@/components/primitives/SearchTrigger";
 import { SnapshotFreshnessIndicator } from "@/components/primitives/SnapshotFreshnessIndicator";
 import { Skeleton } from "@/components/primitives/Skeleton";
+import { TopbarMarketLive } from "./TopbarMarketLive";
 import { SidebarToggle } from "./SidebarToggle";
-
-const TONE_CLASS = {
-  up: "text-[var(--color-up)]",
-  down: "text-[var(--color-down)]",
-  flat: "text-[var(--color-flat)]",
-};
 
 // Topbar 是 layout-level component，會被每一條路由 await。如果在這裡 await 三支 API，
 // 整個頁面（包含 main 內容）都得等到 Topbar 拿到資料才能 flush 第一個 byte。
@@ -57,36 +58,17 @@ function TopbarMarketSkeleton() {
 }
 
 async function TopbarMarket() {
-  const [snap, breadth] = await Promise.all([
+  // intraday 走 noCache 避免被 Next.js Data Cache 鎖在 60s（mis 30s 撮合，Topbar 跨頁重渲染要拿到當下值）
+  // snapshot/breadth 仍可 60s revalidate（EOD 資料一天才更新一次，沒必要每次 SSR 都打）
+  const [snap, breadth, liveIndex] = await Promise.all([
     apiGetOptional<MarketSnapshot>("/api/market/snapshot", { revalidate: 60 }),
     apiGetOptional<MarketBreadth>("/api/market/breadth", { revalidate: 60 }),
+    apiGetOptional<MarketIntradayQuote>("/api/market/intraday", { noCache: true }),
   ]);
-  const pct = snap?.changePct != null ? snap.changePct / 100 : null;
-  const t = tone(pct);
-  const today = taipeiDate(new Date());
-  const lastTrading = (snap?.date && snap.date !== today)
-    ? { date: snap.date, weekday: taipeiWeekday(new Date(snap.date + "T00:00:00+08:00")) }
-    : null;
 
   return (
     <>
-      {snap && (
-        <div className="flex items-baseline gap-2 lg:gap-3">
-          <span className="hidden sm:inline text-xs text-[var(--text-tertiary)] tracking-wide">加權指數</span>
-          <span className="numeric text-base lg:text-xl font-bold">{fmtPrice(snap.close)}</span>
-          {pct != null && (
-            <span className={cn("numeric text-sm font-medium inline-flex items-center gap-0.5", TONE_CLASS[t])}>
-              <Icon name={toneIcon(pct)} size={18} label={toneLabel(pct)} />
-              {fmtPct(pct, 2)}
-            </span>
-          )}
-          {lastTrading && (
-            <span className="hidden lg:inline numeric text-[11px] text-[var(--text-tertiary)] ml-2">
-              最近交易 {lastTrading.date} 週{lastTrading.weekday}
-            </span>
-          )}
-        </div>
-      )}
+      <TopbarMarketLive initialIntraday={liveIndex} initialFallback={snap} />
       {breadth && (
         <div className="hidden md:flex items-center gap-4 text-xs text-[var(--text-secondary)] border-l border-[var(--border-default)] pl-6">
           <span className="inline-flex items-center gap-3">

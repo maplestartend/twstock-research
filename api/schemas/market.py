@@ -10,6 +10,27 @@ class MarketSnapshot(CamelModel):
     change_pct: float | None = None  # % 單位（非小數）
 
 
+class MarketIntradayQuote(CamelModel):
+    """大盤指數盤中即時值（mis.twse.com.tw）。
+
+    - 預設抓 TWSE 加權指數（ex_ch=tse_t00.tw）
+    - 盤後 / mis 異常 → 422，前端應 fallback 到 /api/market/snapshot 的收盤值
+    - change_pct 為小數（0.0123 = 1.23%），與股票 `IntradayQuoteView.changePct` 對齊；
+      但 `MarketSnapshot.changePct` 沿用百分比表示（為避免破壞既有前端格式器，不一併調整）
+    """
+    index_id: str
+    name: str | None = None
+    value: float
+    prev_close: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    change_pct: float | None = None  # 小數
+    quote_time: str | None = None
+    is_live: bool = True
+    quote_source: str = "match"
+
+
 class MarketBreadth(CamelModel):
     n_total: int = 0
     n_up: int = 0

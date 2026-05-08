@@ -215,6 +215,23 @@ export type MarketSnapshot = {
   changePct: number | null;
 };
 
+/** 大盤指數盤中即時值（TWSE mis；30s 後端記憶體快取 + Cache-Control: no-store）。
+ *  changePct 為小數 (0.0123 = 1.23%)，與 IntradayQuoteView.changePct 對齊；注意這跟
+ *  MarketSnapshot.changePct 是百分比（沿用既有 EOD 格式）相反。 */
+export type MarketIntradayQuote = {
+  indexId: string;
+  name: string | null;
+  value: number;
+  prevClose: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  changePct: number | null;
+  quoteTime: string | null;
+  isLive: boolean;
+  quoteSource: "match" | "prev_match" | "prev_close";
+};
+
 export type MarketBreadth = {
   nTotal: number; nUp: number; nDown: number; nUnchanged: number;
   advanceDeclineRatio: number | null;

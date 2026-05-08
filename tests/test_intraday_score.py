@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from api.deps import get_db  # noqa: E402
 from api.main import app  # noqa: E402
 from app.data import intraday as intraday_mod  # noqa: E402
-from app.data.intraday import IntradayQuote  # noqa: E402
+from app.data.intraday import IndexQuote, IntradayQuote  # noqa: E402
 from app.scoring.engine import score_stock  # noqa: E402
 
 client = TestClient(app)
@@ -314,3 +314,74 @@ def test_score_endpoint_live_fallback_when_intraday_fails(stock_id: str):
     data = r.json()
     assert data["livePriceUsed"] is False
     assert data["livePrice"] is None
+
+
+# ----------------------------------------------------------------------
+# 5) 大盤指數即時報價 — _parse_index_msg + /api/market/intraday
+# ----------------------------------------------------------------------
+def test_parse_index_msg_uses_z_when_present():
+    """z 有值 → match。"""
+    msg = {
+        "c": "t00", "n": "發行量加權股價指數",
+        "z": "17500.5", "pz": "17499.0", "y": "17400.0",
+        "o": "17450.0", "h": "17600.0", "l": "17400.0", "t": "13:30:00",
+    }
+    q = intraday_mod._parse_index_msg(msg)
+    assert q is not None
+    assert q.value == 17500.5
+    assert q.prev_close == 17400.0
+    assert q.is_live is True
+    assert q.quote_source == "match"
+
+
+def test_parse_index_msg_falls_back_to_pz():
+    """z='-' 但 pz 還在 → prev_match（指數沒有委託簿，跳過 midpoint）。"""
+    msg = {"c": "t00", "n": "TAIEX", "z": "-", "pz": "17499.0", "y": "17400.0"}
+    q = intraday_mod._parse_index_msg(msg)
+    assert q is not None
+    assert q.value == 17499.0
+    assert q.is_live is True
+    assert q.quote_source == "prev_match"
+
+
+def test_parse_index_msg_falls_back_to_y_when_z_pz_missing():
+    """z 跟 pz 都空白 → 走昨收，is_live=False（盤後 / mis 故障）。"""
+    msg = {"c": "t00", "n": "TAIEX", "z": "-", "pz": "-", "y": "17400.0"}
+    q = intraday_mod._parse_index_msg(msg)
+    assert q is not None
+    assert q.value == 17400.0
+    assert q.is_live is False
+    assert q.quote_source == "prev_close"
+
+
+def test_parse_index_msg_no_value_returns_none():
+    """三個值都缺 → None（mis 完全沒回任何可用報價）。"""
+    msg = {"c": "t00", "n": "TAIEX", "z": "-", "pz": "-", "y": "-"}
+    assert intraday_mod._parse_index_msg(msg) is None
+
+
+def test_market_intraday_endpoint_with_mock():
+    """正常路徑：mock fetch_index_quote 回有效報價，change_pct 算對。"""
+    fake = IndexQuote(
+        index_id="t00", name="發行量加權股價指數",
+        value=17500.0, prev_close=17400.0,
+        open=17450.0, high=17600.0, low=17400.0,
+        quote_time="13:30:00", is_live=True, quote_source="match",
+    )
+    with patch.object(intraday_mod, "fetch_index_quote", return_value=fake):
+        r = client.get("/api/market/intraday")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["value"] == 17500.0
+    assert data["prevClose"] == 17400.0
+    assert data["isLive"] is True
+    assert data["changePct"] == pytest.approx((17500.0 - 17400.0) / 17400.0)
+    # Cache-Control: no-store 必須設好（否則 Next.js Data Cache 會把這個值黏住 60s）
+    assert "no-store" in r.headers.get("cache-control", "").lower()
+
+
+def test_market_intraday_endpoint_returns_422_when_unavailable():
+    """mis 失敗 / 休市 → 422。前端 fallback 收盤 snapshot。"""
+    with patch.object(intraday_mod, "fetch_index_quote", return_value=None):
+        r = client.get("/api/market/intraday")
+    assert r.status_code == 422

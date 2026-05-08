@@ -37,6 +37,26 @@ _CACHE_TTL_SEC = 30.0
 
 
 @dataclass(frozen=True)
+class IndexQuote:
+    """大盤指數的盤中報價快照（mis 對指數的回傳格式比個股精簡，沒有 a/b/v 欄位）。
+
+    - `value` 取得優先序：`z` 最新指數 → `pz` 前一筆 → `y` 昨收（fallback，is_live=False）
+    - 指數沒有委託簿 / 漲跌停限制，所以個股的 midpoint / limit_up 那幾條 fallback 用不到
+    - `tv` 是當日累積成交值（NTD），盤後資料尚未結帳前看會偏低；caller 不要拿來算交易量比例
+    """
+    index_id: str          # mis ex_ch 的 code 部分（例 't00'）
+    name: str              # 指數中文名（例 '發行量加權股價指數'）
+    value: float           # 當下指數值
+    prev_close: Optional[float]
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    quote_time: Optional[str] = None
+    is_live: bool = True
+    quote_source: str = "match"  # "match" | "prev_match" | "prev_close"
+
+
+@dataclass(frozen=True)
 class IntradayQuote:
     """單一檔股票的盤中報價快照。
 
@@ -284,7 +304,101 @@ def _do_fetch(stock_id: str, market_type: str | None) -> IntradayQuote | None:
     return None
 
 
+_index_cache: dict[str, tuple[float, IndexQuote | None]] = {}
+_index_cache_lock = threading.Lock()
+
+# mis 對 TWSE 加權指數的查詢 key
+TAIEX_EX_CH = "tse_t00.tw"
+TAIEX_NAME = "發行量加權股價指數"
+
+
+def _parse_index_msg(msg: dict[str, Any]) -> IndexQuote | None:
+    """mis 指數回傳的單筆 entry → IndexQuote。
+
+    與股票的差異：
+    - 指數無 a/b（委託簿）也無 u/w（漲跌停），所以只走 z → pz → y 三段。
+    - z='-' 不代表盤後 — 指數每秒都在更新，z 空白時實務上很罕見（例如 mis 短暫故障）；
+      但既然偶爾會發生（與個股 5 秒撮合制不同的另一種空白原因），仍保留 pz fallback。
+    """
+    sid = msg.get("c") or ""
+    if not sid:
+        return None
+    name = msg.get("n") or ""
+    z = _to_float(msg.get("z"))
+    pz = _to_float(msg.get("pz"))
+    y = _to_float(msg.get("y"))
+    o = _to_float(msg.get("o"))
+    h = _to_float(msg.get("h"))
+    lo = _to_float(msg.get("l"))
+    t = msg.get("t") or None
+
+    if z is not None:
+        value, source, is_live = z, "match", True
+    elif pz is not None:
+        value, source, is_live = pz, "prev_match", True
+    elif y is not None:
+        value, source, is_live = y, "prev_close", False
+    else:
+        return None
+
+    return IndexQuote(
+        index_id=sid,
+        name=name,
+        value=value,
+        prev_close=y,
+        open=o,
+        high=h,
+        low=lo,
+        quote_time=t,
+        is_live=is_live,
+        quote_source=source,
+    )
+
+
+def fetch_index_quote(
+    ex_ch: str = TAIEX_EX_CH,
+    *,
+    use_cache: bool = True,
+) -> IndexQuote | None:
+    """抓大盤指數即時值（預設 TAIEX）。失敗回 None。
+
+    - 30 秒 cache 與股票分開（避免 key 衝突；caller 只查指數時不會撞到股票快取容量）
+    - 不可寫入 `index_daily`（盤中值非 final close，會污染回測來源）— 與 fetch_quote 同樣
+      的職責邊界，參見模組 docstring。
+    """
+    cache_key = ex_ch
+    if use_cache:
+        with _index_cache_lock:
+            entry = _index_cache.get(cache_key)
+            if entry is not None and time.time() - entry[0] <= _CACHE_TTL_SEC:
+                return entry[1]
+
+    quote: IndexQuote | None = None
+    try:
+        sess = _get_session()
+        url = f"{_BASE}/api/getStockInfo.jsp"
+        resp = sess.get(url, params={"ex_ch": ex_ch, "json": "1", "delay": "0"}, timeout=8)
+        if resp.status_code == 200:
+            try:
+                j = resp.json()
+            except ValueError:
+                j = None
+            if j is not None:
+                msgs = j.get("msgArray") or []
+                if msgs:
+                    quote = _parse_index_msg(msgs[0])
+    except requests.RequestException as exc:
+        logger.debug("intraday index fetch %s failed: %s", ex_ch, exc)
+        quote = None
+
+    with _index_cache_lock:
+        _index_cache[cache_key] = (time.time(), quote)
+    return quote
+
+
 def clear_cache() -> None:
-    """測試用：清掉 in-memory cache。"""
+    """測試用：清掉 in-memory cache（含個股 + 指數兩份）。"""
     with _cache._lock:
         _cache._d.clear()
+    with _index_cache_lock:
+        _index_cache.clear()

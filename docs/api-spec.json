@@ -2951,6 +2951,112 @@
         "title": "MarketBreadth",
         "type": "object"
       },
+      "MarketIntradayQuote": {
+        "description": "大盤指數盤中即時值（mis.twse.com.tw）。\n\n- 預設抓 TWSE 加權指數（ex_ch=tse_t00.tw）\n- 盤後 / mis 異常 → 422，前端應 fallback 到 /api/market/snapshot 的收盤值\n- change_pct 為小數（0.0123 = 1.23%），與股票 `IntradayQuoteView.changePct` 對齊；\n  但 `MarketSnapshot.changePct` 沿用百分比表示（為避免破壞既有前端格式器，不一併調整）",
+        "properties": {
+          "changePct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changepct"
+          },
+          "high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High"
+          },
+          "indexId": {
+            "title": "Indexid",
+            "type": "string"
+          },
+          "isLive": {
+            "default": true,
+            "title": "Islive",
+            "type": "boolean"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "open": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open"
+          },
+          "prevClose": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prevclose"
+          },
+          "quoteSource": {
+            "default": "match",
+            "title": "Quotesource",
+            "type": "string"
+          },
+          "quoteTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quotetime"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "indexId",
+          "value"
+        ],
+        "title": "MarketIntradayQuote",
+        "type": "object"
+      },
       "MarketSnapshot": {
         "properties": {
           "changePct": {
@@ -7389,6 +7495,28 @@
           }
         },
         "summary": "Rotation",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/market/intraday": {
+      "get": {
+        "description": "大盤加權指數盤中即時值（TWSE mis）。\n\n- 30 秒 in-memory cache（避免 hammer 上游）；前端輪詢頻率 30s\n- mis 失敗 / 休市 → 422，前端 fallback 到 /api/market/snapshot 的昨日收盤\n- 強制 no-store：避免 Next.js Data Cache / 反向代理把這支當成 60s 可快取的端點，\n  讓 Topbar 看到的指數值跟個股的「即時」標籤對得上時間",
+        "operationId": "intraday_api_market_intraday_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketIntradayQuote"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Intraday",
         "tags": [
           "market"
         ]

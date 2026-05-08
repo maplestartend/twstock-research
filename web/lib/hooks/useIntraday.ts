@@ -14,7 +14,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet, apiGetOptional, type IntradayQuoteView } from "@/lib/api";
+import { apiGet, apiGetOptional, type IntradayQuoteView, type MarketIntradayQuote } from "@/lib/api";
 
 const LIVE_REFRESH_MS = 30_000;
 const LIVE_REFRESH_MS_OFFHOURS = 120_000;
@@ -115,6 +115,29 @@ export function useIntradayQuote(
     [stockId],
     true,
     initial !== null, // 有初始值才 skip 第一次 tick
+  );
+
+  return quote;
+}
+
+/** 大盤指數輪詢：與個股 useIntradayQuote 共享 polling cadence。失敗回 null（caller fallback 收盤）。
+ *  initial：server prefetch 過的盤中報價當初始 state；提供時 mount 不再立刻打外部，避免「先收盤再跳即時」閃爍。 */
+export function useMarketIntraday(
+  initial: MarketIntradayQuote | null = null,
+): MarketIntradayQuote | null {
+  const [quote, setQuote] = useState<MarketIntradayQuote | null>(initial);
+
+  usePolling(
+    async () => {
+      const q = await apiGetOptional<MarketIntradayQuote>(
+        `/api/market/intraday`,
+        { noCache: true },
+      );
+      setQuote(q);
+    },
+    [],
+    true,
+    initial !== null,
   );
 
   return quote;

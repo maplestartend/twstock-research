@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from api.deps import get_db
 from api.schemas.market import (
@@ -11,8 +11,10 @@ from api.schemas.market import (
     IndustryRotationResponse,
     IndustryRotationRow,
     MarketBreadth,
+    MarketIntradayQuote,
     MarketSnapshot,
 )
+from app.data import intraday as intraday_mod
 from app.data.db import Database
 from app.indicators.market_scope import (
     breadth_health_label,
@@ -47,6 +49,37 @@ def snapshot(db: Database = Depends(get_db)) -> MarketSnapshot:
         date=row["date"],
         close=_sanitize(row["close"]),
         change_pct=_sanitize(row["change_pct"]),
+    )
+
+
+@router.get("/intraday", response_model=MarketIntradayQuote)
+def intraday(response: Response) -> MarketIntradayQuote:
+    """大盤加權指數盤中即時值（TWSE mis）。
+
+    - 30 秒 in-memory cache（避免 hammer 上游）；前端輪詢頻率 30s
+    - mis 失敗 / 休市 → 422，前端 fallback 到 /api/market/snapshot 的昨日收盤
+    - 強制 no-store：避免 Next.js Data Cache / 反向代理把這支當成 60s 可快取的端點，
+      讓 Topbar 看到的指數值跟個股的「即時」標籤對得上時間
+    """
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    q = intraday_mod.fetch_index_quote()
+    if q is None:
+        raise HTTPException(status_code=422, detail="大盤即時報價無法取得（mis 異常或休市）")
+    chg_pct: float | None = None
+    if q.prev_close and q.prev_close > 0 and q.value is not None:
+        chg_pct = (q.value - q.prev_close) / q.prev_close
+    return MarketIntradayQuote(
+        index_id=q.index_id,
+        name=q.name or None,
+        value=q.value,
+        prev_close=q.prev_close,
+        open=q.open,
+        high=q.high,
+        low=q.low,
+        change_pct=chg_pct,
+        quote_time=q.quote_time,
+        is_live=q.is_live,
+        quote_source=q.quote_source,
     )
 
 

@@ -19,6 +19,7 @@
 |---|---|---|---|
 | GET | /api/health | [main.py:47](../api/main.py#L47) | 健康檢查 |
 | GET | /api/market/snapshot | [market.py:37](../api/routers/market.py#L37) | 加權指數最新收盤 |
+| GET | /api/market/intraday | [market.py](../api/routers/market.py) | **🆕** 加權指數盤中即時值（mis.twse.com.tw，30s cache，Cache-Control: no-store） |
 | GET | /api/market/breadth | [market.py:63](../api/routers/market.py#L63) | 市場寬度 + 健康度標籤 |
 | GET | /api/market/industry-rotation | [market.py:86](../api/routers/market.py#L86) | 產業輪動排行（含 totalAmount） |
 | GET | /api/market/industry-members | [market.py:106](../api/routers/market.py#L106) | 指定產業成分股 |
@@ -85,7 +86,13 @@
 #### GET /api/market/snapshot
 - **用途**：加權指數（發行量加權股價指數）最新收盤
 - **Response model**：`MarketSnapshot` { date, close, changePct }
-- **備註**：無資料時所有欄位為 None
+- **備註**：無資料時所有欄位為 None；changePct 為百分比（沿用既有 EOD 格式）
+
+#### GET /api/market/intraday
+- **用途**：加權指數盤中即時值（給 Topbar 用，與個股 `/intraday` 對齊 30s polling）
+- **Response model**：`MarketIntradayQuote` { indexId, name, value, prevClose, open, high, low, changePct, quoteTime, isLive, quoteSource }
+- **備註**：changePct 為**小數**（0.0123 = 1.23%）；上游 mis 30s in-memory cache + 回應強制 `Cache-Control: no-store` 避免 Next.js Data Cache 黏住
+- **錯誤**：mis 異常 / 休市 → 422，前端應 fallback 到 `/api/market/snapshot`
 
 #### GET /api/market/breadth
 - **用途**：市場寬度 — 上漲家數、新高新低、MA 站上比率、健康燈號
