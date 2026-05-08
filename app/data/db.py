@@ -152,6 +152,12 @@ SCHEMA = [
         data_completeness REAL,
         is_stale INTEGER DEFAULT 0,
         engine_version TEXT,
+        -- v5c Wave 2 Phase 2 (2026-05-08)：4 個 Style Score（Value / Growth / Momentum / Income）
+        -- 用既有 sub-factor 線性加權平均、不影響 short/mid/long/composite。
+        style_value REAL,
+        style_growth REAL,
+        style_momentum REAL,
+        style_income REAL,
         PRIMARY KEY (as_of, stock_id)
     )
     """,
@@ -378,6 +384,11 @@ class Database:
             ("signal_history", "is_stale", "INTEGER DEFAULT 0"),
             ("signal_history", "vr_macd", "REAL"),
             ("signal_history", "engine_version", "TEXT"),
+            # v5c Wave 2 Phase 2 (2026-05-08)：4 個 Style Score 落地
+            ("signal_history", "style_value", "REAL"),
+            ("signal_history", "style_growth", "REAL"),
+            ("signal_history", "style_momentum", "REAL"),
+            ("signal_history", "style_income", "REAL"),
             ("financials_cumulative", "publish_date", "TEXT"),
             ("financials_quarterly_derived", "publish_date", "TEXT"),
             # FinMind 單季財報原本只有 quarter-end 的 date 欄、無公告日 → backtest 用 date 過濾會

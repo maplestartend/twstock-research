@@ -103,6 +103,19 @@ def snapshot_today(
         "engine_version": engine_version,
         "recommendation": df.get("recommendation", pd.Series([""] * len(df))).fillna("").values,
         "strategies": df["stock_id"].map(lambda sid: ",".join(strategy_hits[sid])).values,
+        # v5c Wave 2 Phase 2：4 個 Style Score（Value/Growth/Momentum/Income）落地
+        "style_value": df.get("style_value", pd.Series(dtype=object)).astype(object).where(
+            df.get("style_value", pd.Series(dtype=object)).notna(), None,
+        ) if "style_value" in df.columns else None,
+        "style_growth": df.get("style_growth", pd.Series(dtype=object)).astype(object).where(
+            df.get("style_growth", pd.Series(dtype=object)).notna(), None,
+        ) if "style_growth" in df.columns else None,
+        "style_momentum": df.get("style_momentum", pd.Series(dtype=object)).astype(object).where(
+            df.get("style_momentum", pd.Series(dtype=object)).notna(), None,
+        ) if "style_momentum" in df.columns else None,
+        "style_income": df.get("style_income", pd.Series(dtype=object)).astype(object).where(
+            df.get("style_income", pd.Series(dtype=object)).notna(), None,
+        ) if "style_income" in df.columns else None,
     })
     n = db.upsert_df(out, "signal_history")
     logger.info("signal_history: 寫入 %d 筆（as_of=%s）", n, as_of)

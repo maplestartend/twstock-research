@@ -359,6 +359,9 @@ def score_all(
             mid = eng.score_mid_term(price, chip_snap, fund_snap, stock_id=sid)
             long_ = eng.score_long_term(fund_snap, stock_id=sid)
             vr_macd_val = short.parts.get("vr_macd")
+            # v5c Wave 2 Phase 2：算 4 個 Style Score 一起寫入 snapshot
+            from app.scoring.style import compute_style_scores
+            styles = compute_style_scores(short.parts, mid.parts, long_.parts)
             # 收子因子分數（None 也記，下游 IC 算法跑 dropna 自動排除）
             for horizon_name, breakdown in (("short", short), ("mid", mid), ("long", long_)):
                 for factor_name, factor_score in breakdown.parts.items():
@@ -417,6 +420,11 @@ def score_all(
                 "amount_20d": liquidity_by_sid.get(sid, {}).get("amount_20d"),
                 "pct_change_today": liquidity_by_sid.get(sid, {}).get("pct_change_today"),
                 "as_of": as_of_str,
+                # v5c Wave 2 Phase 2：4 個 Style Score 寫入 snapshot
+                "style_value": styles.get("value"),
+                "style_growth": styles.get("growth"),
+                "style_momentum": styles.get("momentum"),
+                "style_income": styles.get("income"),
             })
         except Exception as e:
             logger.debug("score %s 失敗: %s", sid, e)

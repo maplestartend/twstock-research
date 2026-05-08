@@ -152,7 +152,39 @@ DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 
    - **vol_ratio5 → vol_ratio20**：20 日均量比較穩定，避免昨日巨量誤判今日為弱量
    - **ETF mid None**：ETF 沒 EPS/月營收，且機構買賣多反映申購贖回非看好看壞 → mid 直接 None（仿 long）
 
-   **v5c IC 量測（2026-05-08，250 天 backfill HAC 95% CI）**：
+   **v5c IC 量測（2026-05-09，986 天 full backfill HAC 95% CI）— 跨 regime 驗證版**：
+
+   | 維度 | 5d IC | 20d IC | 60d IC | 60d IR | 60d HAC CI 過 0? | vs v5b |
+   |---|---|---|---|---|---|---|
+   | **composite** | +0.015 | +0.024 | **+0.028** | **+0.39** | **不過 0 顯著**（CI [+0.0005, +0.0561]）| **+64%（+0.017→+0.028）**|
+   | short | -0.002 | +0.011 | **+0.020** | **+0.29** | 接近顯著 [-0.0004, +0.0396] | **+263%** |
+   | mid | +0.004 | +0.012 | **+0.015** | **+0.22** | 過 0 | **+206%** |
+   | long | +0.033 | +0.036 | **+0.039** | **+0.42** | 過 0（regime 警報解除） | +14% |
+
+   **重要驗證**：composite 60d HAC CI 不過 0 = **v5c 統計上顯著優於零**。240 天樣本曾出現
+   long -0.035 的 regime 假警報，986 天全期收斂回 +0.039 → 確認 v5c 是穩定改善、不是 regime
+   exploit。
+
+   ---
+
+   **v5c Wave 2 Phase 2 (2026-05-09)：4 個 Style Score 落地**
+
+   `signal_history` 加 4 個欄位 `style_value / style_growth / style_momentum / style_income`，
+   `radar.score_all` / `score_stock` 同步寫入。Style Score 用既有 sub-factor 線性加權平均、
+   不影響 short/mid/long/composite 既有 IC。
+
+   - **Value**：0.40 valuation + 0.25 dividend + 0.20 roe + 0.15 margin_quality
+   - **Growth**：0.30 mid.eps_growth + 0.25 long.eps_cagr_3y + 0.20 mid.trend + 0.15 long.roe + 0.10 mid.foreign_cum，**trend < 60 時 cap 70**（修 6165 浪凡型「帳面成長但股價不漲」誤判）
+   - **Momentum**：0.40 mid.trend + 0.25 short.ma_alignment + 0.15 short.volume + 0.10 short.foreign + 0.10 short.vr_macd
+   - **Income**：0.50 dividend + 0.25 margin_quality + 0.15 roe + 0.10 valuation
+
+   解決問題：long score 高 ≠ 對所有用戶都是好標的。例 6165 浪凡 composite 71.6（long 77.5）
+   但 Momentum 64.1 — 動能風格用戶眼裡是中等股、不是強動能。Style Score 讓「投資風格 ≠
+   引擎主排序」的用戶能在 watchlist 直接按風格 sort/filter。
+
+   ---
+
+   **v5c IC 量測（2026-05-08，250 天 backfill HAC 95% CI）— 早期樣本**：
 
    | 維度 | 5d IC | 20d IC | 60d IC | 60d IR | 60d HAC CI 過 0? | vs v5b |
    |---|---|---|---|---|---|---|
