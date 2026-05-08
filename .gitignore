@@ -39,4 +39,8 @@ probe*.json
 probe*.html
 
 # 私有 / 一次性分析 script（_ 前綴慣例，與 .bat 的 _launch-servers / _kill-servers 對齊）
-scripts/_*.py
+# 涵蓋 .py / .csv / .txt / .json — agent 跑出的中間檔同樣不該進 repo
+scripts/_*
+
+# Claude Code 內部 schedule 狀態（lock 檔每次跑會推進，不進 git）
+.claude/scheduled_tasks.lock
