@@ -233,35 +233,47 @@ def fetch_latest_all(delay: float = 0.3, timeout: int = 30) -> pd.DataFrame:
 # 歷史季財報（MOPS 公開觀測站）
 # ======================================================================
 _MOPS_HISTORY_URL = "https://mopsov.twse.com.tw/mops/web/ajax_t163sb04"
+_MOPS_HISTORY_BALANCE_URL = "https://mopsov.twse.com.tw/mops/web/ajax_t163sb05"
 _MOPS_HISTORY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0",
     "Referer": "https://mopsov.twse.com.tw/mops/web/t163sb04",
     "Accept-Language": "zh-TW,zh;q=0.9",
     "Content-Type": "application/x-www-form-urlencoded",
 }
+# t163sb05 (BS) 跟 t163sb04 (IS) 用同一組 headers，只是 URL / Referer 不同
+_MOPS_HISTORY_BALANCE_HEADERS = {
+    **_MOPS_HISTORY_HEADERS,
+    "Referer": "https://mopsov.twse.com.tw/mops/web/t163sb05",
+}
 
 # 第一欄為公司代號（4 碼數字 + 可選字母）
 _SID_PATTERN = re.compile(r"^\d{4}[A-Z]?$")
 
 
-def _fetch_history_html(market: str, roc_year: int, season: int, *, timeout: int = 30) -> str | None:
+def _fetch_history_html(
+    market: str, roc_year: int, season: int, *, timeout: int = 30, balance: bool = False,
+) -> str | None:
     """POST 到 MOPS 抓「指定市場 + 年 + 季」的綜合損益表 HTML。
 
     market: 'sii' 上市 / 'otc' 上櫃
+    balance=True 改抓資產負債表（t163sb05），否則抓綜損（t163sb04）
     """
     body = (
         f"encodeURIComponent=1&step=1&firstin=1&off=1&isQuery=Y"
         f"&TYPEK={market}&year={roc_year}&season={season:02d}"
     )
+    url = _MOPS_HISTORY_BALANCE_URL if balance else _MOPS_HISTORY_URL
+    headers = _MOPS_HISTORY_BALANCE_HEADERS if balance else _MOPS_HISTORY_HEADERS
+    label = "balance" if balance else "income"
     try:
-        r = _session.post(_MOPS_HISTORY_URL, data=body, headers=_MOPS_HISTORY_HEADERS, timeout=timeout)
+        r = _session.post(url, data=body, headers=headers, timeout=timeout)
     except Exception as e:
-        logger.warning("MOPS history %s %d/Q%d 連線失敗: %s", market, roc_year, season, e)
+        logger.warning("MOPS history %s %s %d/Q%d 連線失敗: %s", label, market, roc_year, season, e)
         return None
     if r.status_code != 200 or len(r.content) < 5000:
         logger.warning(
-            "MOPS history %s %d/Q%d 回傳異常 (HTTP %d, %d bytes)",
-            market, roc_year, season, r.status_code, len(r.content),
+            "MOPS history %s %s %d/Q%d 回傳異常 (HTTP %d, %d bytes)",
+            label, market, roc_year, season, r.status_code, len(r.content),
         )
         return None
     # MOPS ajax 端點實測為 utf-8
@@ -367,6 +379,51 @@ def fetch_history_quarters(
     for i, (y, q) in enumerate(quarters, 1):
         df = fetch_history_income_statement(y, q, delay=delay, timeout=timeout)
         logger.info("[%d/%d] %d Q%d: %d 筆", i, len(quarters), y, q, len(df))
+        if not df.empty:
+            dfs.append(df)
+    if not dfs:
+        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name", "publish_date"])
+    out = pd.concat(dfs, ignore_index=True)
+    out = out.drop_duplicates(subset=["stock_id", "date", "type"], keep="first")
+    return out.sort_values(["stock_id", "date", "type"]).reset_index(drop=True)
+
+
+def fetch_history_balance_sheet(
+    year_ce: int, quarter: int, *, delay: float = 0.5, timeout: int = 30,
+) -> pd.DataFrame:
+    """抓「指定西元年 + 季」上市+上櫃全市場資產負債表（期末餘額）。
+
+    端點 t163sb05 結構平行 t163sb04（綜損），共用 fetcher 與 parser，傳入 BALANCE_FIELD_MAP
+    取代 INCOME_FIELD_MAP 即可。資產負債科目是期末餘額不需差分（_DIFF_TYPES 不含 BS 欄位）。
+    """
+    roc_year = year_ce - 1911
+    all_rows: list[dict] = []
+    for market in ("sii", "otc"):
+        html = _fetch_history_html(market, roc_year, quarter, timeout=timeout, balance=True)
+        if html:
+            parsed = _parse_history_html(html, year_ce, quarter, field_map=BALANCE_FIELD_MAP)
+            all_rows.extend(parsed)
+            logger.info(
+                "MOPS history balance %s %d Q%d: %d 筆 / %d 檔",
+                market, year_ce, quarter, len(parsed),
+                len({r["stock_id"] for r in parsed}),
+            )
+        time.sleep(delay)
+    if not all_rows:
+        return pd.DataFrame(columns=["date", "stock_id", "type", "value", "year", "quarter", "origin_name", "publish_date"])
+    df = pd.DataFrame(all_rows)
+    df = df.drop_duplicates(subset=["stock_id", "date", "type"], keep="first")
+    return df.sort_values(["stock_id", "date", "type"]).reset_index(drop=True)
+
+
+def fetch_history_balance_quarters(
+    quarters: list[tuple[int, int]], *, delay: float = 0.5, timeout: int = 30,
+) -> pd.DataFrame:
+    """抓多個 (year_ce, quarter) 的歷史季資產負債表。"""
+    dfs: list[pd.DataFrame] = []
+    for i, (y, q) in enumerate(quarters, 1):
+        df = fetch_history_balance_sheet(y, q, delay=delay, timeout=timeout)
+        logger.info("[%d/%d] balance %d Q%d: %d 筆", i, len(quarters), y, q, len(df))
         if not df.empty:
             dfs.append(df)
     if not dfs:

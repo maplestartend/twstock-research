@@ -69,6 +69,16 @@ def score_ma_alignment_short(last_row: pd.Series) -> Optional[float]:
 
 
 def score_kd(last_row: pd.Series, prev_row: pd.Series | None) -> Optional[float]:
+    """KD 評分 — v5c 反向映射（mean-reversion 解讀）。
+
+    980 天 HAC CI：5d -0.011 / 20d -0.020 / 60d -0.028，**三 horizon 全顯著反向**。
+    台股 KD 結構性 mean-reversion：高 KD 過熱、低 KD 殺過頭。原 v4 邏輯「KD 高=高分」與
+    forward return 真實方向相反、是 IC 拖累元兇之一。
+
+    這裡仍沿用原打分結構（讓 sub-factor 註解可讀），最後 `100 - score` 翻轉成「mean-reversion
+    解讀」：高 KD 給低分、低 KD 給高分、死亡交叉變看好（殺過頭即將反彈）。engine 端永遠以
+    「分數越高越看好」處理，因子診斷與 IC backtest 邏輯不變。
+    """
     k, d = last_row.get("k9"), last_row.get("d9")
     if _is_missing(k) or _is_missing(d):
         return None
@@ -84,7 +94,8 @@ def score_kd(last_row: pd.Series, prev_row: pd.Series | None) -> Optional[float]
             elif pk >= pd_ and k < d: score -= 20
     if k > d: score += 5
     else: score -= 5
-    return _clip(score)
+    # v5c：反向映射（mean-reversion）— 高 KD 給低分、低 KD 給高分
+    return _clip(100 - score)
 
 
 def score_macd(last_row: pd.Series, prev_row: pd.Series | None) -> Optional[float]:
@@ -234,17 +245,26 @@ def score_trust_short(chip: dict) -> Optional[float]:
 
 
 def score_margin_change(chip: dict) -> Optional[float]:
+    """融資 5 日變動 — v5c 強化反向映射。
+
+    980 天 HAC CI：60d -0.014 顯著反向（融資追高 = 散戶情緒高峰 = 短中期見頂、台股經典反指
+    標）。v4 函式已偏反向但 spread 不夠大（最低 20、最高 60、僅 40 分區間），無法有效擠壓出
+    融資暴增的負面訊號 — IC 仍 -0.014 顯著。
+
+    v5c 擴大反向 spread 至 [10, 80]：融資 5 日 +20% 以上 → 10 分（強烈見頂）；融資減 10% 以
+    上 → 80 分（散戶離場、籌碼變乾淨、中線轉強訊號）。
+    """
     if "margin_chg5" not in chip:
         return None
     chg = chip.get("margin_chg5")
     if _is_missing(chg):
         return None
-    if chg > 0.20: return 20.0
-    if chg > 0.10: return 35.0
-    if chg > 0.03: return 45.0
-    if chg > -0.03: return 55.0
-    if chg > -0.10: return 60.0
-    return 55.0
+    if chg > 0.20: return 10.0   # 融資暴增 = 散戶極端追高 = 強烈反指標
+    if chg > 0.10: return 25.0
+    if chg > 0.03: return 40.0
+    if chg > -0.03: return 55.0  # 中性
+    if chg > -0.10: return 70.0
+    return 80.0  # 融資大減 = 散戶離場 = 籌碼乾淨 = 中線看好
 
 
 # ======================================================================
@@ -620,27 +640,42 @@ def score_valuation(fund: dict) -> Optional[float]:
 # 權重設定
 # ======================================================================
 SHORT_TERM_WEIGHTS = {
-    # v4（第一版草案）：VR×MACD 改純 VR 後，短期提高量能權重、法人權重小幅下修。
-    "ma_alignment": 0.18,   # +0.03 — 60d IC +0.119 唯一強訊號，5d/20d 弱故只小幅上調
-    "kd": 0.10,             # -0.02 — 5d/20d 一致弱負
-    "macd": 0.04,
-    "rsi": 0.07,            # -0.01 — 一致弱負，小砍
-    "bollinger": 0.06,      # -0.01
-    "volume": 0.10,
-    "vr_macd": 0.08,        # 純 VR：回歸量能位置與轉折，先上調做第一版驗證
-    "foreign": 0.18,
-    "trust": 0.11,
-    "margin_change": 0.08,
+    # v5c (2026-05-08)：980 天 HAC CI 顯示反向因子族群、量能因子升級。
+    # 反向訊號（在 score_kd / score_margin_change 內翻轉映射、不在 engine 動）：
+    #   kd       5d -0.011 / 20d -0.020 / 60d -0.028 全顯著反向（穩定 mean-reversion）
+    #   margin_change 60d -0.014 顯著反向（融資追高反指標、台股經典）
+    # 跨 horizon flip 的因子（5d 與 60d 號相反、不穩定）→ 大幅降權：
+    #   rsi      5d +0.017 → 60d -0.019 flip
+    #   bollinger 5d +0.023 → 60d -0.017 flip
+    #   macd     全衰減到雜訊
+    # 唯一全 horizon 顯著正向（升權重）：
+    #   volume   5d +0.005 / 20d +0.010 / 60d +0.011 全顯著、IR 0.28
+    # 預期 short 60d IC +0.005 → +0.015~0.025、IR 0.09 → 0.30+
+    "ma_alignment": 0.20,   # +0.02
+    "kd": 0.06,             # -0.04 + score_kd 內反向映射
+    "macd": 0.02,           # -0.02 衰減到雜訊
+    "rsi": 0.03,            # -0.04 跨 horizon flip 不穩
+    "bollinger": 0.03,      # -0.03 跨 horizon flip 不穩
+    "volume": 0.20,         # +0.10 唯一三 horizon 全正顯著
+    "vr_macd": 0.05,        # -0.03 全雜訊
+    "foreign": 0.20,        # +0.02
+    "trust": 0.13,          # +0.02
+    "margin_change": 0.08,  # 不動權重、score_margin_change 內反向映射
 }
 
 MID_TERM_WEIGHTS = {
-    # v4（第一版草案）：中期仍以趨勢/基本面為主，VR 僅做輔助確認。
-    "trend": 0.32,          # +0.02 — 5d/20d/60d 全 horizon 一致正
+    # v5c (2026-05-08)：移除 revenue_growth。v5b backfill 跑完後 IC 顯示 60d -0.030 IR -0.59
+    # 反向顯著、且跨 8 個 half-year 桶都負（不是雜訊）。Cohort 拆解：建材營造 -0.082、航運
+    # -0.070、電子相關 -0.032 三個 cohort 主導，原因是 TTM YoY 已被市場 price-in、後續 60d
+    # mean-reversion。M3 修補（建設股切 TTM）解了「分數抖動」但沒解「lag 本質」。
+    # 砍掉而非反向：cohort 異質性高（半導體 +0.006），統一反向會傷半導體。
+    # 預期 mid 60d IC +0.005 → +0.013、composite 60d IC +0.017 → +0.023（+35%）。
+    # score_revenue_growth 函式保留給個股詳情頁顯示用，只是不進加權。
+    "trend": 0.30,          # -0.02 → 拿一部分權重重新分配
     "foreign_cum": 0.20,
-    "trust_cum": 0.16,
-    "eps_growth": 0.18,     # -0.02 — 仍正但讓出給更強因子
-    "revenue_growth": 0.10, # -0.01
-    "vr_macd": 0.04,        # 純 VR 在中期只小幅配置，避免噪音主導
+    "trust_cum": 0.20,      # +0.04 IR 0.29 仍正、最強籌碼因子
+    "eps_growth": 0.26,     # +0.08（M1+M2 後仍正、唯一可靠成長因子）
+    "vr_macd": 0.04,        # 純 VR 在中期只小幅配置
 }
 
 LONG_TERM_WEIGHTS = {
@@ -706,8 +741,9 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
                 "foreign": 0.30, "trust": 0.15, "margin_change": 0.05,
             },
             "mid": {
+                # v5c：revenue_growth 0.28 → eps_growth（保守派最重視盈餘穩定）
                 "trend": 0.20, "foreign_cum": 0.20, "trust_cum": 0.10,
-                "eps_growth": 0.20, "revenue_growth": 0.28, "vr_macd": 0.02,
+                "eps_growth": 0.48, "vr_macd": 0.02,
             },
             "long": {
                 "roe": 0.30, "margin_quality": 0.20, "eps_cagr_3y": 0.10,
@@ -724,8 +760,9 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
                 "foreign": 0.15, "trust": 0.05, "margin_change": 0.05,
             },
             "mid": {
+                # v5c：revenue_growth 0.20 → eps_growth（成長派看盈餘成長 lead 營收）
                 "trend": 0.33, "foreign_cum": 0.10, "trust_cum": 0.10,
-                "eps_growth": 0.23, "revenue_growth": 0.20, "vr_macd": 0.04,
+                "eps_growth": 0.43, "vr_macd": 0.04,
             },
             "long": {
                 "roe": 0.25, "margin_quality": 0.20, "eps_cagr_3y": 0.35,
@@ -742,8 +779,9 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
                 "foreign": 0.04, "trust": 0.04, "margin_change": 0.04,
             },
             "mid": {
-                "trend": 0.45, "foreign_cum": 0.10, "trust_cum": 0.10,
-                "eps_growth": 0.15, "revenue_growth": 0.15, "vr_macd": 0.05,
+                # v5c：revenue_growth 0.15 → trend（技術派以趨勢為主）
+                "trend": 0.60, "foreign_cum": 0.10, "trust_cum": 0.10,
+                "eps_growth": 0.15, "vr_macd": 0.05,
             },
             "long": {
                 "roe": 0.20, "margin_quality": 0.20, "eps_cagr_3y": 0.20,
@@ -760,8 +798,9 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
                 "foreign": 0.30, "trust": 0.20, "margin_change": 0.10,
             },
             "mid": {
-                "trend": 0.20, "foreign_cum": 0.30, "trust_cum": 0.23,
-                "eps_growth": 0.13, "revenue_growth": 0.10, "vr_macd": 0.04,
+                # v5c：revenue_growth 0.10 → 拆給 trust_cum + eps_growth（籌碼派加重三大法人）
+                "trend": 0.20, "foreign_cum": 0.30, "trust_cum": 0.28,
+                "eps_growth": 0.18, "vr_macd": 0.04,
             },
             "long": {
                 "roe": 0.20, "margin_quality": 0.15, "eps_cagr_3y": 0.15,
@@ -778,8 +817,9 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
                 "foreign": 0.20, "trust": 0.10, "margin_change": 0.05,
             },
             "mid": {
+                # v5c：revenue_growth 0.29 → eps_growth（基本面派最重盈餘成長）
                 "trend": 0.15, "foreign_cum": 0.10, "trust_cum": 0.05,
-                "eps_growth": 0.39, "revenue_growth": 0.29, "vr_macd": 0.02,
+                "eps_growth": 0.68, "vr_macd": 0.02,
             },
             "long": {
                 "roe": 0.30, "margin_quality": 0.30, "eps_cagr_3y": 0.20,
@@ -795,6 +835,6 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
 # 給對 19 個指標看到頭暈的使用者用。前端會用這份白名單決定哪些 slider 顯示。
 BEGINNER_VISIBLE_KEYS: dict[str, list[str]] = {
     "short": ["ma_alignment", "volume", "vr_macd", "foreign", "trust", "kd"],
-    "mid": ["trend", "eps_growth", "revenue_growth", "foreign_cum"],
+    "mid": ["trend", "eps_growth", "trust_cum", "foreign_cum"],
     "long": ["roe", "eps_cagr_3y", "margin_quality", "dividend", "valuation"],
 }

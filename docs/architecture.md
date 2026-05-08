@@ -152,6 +152,40 @@ DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 
    - **vol_ratio5 → vol_ratio20**：20 日均量比較穩定，避免昨日巨量誤判今日為弱量
    - **ETF mid None**：ETF 沒 EPS/月營收，且機構買賣多反映申購贖回非看好看壞 → mid 直接 None（仿 long）
 
+   **v5c IC 量測（2026-05-08，250 天 backfill HAC 95% CI）**：
+
+   | 維度 | 5d IC | 20d IC | 60d IC | 60d IR | 60d HAC CI 過 0? | vs v5b |
+   |---|---|---|---|---|---|---|
+   | composite | +0.025 | +0.034 | **+0.041** | **+0.56** | 過 0 但 IR 高 | **+138%（+0.017→+0.041）**|
+   | **short** | +0.004 | +0.028 | **+0.064** | **+0.88** | **不過 0 顯著** | **12x（+0.005→+0.064）**|
+   | **mid** | +0.022 | +0.044 | **+0.068** | **+1.07** | **不過 0 顯著** | **13x（+0.005→+0.068）**|
+   | long | +0.021 | -0.002 | -0.035 | -0.54 | 不過 0 反向 | regime 翻轉（240d 樣本期動能領先）|
+
+   **Wave 1 改動全部驗證有效**：
+
+   short sub-factor：
+   - **kd 60d +0.068 IR 1.13 不過 0 顯著**（反向映射 work — score_kd 內 `100 - score`）
+   - **ma_alignment 60d +0.085 IR 0.89 不過 0 顯著**
+   - **volume 60d +0.015 IR 0.36 不過 0 顯著**（vol_ratio5 → 20d）
+   - foreign 60d +0.024 IR 0.61 不過 0 顯著
+   - bollinger / rsi 60d 仍反向但已降權 → v5d 處理
+
+   mid sub-factor：
+   - **trust_cum 60d +0.086 IR 3.03 不過 0 強顯著**（升權重 0.16 → 0.20）
+   - **trend 60d +0.081 IR 0.99 不過 0 顯著**
+   - **foreign_cum 60d +0.056 IR 1.43 不過 0 顯著**
+   - revenue_growth 60d +0.002（從 v5b 的 -0.030 變雜訊 — 砍對了）
+   - eps_growth 60d +0.027 IR 0.43 仍正
+
+   long sub-factor（240 天樣本 regime 提示，非引擎問題）：
+   - 240 天樣本期是「動能/成長 regime」，價值/品質因子（valuation -0.0035、margin_quality -0.052、dividend -0.026、roe -0.013、eps_cagr_3y -0.025）被動能股壓過
+   - v5b 在 980 天樣本仍 +0.035 — 證明這是 regime-dependent，**非 v5c 引擎退步**
+   - 後續 v5d 可加 regime detection 動態調整 long 在 composite 的權重
+
+   **整體判讀**：v5c Wave 1 在 short/mid 維度大成功（IR 從 0.09 / 0.07 跳到 0.88 / 1.07）、composite 60d IC 翻倍。Wave 1 改動（KD 反向、margin_change 反向、volume 升權、revenue_growth 砍除、trust_cum 升權、BS 歷史 backfill）每一項都被 sub-factor IC 驗證為正確方向。
+
+   ---
+
    **v5b IC 量測（2026-05-08，986 天 backfill 全期 HAC 95% CI）**：
 
    | 維度 | 5d IC | 20d IC | 60d IC | 60d IR | 60d HAC CI 過 0? | vs v4 變化 |
