@@ -291,3 +291,113 @@ class TestEndToEndDerivedSnapshot:
         assert snap.get("roe_ttm") is not None
         assert snap.get("gross_margin") == pytest.approx(0.4)
         assert snap.get("operating_margin") == pytest.approx(0.2)
+        # core OP 指標也應該被填上（derived path 有 OperatingIncome 序列 + cum 有 equity）
+        assert snap.get("core_op_ttm") is not None
+        assert snap.get("core_op_q") is not None
+        assert snap.get("core_roe_op") is not None
+        assert snap.get("core_op_cagr_3y") is not None
+        # OP 持續正成長 → 不應觸發警示
+        assert not snap.get("recurring_earnings_warning")
+
+
+class TestRecurringEarningsWarning:
+    """B 方案：本業最新 + TTM 都虧時，setrecurring_earnings_warning 旗標。
+
+    動機：3708 上緯投控 2025 Q4 處分子公司 → roe_ttm 暴衝但 OP 大虧 → 帳面分數失真。
+    旗標讓 score_roe / score_eps_cagr_3y 切換到 OP-based proxy。
+    """
+
+    def _build_op_series(self, op_values: list[float]) -> list[dict]:
+        """op_values 長度 16，從 2022Q1 到 2025Q4 的 OperatingIncome（建立 derived 表用）。"""
+        rows = []
+        year, q = 2022, 1
+        for v in op_values:
+            md = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}[q]
+            rows.append({
+                "date": f"{year}-{md}", "year": year, "quarter": q,
+                "type": "OperatingIncome", "value": v,
+            })
+            # 必要的其他欄位（不影響 OP 測試但 derived path 需要 EPS/Revenue/IncomeAfterTaxes）
+            for t, val in [("EPS", 1.0), ("Revenue", 1000.0), ("IncomeAfterTaxes", 100.0),
+                           ("GrossProfit", 400.0)]:
+                rows.append({
+                    "date": f"{year}-{md}", "year": year, "quarter": q,
+                    "type": t, "value": val,
+                })
+            q += 1
+            if q > 4:
+                q = 1
+                year += 1
+        return rows
+
+    def test_warning_triggers_when_op_negative_q_and_ttm(self):
+        # 過去 OP 正常，最近 4 季 OP 全變負（本業崩）→ 警示應觸發
+        op_vals = [200.0] * 12 + [-50.0, -60.0, -70.0, -80.0]
+        rows = self._build_op_series(op_vals)
+        snap = {}
+        cum = _mk_cum([{"date": "2025-12-31", "year": 2025, "quarter": 4,
+                        "type": "EquityAttributableToOwnersOfParent", "value": 5000.0}])
+        _fill_from_quarterly_derived(snap, _mk_derived(rows), cum)
+        assert snap.get("recurring_earnings_warning") is True
+        # core_roe_op 應為負
+        assert snap.get("core_roe_op") is not None and snap["core_roe_op"] < 0
+
+    def test_warning_not_triggered_when_op_positive(self):
+        # OP 全部正 → 警示不該觸發
+        op_vals = [200.0] * 16
+        rows = self._build_op_series(op_vals)
+        snap = {}
+        cum = _mk_cum([{"date": "2025-12-31", "year": 2025, "quarter": 4,
+                        "type": "EquityAttributableToOwnersOfParent", "value": 5000.0}])
+        _fill_from_quarterly_derived(snap, _mk_derived(rows), cum)
+        assert not snap.get("recurring_earnings_warning")
+        assert snap.get("core_roe_op") is not None and snap["core_roe_op"] > 0
+
+    def test_warning_not_triggered_when_only_latest_q_negative(self):
+        # 最新單季虧但 TTM 仍正（其他 3 季賺得多）→ 不該觸發（避免一兩季雜訊誤判）
+        op_vals = [200.0] * 12 + [300.0, 300.0, 300.0, -50.0]
+        rows = self._build_op_series(op_vals)
+        snap = {}
+        cum = _mk_cum([{"date": "2025-12-31", "year": 2025, "quarter": 4,
+                        "type": "EquityAttributableToOwnersOfParent", "value": 5000.0}])
+        _fill_from_quarterly_derived(snap, _mk_derived(rows), cum)
+        assert not snap.get("recurring_earnings_warning")
+
+
+class TestAssetPlayFlag:
+    """A 方案：低 PBR + 低負債 + 高殖利率 + 本業正 → 標 asset_play_flag（不改分，只標）。"""
+
+    def test_flag_set_when_all_conditions_met(self):
+        snap = {
+            "pbr": 0.6, "dividend_yield": 5.28,
+            "operating_margin": 0.14, "debt_ratio": 0.12,
+        }
+        from app.indicators.fundamentals import _fill_asset_play_flag
+        _fill_asset_play_flag(snap)
+        assert snap.get("asset_play_flag") is True
+
+    def test_flag_not_set_when_pbr_high(self):
+        snap = {"pbr": 1.5, "dividend_yield": 5.0, "operating_margin": 0.1, "debt_ratio": 0.2}
+        from app.indicators.fundamentals import _fill_asset_play_flag
+        _fill_asset_play_flag(snap)
+        assert not snap.get("asset_play_flag")
+
+    def test_flag_not_set_when_op_margin_negative(self):
+        # 衰退股 PBR 也低，但本業在虧 → 不該誤判為資產股
+        snap = {"pbr": 0.5, "dividend_yield": 4.5, "operating_margin": -0.05, "debt_ratio": 0.2}
+        from app.indicators.fundamentals import _fill_asset_play_flag
+        _fill_asset_play_flag(snap)
+        assert not snap.get("asset_play_flag")
+
+    def test_flag_not_set_when_yield_low(self):
+        snap = {"pbr": 0.6, "dividend_yield": 2.5, "operating_margin": 0.1, "debt_ratio": 0.2}
+        from app.indicators.fundamentals import _fill_asset_play_flag
+        _fill_asset_play_flag(snap)
+        assert not snap.get("asset_play_flag")
+
+    def test_flag_set_when_debt_ratio_missing(self):
+        # debt_ratio 缺值不該擋住（金融資料完整度問題）
+        snap = {"pbr": 0.6, "dividend_yield": 5.0, "operating_margin": 0.1}
+        from app.indicators.fundamentals import _fill_asset_play_flag
+        _fill_asset_play_flag(snap)
+        assert snap.get("asset_play_flag") is True

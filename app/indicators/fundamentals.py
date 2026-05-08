@@ -197,6 +197,77 @@ def compute_peg(per: float | None, eps_cagr_3y: float | None) -> float | None:
     return round(per_v / (cagr_v * 100), 3)
 
 
+def _op_cagr_3y(op_series: pd.Series) -> float | None:
+    """OperatingIncome 3 年 CAGR — 與 _eps_cagr_3y 同公式但走 OP 序列。
+
+    動機：當公司最新 TTM 含一次性業外膨脹（處分子公司、FV 評價）時，OP CAGR 反映本業趨勢，
+    避免 EPS CAGR 被一次性事件污染。需 ≥16 季、TTM 與 3y_ago 兩端皆為正才有幾何意義。
+    """
+    s = op_series.dropna() if hasattr(op_series, "dropna") else op_series
+    if len(s) < 16:
+        return None
+    try:
+        ttm_now = float(s.tail(4).sum())
+        ttm_3y_ago = float(s.iloc[-16:-12].sum())
+    except (TypeError, ValueError):
+        return None
+    if ttm_now <= 0 or ttm_3y_ago <= 0:
+        return None
+    return float((ttm_now / ttm_3y_ago) ** (1 / 3) - 1)
+
+
+def _fill_core_op_metrics(snap: dict, op_quarterly: pd.Series, equity: float | None) -> None:
+    """填「持續性業內」指標：core_op_ttm / core_op_q / core_roe_op / core_op_cagr_3y +
+    `recurring_earnings_warning` 旗標。
+
+    動機：roe_ttm / eps_cagr_3y 用稅後淨利／EPS 算，把處分子公司、金融資產 FV 評價等一次性
+    業外當持續性。例 3708 上緯投控 2025 Q4 認列 38 億處分利益，ROE 從個位數暴衝 24%、EPS
+    CAGR 衝 100 滿分 → long score 失真往上。OP-based proxy 沒這個問題（業外不算進 OP）。
+
+    `recurring_earnings_warning` 條件刻意嚴苛（最新單季 OP 虧且 TTM OP 虧）：對「業外是常態
+    收入」的投控/銀行不誤判，只在本業真的長期都虧時才提示 score_roe / score_eps_cagr_3y 切換到
+    core 版。
+    """
+    if op_quarterly is None or len(op_quarterly) == 0:
+        return
+    op_q = float(op_quarterly.iloc[-1])
+    snap["core_op_q"] = op_q
+    if len(op_quarterly) >= 4:
+        ttm = float(op_quarterly.tail(4).sum())
+        snap["core_op_ttm"] = ttm
+        if equity and equity > 0:
+            roe_op = ttm / equity
+            # sanity 範圍寬於 roe_ttm（OP 可能為負）
+            if -1.0 < roe_op < 1.0:
+                snap["core_roe_op"] = roe_op
+    cagr = _op_cagr_3y(op_quarterly)
+    if cagr is not None:
+        snap["core_op_cagr_3y"] = cagr
+    ttm = snap.get("core_op_ttm")
+    if ttm is not None and ttm < 0 and op_q < 0:
+        snap["recurring_earnings_warning"] = True
+
+
+def _fill_asset_play_flag(snap: dict) -> None:
+    """偵測「資產股折價」型態：低 PBR + 低負債 + 高殖利率 + 本業仍正。
+
+    厚生（2107）等資產股持有大量不動產 / 轉投資，總資產龐大但對應淨利相對小，roe_ttm 結構性
+    偏低（≈ 3.8%）→ score_roe 拖累 long score 到 30 以下。市場用 PBR 0.6 折價反映「NAV 還在
+    但沒成長」，這不該扣分到「公司有問題」的程度。
+
+    這個 flag **只標不改分**，避免條件過擬合誤傷其他低 ROE 衰退股；UI 顯示時提示用戶「ROE 偏
+    低是資產股結構特徵」即可。要動分數請另外開 C 方案。
+    """
+    pbr = snap.get("pbr")
+    yld = snap.get("dividend_yield")
+    debt = snap.get("debt_ratio")
+    op_margin = snap.get("operating_margin")
+    if pbr is None or yld is None or op_margin is None:
+        return
+    if pbr < 0.7 and yld > 4 and op_margin > 0 and (debt is None or debt < 0.30):
+        snap["asset_play_flag"] = True
+
+
 def _yoy_from_cumulative(cum_df: pd.DataFrame, type_name: str) -> float | None:
     """累計 YoY：本期 YTD-Qn vs 去年 YTD-Qn。本檔只剩 _fill_from_cumulative 這條 fallback 在用
     （沒 derived 時才走）。
@@ -246,6 +317,17 @@ def _fill_balance_sheet_ratios(snap: dict, cum_df: pd.DataFrame | None) -> None:
         ratio = cur_assets / cur_liab
         if 0.05 < ratio < 100:
             snap["current_ratio"] = ratio
+
+    # asset_turnover = TTM Revenue / 最新總資產
+    # 用於 score_asset_value 識別「重資產 / 低周轉」型態（不動產業、傳產資產股）。
+    # 需要 cum 表有 TTM Revenue（rolling 公式）+ 期末總資產。MOPS OpenAPI 對歷史 BS 缺漏的股票
+    # 此欄會 None，讓 score_asset_value 自動跳過、不影響該股長期分數歸一化。
+    if total_assets and total_assets > 0:
+        ttm_rev = _ttm_rolling_from_cumulative(cum_df, "Revenue")
+        if ttm_rev is not None and ttm_rev > 0:
+            turnover = ttm_rev / total_assets
+            if 0 < turnover < 20:
+                snap["asset_turnover"] = turnover
 
 
 def _ttm_rolling_from_cumulative(
@@ -346,12 +428,17 @@ def _fill_from_quarterly_derived(
         snap["peg"] = peg
 
     # ROE = TTM 淨利 / 最新 equity（從 cumulative 取）
-    if ttm_ni is not None and not cum_df.empty:
+    eq_latest: float | None = None
+    if not cum_df.empty:
         eq_latest = _latest_value(_wide_by_quarter(cum_df), "EquityAttributableToOwnersOfParent")
-        if eq_latest and eq_latest > 0:
-            roe = ttm_ni / eq_latest
-            if 0 < roe < 0.6:
-                snap["roe_ttm"] = roe
+    if ttm_ni is not None and eq_latest and eq_latest > 0:
+        roe = ttm_ni / eq_latest
+        if 0 < roe < 0.6:
+            snap["roe_ttm"] = roe
+
+    # core OP 指標（recurring earnings proxy）— 與 ROE 同 equity 來源
+    if "OperatingIncome" in wide.columns:
+        _fill_core_op_metrics(snap, wide["OperatingIncome"].dropna(), eq_latest)
 
     # 槓桿 / 流動性比率
     _fill_balance_sheet_ratios(snap, cum_df)
@@ -364,6 +451,20 @@ def _fill_from_quarterly_derived(
     if rev_yoy is not None:
         snap["revenue_yoy"] = rev_yoy
 
+    # 灌入「去年同季 EPS 絕對值」與「OP 絕對值」給 score_eps_growth 做負/低基期保護用。
+    # 純比例 yoy 在 prev<0 時公式爆衝（abs(prev) 規一化），引擎會誤判轉正為強訊號；
+    # 留下基期絕對值讓 score_eps_growth 能 cap min(yoy, 0.5) when prev<0、cap score 75 when current<0.5。
+    latest_yq = _latest_yq_with(wide, "EPS")
+    if latest_yq is not None:
+        cur_y, cur_q = latest_yq
+        prev_eps = _value_at(wide, cur_y - 1, cur_q, "EPS")
+        if prev_eps is not None:
+            snap["eps_q_yoy_base"] = prev_eps
+        # core OP 同樣留去年同季 OP 給 mid eps_growth 切換用
+        prev_op = _value_at(wide, cur_y - 1, cur_q, "OperatingIncome")
+        if prev_op is not None:
+            snap["core_op_q_yoy_base"] = prev_op
+
     # QoQ
     eps_qoq = _qoq_change(wide, "EPS")
     rev_qoq = _qoq_change(wide, "Revenue", positive_prev_only=True)
@@ -371,6 +472,18 @@ def _fill_from_quarterly_derived(
         snap["eps_qoq"] = eps_qoq
     if rev_qoq is not None:
         snap["revenue_qoq"] = rev_qoq
+
+    # M3：TTM Revenue YoY，給 score_revenue_growth 對建設股切換用（單季 Revenue 對訂單型公司
+    # 過於 lumpy；TTM 平滑掉單一交屋年的影響）。需要本期 + 去年同期兩個 TTM。
+    ttm_rev_now = _ttm_sum(wide, "Revenue")
+    if ttm_rev_now is not None and latest_yq is not None:
+        cur_y, cur_q = latest_yq
+        # 計算「去年同期結束」的 TTM（往前推 4 季的 [-20:-16]、[-16:-12] 累加 = [-20:-12].sum 4 季）
+        rev_series = wide["Revenue"].dropna() if "Revenue" in wide.columns else None
+        if rev_series is not None and len(rev_series) >= 8:
+            ttm_rev_prev = float(rev_series.iloc[-8:-4].sum())
+            if ttm_rev_prev > 0:
+                snap["revenue_ttm_yoy"] = (ttm_rev_now - ttm_rev_prev) / ttm_rev_prev
 
 
 def _fill_from_cumulative(snap: dict, cum_df: pd.DataFrame) -> None:
@@ -428,6 +541,16 @@ def _fill_from_cumulative(snap: dict, cum_df: pd.DataFrame) -> None:
         if 0 < roe < 0.6:
             snap["roe_ttm"] = roe
 
+    # core OP 指標 — 注意：這條路徑 wide 是「累計」，TTM 與 CAGR 不能直接 sum (year, q) 序列。
+    # 退化作法：只填 core_op_q（最新 YTD 折半粗估的單季）省略 TTM/CAGR；本路徑覆蓋率小，影響有限。
+    op_ytd = _value_at(wide, cur_year, quarter, "OperatingIncome")
+    if op_ytd is not None:
+        # 累計值不能等同單季，但本 fallback 走到時 derived 已缺失，沒更精確替代。
+        # 留 core_op_q 給警示用即可，TTM/CAGR 不冒風險亂填。
+        snap["core_op_q"] = op_ytd / max(quarter, 1)
+        if op_ytd < 0:
+            snap["recurring_earnings_warning"] = True
+
     # YoY：YTD-Qn vs 去年 YTD-Qn（這條路徑無單季資料，只能用累計 YoY；
     # 與 derived 路徑改用單季 YoY 不同 — 但這條 fallback 覆蓋率小，影響有限）
     eps_yoy = _yoy_same_quarter(wide, "EPS")
@@ -467,8 +590,10 @@ def fundamental_snapshot(
         snap["pbr"] = float(last.get("pbr") or 0) if pd.notna(last.get("pbr")) else None
         snap["dividend_yield"] = float(last.get("dividend_yield") or 0) if pd.notna(last.get("dividend_yield")) else None
         # PER 歷史分位數（越低越便宜）
+        # G 衛生：要求至少 252 個交易日（≈ 1 年），否則新上市股的「歷史分位」沒有 statistical
+        # meaning（IPO 後一直跌的股 → percentile=1.0 → score 從 100 變 0 純粹是樣本短）。
         per_series = per_pbr["per"].dropna()
-        if not per_series.empty and snap.get("per"):
+        if len(per_series) >= 252 and snap.get("per"):
             snap["per_percentile"] = float((per_series < snap["per"]).mean())
 
     # 季度型
@@ -477,18 +602,18 @@ def fundamental_snapshot(
         # 沒 FinMind → 嘗試 derived，再 fallback 到 cumulative
         if financials_derived is not None and not financials_derived.empty and financials_cumulative is not None:
             _fill_from_quarterly_derived(snap, financials_derived, financials_cumulative)
-            return snap
-        if financials_cumulative is not None:
+        elif financials_cumulative is not None:
             _fill_from_cumulative(snap, financials_cumulative)
+        _fill_asset_play_flag(snap)
         return snap
 
     quarterly = _to_quarterly(wide)
     if quarterly.empty or len(quarterly) < 2:
         if financials_derived is not None and not financials_derived.empty and financials_cumulative is not None:
             _fill_from_quarterly_derived(snap, financials_derived, financials_cumulative)
-            return snap
-        if financials_cumulative is not None:
+        elif financials_cumulative is not None:
             _fill_from_cumulative(snap, financials_cumulative)
+        _fill_asset_play_flag(snap)
         return snap
 
     latest = quarterly.iloc[-1]
@@ -572,7 +697,18 @@ def fundamental_snapshot(
             if 0 < roe < 0.6:
                 snap["roe_ttm"] = roe
 
+        # core OP 指標 — 用主路徑 quarterly OP 序列 + 同 equity 算 recurring proxy
+        if "OperatingIncome" in quarterly.columns:
+            _fill_core_op_metrics(
+                snap,
+                quarterly["OperatingIncome"].dropna(),
+                latest_equity,
+            )
+
     # 槓桿 / 流動性比率（與 ROE 同來源 financials_cumulative）
     _fill_balance_sheet_ratios(snap, financials_cumulative)
+
+    # 資產股折價旗標（需要在 PBR / dividend_yield / debt_ratio / operating_margin 全填好之後）
+    _fill_asset_play_flag(snap)
 
     return snap

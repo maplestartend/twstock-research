@@ -118,7 +118,21 @@ def score_short_term(price_df: pd.DataFrame, chip_snap: dict) -> ScoreBreakdown:
     )
 
 
-def score_mid_term(price_df: pd.DataFrame, chip_snap: dict, fund_snap: dict) -> ScoreBreakdown:
+def score_mid_term(
+    price_df: pd.DataFrame,
+    chip_snap: dict,
+    fund_snap: dict,
+    stock_id: str | None = None,
+) -> ScoreBreakdown:
+    """中期分數。對 ETF 直接回 None（completeness=0）— ETF 沒有 EPS / 月營收概念，且機構買賣
+    多反映申購/贖回需求而非「機構看好」。讓 ETF mid 跟個股 mid 在 watchlist 直接比大小是錯的；
+    跟 long 對 ETF 的 None 處理一致。
+    """
+    if is_etf(stock_id):
+        return ScoreBreakdown(total=None, completeness=0.0, parts={
+            "trend": None, "foreign_cum": None, "trust_cum": None,
+            "eps_growth": None, "revenue_growth": None, "vr_macd": None,
+        })
     last = price_df.iloc[-1]
     prev = price_df.iloc[-2] if len(price_df) >= 2 else None
     parts: dict[str, Optional[float]] = {
@@ -156,6 +170,16 @@ def score_long_term(fund_snap: dict, stock_id: str | None = None) -> ScoreBreakd
         "valuation": R.score_valuation(fund_snap),
     }
     total, completeness = _weighted(parts, R.LONG_TERM_WEIGHTS)
+    # 金融業 completeness cap：金控/銀行/保險的 IFRS 報表沒有 Revenue/GrossProfit/OperatingIncome
+    # 欄位 → roe_ttm + margin_quality 都 None；剩 eps_cagr_3y + dividend + valuation 共 0.40 權重
+    # 撐起 long score。eps_cagr_3y 在金融業常滿分 100 (EPS 穩定成長) → long 80+ top 1%。
+    # cap 在 75 避免 top 排行被假完整污染。完整度 ≥ 0.50 表示 ROE 或 margin 有資料、不需 cap。
+    if (
+        total is not None
+        and R._is_financial_stock(fund_snap)
+        and completeness < 0.50
+    ):
+        total = min(total, 75.0)
     return ScoreBreakdown(
         total=total,
         completeness=round(completeness, 3),
@@ -580,9 +604,16 @@ def score_stock(
     fund_snap = fund_ind.fundamental_snapshot(fin, per_pbr, fin_cum, fin_derived)
     if z is not None:
         fund_snap["dividend_yield_z"] = z
+    # 注入 industry_category 給 score_revenue_growth (建設股 TTM 切換) + 金融業 cap 用
+    with db.connect() as conn:
+        ind_row = conn.execute(
+            "SELECT industry_category FROM stock_info WHERE stock_id=?", (stock_id,)
+        ).fetchone()
+    if ind_row and ind_row["industry_category"]:
+        fund_snap["industry_category"] = ind_row["industry_category"]
 
     short = score_short_term(price, chip_snap)
-    mid = score_mid_term(price, chip_snap, fund_snap)
+    mid = score_mid_term(price, chip_snap, fund_snap, stock_id=stock_id)
     long_ = score_long_term(fund_snap, stock_id=stock_id)
 
     as_of = str(price.iloc[-1]["date"].date())

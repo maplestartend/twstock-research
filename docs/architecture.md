@@ -137,9 +137,22 @@ DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 
    - 進場 65 分、出場 40 分，很多行情會錯過
    - 建議用權重調優頁找出符合自己直覺的參數
 
-5. **目前預設權重（v4，2026-04-30；VR×MACD 改為純 VR + LONG_TERM 大調）**
+5. **目前預設權重（v5b，2026-05-08；多 agent 審查後加入結構性失真保護）**
    - `COMPOSITE_WEIGHTS`：short/mid/long = **0.20 / 0.60 / 0.20**（不動 — reviewer 警告：mid IC ≈ composite IC 不足以推到 0.70/0.15/0.15）
-   - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.40 / 0.20 / 0.20 / 0.10 / 0.10**
+   - `LONG_TERM_WEIGHTS`：roe/margin/eps_cagr/dividend/valuation = **0.40 / 0.20 / 0.20 / 0.10 / 0.10**（v5b：恢復 v4 原樣；v5 試做的 asset_value 子因子 cohort audit 顯示副作用 19× 治療效果而撤回，改用 ROE floor 40 in score_roe）
+
+   **v5b 新增結構性失真保護**（不動權重，只在 sub-factor 內加分支）：
+   - **B `recurring_earnings_warning`**：本業最新單季 OP < 0 且 TTM OP < 0 時，`score_roe` / `score_eps_cagr_3y` / `score_eps_growth` 切到 OperatingIncome-based core 指標。例 3708 上緯投控 2025 Q4 處分子公司 EPS 暴衝 35 → 修正後 long 從 76 → 23（避免一次性業外膨脹偽裝健康）
+   - **C ROE floor 40**：5 條件 gate（PBR<0.8、debt<0.40、op>0、yield>3.5、asset_turnover<0.5）識別資產股 → ROE 子分數保底 40。例 2107 厚生 long 28.8 → 38.8。對非資產股 0 影響
+   - **D 金融業 completeness cap**：金控/保險業 IFRS 報表沒 Revenue/OperatingIncome → roe + margin 雙 None，eps_cagr_3y 一手撐 80+ 分。當 industry ∈ {金融保險, 金融業} 且 long_completeness < 0.50 → cap long 在 75
+   - **M1+M2 mid eps_growth 保護**：`recurring_earnings_warning` 切 OP yoy（與 long 一致）；負基期 (eps_q_prev<0) cap min(yoy, 0.5)；低基期 (|eps_q|<0.5) cap raw 75
+   - **M3 建設股 revenue TTM**：industry ∈ {建材營造, 其他建材, 營造工程} → score_revenue_growth 用 revenue_ttm_yoy 取代單季（避免完工認列在 0↔95 間跳動）
+   - **M4 ADV 流動性下限**：avg_volume_20 < 1M 股 → 法人 ratio 視為 0（中性 50），避免散戶為主小型股的法人雜訊放大
+   - **G per_percentile guard**：< 252 日歷史 → percentile 設 None（IPO 新股不該有歷史分位）
+   - **vol_ratio5 → vol_ratio20**：20 日均量比較穩定，避免昨日巨量誤判今日為弱量
+   - **ETF mid None**：ETF 沒 EPS/月營收，且機構買賣多反映申購贖回非看好看壞 → mid 直接 None（仿 long）
+
+   **v4 IC 量測（2026-04-30 baseline，仍為主要設計依據）**：
      - **`eps_cagr_3y` 從 0.05 拉到 0.20**：之前以為是 data quality 問題（全 null）→ 2026-04-30 發現是 [`_fill_from_quarterly_derived`](../app/indicators/fundamentals.py) 漏算 CAGR + radar.py 財報視窗 3 年不夠 16 季 + financials 只回到 2022Q1 的三重 bug。修完並擴充 financials 到 2018Q1 後，1741 檔有 ≥16 季 EPS 可算 CAGR。**它是 long 維度裡唯一 60d HAC CI 不過 0 的因子**（IC +0.031、IR +0.45），統計顯著性最高。
      - **`margin_quality` 從 0.30 砍到 0.20**：60d IC +0.045 點估計高、但 HAC CI [-0.015, +0.106] 過 0，顯著性不足。
      - **`dividend` 從 0.15 砍到 0.10**：60d IC +0.046 但 CI [-0.009, +0.101] 過 0；獨立 reviewer 警告 dividend 跨 horizon 全 +0.035 太完美（殖利率變動慢的自相關偽穩定），HAC CI 印證警告。

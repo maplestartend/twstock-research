@@ -350,9 +350,13 @@ def score_all(
             # 注入同產業殖利率 z-score（沒有 industry / 樣本不足會是 None，rubric 自動 fallback 絕對閾值）
             if sid in yield_z_map:
                 fund_snap["dividend_yield_z"] = yield_z_map[sid]
+            # 注入 industry_category 給 score_revenue_growth / 金融業 cap 用（與 score_stock 對齊）
+            ind = industry_by_sid.get(sid)
+            if ind:
+                fund_snap["industry_category"] = ind
 
             short = eng.score_short_term(price, chip_snap)
-            mid = eng.score_mid_term(price, chip_snap, fund_snap)
+            mid = eng.score_mid_term(price, chip_snap, fund_snap, stock_id=sid)
             long_ = eng.score_long_term(fund_snap, stock_id=sid)
             vr_macd_val = short.parts.get("vr_macd")
             # 收子因子分數（None 也記，下游 IC 算法跑 dropna 自動排除）

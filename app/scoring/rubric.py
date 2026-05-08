@@ -193,9 +193,19 @@ def score_vr_macd(last_row: pd.Series, prev_row: pd.Series | None = None) -> Opt
 
 
 def score_volume(last_row: pd.Series) -> Optional[float]:
-    vr = last_row.get("vol_ratio5")
+    """量能評分。
+
+    用 vol_ratio20（20 日均量比）取代原本的 vol_ratio5（5 日均量比）。原因：
+    5 日視窗對昨日巨量極為敏感 — 低流動性個股偶發單筆大單 → 5d mean 翻倍 → 今天的 vr ≈ 0.2
+    被當「弱量」扣分（35 分），但今天恢復正常成交根本不該扣。20 日視窗稀釋掉單一日的衝擊，
+    分數更穩定。閾值不動（與 5d 同尺度），實證在大型權值股、低流動股都更合理。
+    """
+    vr = last_row.get("vol_ratio20")
     if _is_missing(vr):
-        return None
+        # 退回 5 日（兼容舊資料 / vol_ratio20 還沒灌的情境）
+        vr = last_row.get("vol_ratio5")
+        if _is_missing(vr):
+            return None
     if vr < 0.5: return 35.0
     if vr < 0.8: return 45.0
     if vr < 1.2: return 55.0
@@ -262,9 +272,15 @@ def _scale_by_adv(cum20: float, avg_vol_20: Optional[float]) -> Optional[float]:
 
     avg_vol_20 = 20 日平均日成交量（股）；20 日總成交量 = avg_vol_20 * 20。
     回傳 ratio = cum20 / (avg_vol_20 * 20)。avg_vol_20 缺值或 0 → None（讓上層走絕對 fallback）。
+
+    M4 修補：ADV20 < 1M 股的散戶為主小型股，外資 / 投信往往沒有結構性建倉，幾十萬股的累計
+    chip-noise 被規一化分母放大成 ratio ±5%~10% → score 跳動但無資訊。低流動股 ratio 視為
+    0（中性 50）— 這族群的中期分數應該由 trend / EPS 決定，不該被法人雜訊扭曲。
     """
     if avg_vol_20 is None or avg_vol_20 <= 0:
         return None
+    if avg_vol_20 < 1_000_000:
+        return 0.0  # 低流動性 → 中性，不參與 institutional 訊號
     total = avg_vol_20 * 20.0
     if total <= 0:
         return None
@@ -326,13 +342,47 @@ def score_trust_mid(chip: dict) -> Optional[float]:
 
 
 def score_eps_growth(fund: dict) -> Optional[float]:
-    """中期 EPS 成長：用 yoy（單季同期）為主、qoq fallback。代表「最近一兩季在加速還是降溫」。"""
+    """中期 EPS 成長：用 yoy（單季同期）為主、qoq fallback。代表「最近一兩季在加速還是降溫」。
+
+    M1 修補：`recurring_earnings_warning=True` 時切到 OP-based yoy，避免一次性業外（處分子公司、
+    FV 評價）膨脹單季 EPS 而 mid 衝 100。例 3708 上緯投控 2025 Q4 EPS=35（處分一次性入帳），
+    mid eps_growth 滿分但本業 OP TTM −5.83 億，long 已治、mid 之前漏 → 補一致。
+
+    M2 修補：負基期保護（去年同季 EPS<0 時，cap yoy 在 0.5 → 轉正有訊號但別滿分）+ 低基期保護
+    （最新單季 EPS<0.5 元時，raw cap 75 → 微利公司 EPS 0.10→0.15 yoy +50% 不該 100 滿分）。
+    """
+    # M1：警示時優先用 OP yoy（OperatingIncome 排除業外，反映本業）
+    if fund.get("recurring_earnings_warning"):
+        core_q = fund.get("core_op_q")
+        core_q_prev = fund.get("core_op_q_yoy_base")
+        if core_q is not None and core_q_prev is not None and core_q_prev != 0:
+            yoy_op = (core_q - core_q_prev) / abs(core_q_prev)
+            return _linear(yoy_op, -0.3, 0.5)
+        # 缺 core series → cap 取保守值（避免一次性 EPS 衝高還滿分）
+        yoy_fallback = fund.get("eps_yoy") or fund.get("eps_qoq")
+        if yoy_fallback is None:
+            return None
+        return _linear(min(yoy_fallback, 0.0), -0.3, 0.5)
+
     yoy = fund.get("eps_yoy")
     qoq = fund.get("eps_qoq")
     main = yoy if yoy is not None else qoq
     if main is None:
         return None
-    return _linear(main, -0.3, 0.5)
+
+    # M2-A 負基期保護：去年同季 EPS 為負時，cap yoy 在 0.5（轉正本來就有意義但別滿分）
+    eps_q_prev = fund.get("eps_q_yoy_base")
+    if eps_q_prev is not None and eps_q_prev < 0:
+        main = min(main, 0.5)
+
+    raw = _linear(main, -0.3, 0.5)
+
+    # M2-B 低基期保護：絕對 EPS_q < 0.5 元時 cap 在 75（避免微利公司 yoy 大百分比拉滿分）
+    eps_q = fund.get("eps_q")
+    if eps_q is not None and abs(eps_q) < 0.5:
+        raw = min(raw, 75.0)
+
+    return raw
 
 
 def score_eps_cagr_3y(fund: dict) -> Optional[float]:
@@ -343,14 +393,47 @@ def score_eps_cagr_3y(fund: dict) -> Optional[float]:
     - long 想衡量的是「3-5 年趨勢上有沒有持續長大」，CAGR 才是學界與 buffett 都用的口徑
     - 若兩個維度都看 yoy，等於對短週期變動 double counting，掩蓋長期體質
     Cutoff：CAGR 0% = 50 分（停滯），20% = 100 分（高速複合成長），-10% = 0 分（長期衰退）。
+
+    `recurring_earnings_warning=True` 時切換到 OperatingIncome CAGR：本業最新單季與 TTM 都虧
+    →  EPS CAGR 高度可能來自一次性業外（處分子公司、FV 評價）。例 3708 上緯投控 2025 Q4
+    處分後 eps_cagr_3y 衝到 57% / score 100，但 op_cagr 為負反映本業實際在縮。core 缺值就退
+    回 actual，不誤傷沒灌 OP 序列的金融業（6023 元大期）。
     """
+    if fund.get("recurring_earnings_warning"):
+        core_cagr = fund.get("core_op_cagr_3y")
+        if core_cagr is not None:
+            return _linear(core_cagr, -0.10, 0.20)
+        # 缺 core_op_cagr_3y（< 16 季 OP 序列、TTM 兩端非正）：min(actual, 0) 取保守值，
+        # 避免一次性膨脹的 EPS CAGR 還是滿分。actual 為負則直接交給 _linear 評。
+        cagr = fund.get("eps_cagr_3y")
+        if cagr is None:
+            return None
+        return _linear(min(cagr, 0.0), -0.10, 0.20)
     cagr = fund.get("eps_cagr_3y")
     if cagr is None:
         return None
     return _linear(cagr, -0.10, 0.20)
 
 
+_LUMPY_REVENUE_INDUSTRIES = frozenset({
+    # 訂單型 / 完工認列型產業，單季 Revenue 對「持續性出貨動能」的代表性低
+    "建材營造", "其他建材", "營造工程",
+})
+
+
 def score_revenue_growth(fund: dict) -> Optional[float]:
+    """中期營收成長 yoy。
+
+    M3 修補：建設股 / 工程業切換到 TTM Revenue YoY。完工認列讓單季 Revenue 在 0 ↔ 95 之間
+    跳動，跟「過去 12 個月營收動能」毫無關聯（例 2542 興富發 Q1 −78% / Q4 +37%、實際全年 −15%）。
+    TTM 平滑掉單一交屋年的影響。`revenue_ttm_yoy` 由 fundamentals 預先算好；缺值退回單季 yoy。
+    """
+    ind = fund.get("industry_category")
+    if ind in _LUMPY_REVENUE_INDUSTRIES:
+        ttm_yoy = fund.get("revenue_ttm_yoy")
+        if ttm_yoy is not None:
+            return _linear(ttm_yoy, -0.2, 0.4)
+        # 缺 TTM 退回單季，但這裡不該很常發生（建設股都有 4 季以上歷史）
     yoy = fund.get("revenue_yoy")
     qoq = fund.get("revenue_qoq")
     main = yoy if yoy is not None else qoq
@@ -362,11 +445,83 @@ def score_revenue_growth(fund: dict) -> Optional[float]:
 # ======================================================================
 # 長期子評分
 # ======================================================================
+_FINANCIAL_INDUSTRIES = frozenset({
+    # 實際 DB stock_info.industry_category 字串（2026-05-08 全市場掃描）：
+    # 「金融保險」70 檔（上市金控/銀行/保險/證券） + 「金融業」15 檔（上櫃期貨/壽險）
+    "金融保險", "金融業",
+})
+
+
+def _is_financial_stock(fund: dict) -> bool:
+    """金融業偵測：依 stock_info.industry_category 字串對照。
+
+    為什麼用產業而不是 BS 結構（debt_ratio > 0.85）：BS 缺值的金融業（FinMind / OpenAPI 不抓
+    金控的 BS 細項）會被結構偵測漏掉，而產業字串幾乎全市場都填了。
+    """
+    ind = fund.get("industry_category")
+    if not ind:
+        return False
+    return ind in _FINANCIAL_INDUSTRIES
+
+
+def _is_asset_stock(fund: dict) -> bool:
+    """資產股識別五條件（與 score_asset_value 共用 gate）。
+
+    Agent 2 經驗證在 982 檔有效樣本中抓出 11 檔，全是公認傳產資產股 / 折價股。
+    Gate 設計避免誤救：
+    - PBR < 0.8 — 折價於淨值（NAV 還在）
+    - debt_ratio < 0.40 — 不是高槓桿地雷股
+    - operating_margin > 0 — 本業有獲利（排除衰退股）
+    - dividend_yield > 3.5 — 把 NAV 透過股利兌現
+    - asset_turnover < 0.5 — 重資產特徵（土地、不動產低周轉）
+
+    缺值嚴格擋（任一 None → 否），不做 fallback；BS 資料只覆蓋 1,077 檔，其他股自然跳過。
+    """
+    pbr = fund.get("pbr")
+    yld = fund.get("dividend_yield")
+    debt = fund.get("debt_ratio")
+    om = fund.get("operating_margin")
+    at = fund.get("asset_turnover")
+    if any(x is None for x in (pbr, yld, debt, om, at)):
+        return False
+    return pbr < 0.8 and debt < 0.40 and om > 0 and yld > 3.5 and at < 0.5
+
+
 def score_roe(fund: dict) -> Optional[float]:
+    """ROE 評分：TTM 淨利 / 期末權益，線性 [0, 25%] → [0, 100]。
+
+    `recurring_earnings_warning=True` 時切換到 core_roe_op（OP-based ROE proxy）：本業最新單季
+    與 TTM 都虧 → 帳面 ROE 高度可能來自一次性業外。例 3708 上緯投控 2025 Q4 處分子公司後
+    roe_ttm 從個位數暴衝 24%、score 97.9，但 OP-based ROE 為負反映本業實際在虧。
+
+    `_is_asset_stock=True` 時加 floor 40：資產股總資產龐大但對應淨利相對小（如 2107 厚生 ROE
+    3.77% 是不動產業結構性特徵），市場用 PBR 0.6 折價已 priced；ROE 子分數不該再扣第二次。
+    floor 40 刻意保守 — 資產股不是優等生（不到 50 中位），但要跳出衰退區。
+    """
+    if fund.get("recurring_earnings_warning"):
+        core_roe = fund.get("core_roe_op")
+        if core_roe is not None:
+            # core_roe_op 可能為負（本業虧）；cutoff 與 actual 同尺度但允許負值通過 _linear clip。
+            return _linear(core_roe, 0.0, 0.25)
+        # 缺 core：actual 取 min(roe_ttm, 0) 等於把警示股 ROE 分數壓到 0
+        roe = fund.get("roe_ttm")
+        if roe is None:
+            return None
+        return _linear(min(roe, 0.0), 0.0, 0.25)
     roe = fund.get("roe_ttm")
     if roe is None:
         return None
-    return _linear(roe, 0.0, 0.25)
+    base = _linear(roe, 0.0, 0.25)
+    if _is_asset_stock(fund):
+        return max(base, 40.0)
+    return base
+
+
+# 註：score_asset_value 子因子已撤回（2026-05-08 cohort audit）。
+# 撤回原因：擬合 11/1933 檔資產股 (+0.30 平均) 但同時讓 dividend 0.10→0.05 / margin 0.20→0.15 的
+# 權重縮水波及 1922 檔非資產股 (中位 -0.79、110 檔「高股利+高毛利」cohort 跌 -1~-7 分、6146 跌 -7.73)。
+# 副作用 19× 治療效果。改採純 ROE floor 40（保留在 score_roe 內），對非資產股 0 影響、surgical。
+# `_is_asset_stock` helper 仍保留給 score_roe 使用。
 
 
 def score_margin_quality(fund: dict) -> Optional[float]:
@@ -502,11 +657,13 @@ LONG_TERM_WEIGHTS = {
     # eps_cagr_3y 是長期裡**唯一 60d CI 不過 0** 的因子。獨立 reviewer 之前警告
     # dividend 跨 horizon 全 +0.035 太完美（殖利率變動慢的自相關偽穩定），HAC CI 印證警告。
     "roe": 0.40,            # 不動 — 5d IC +0.091 IR 2.05 為長期最強單因子（雖只 15 dates）
-    "margin_quality": 0.20, # -0.10 — 60d CI [-0.015, +0.106] 過 0，顯著性不足
+    "margin_quality": 0.20, # 不動 — 60d CI 過 0 但點估計正、IC backtest 點估計值得保留
     "eps_cagr_3y": 0.20,    # +0.15 — bug 修完後是 long 裡唯一 60d 顯著的因子
-    "dividend": 0.10,       # -0.05 — CI 過 0 + reviewer 警告 yield 自相關偽穩定
+    "dividend": 0.10,       # 不動 — 同產業 z-score 規一化已修偽穩定，IC 仍正
     "valuation": 0.10,      # 不動 — 60d +0.033 雖 CI 過 0 但點估計穩定，保留
 }
+# 2026-05-08：score_asset_value 子因子實驗撤回（cohort audit 顯示副作用 19× 治療效果）。
+# 改採純 ROE floor 40 in score_roe — 對非資產股 0 影響、surgical。詳見 score_roe / score_asset_value 註解。
 
 
 # ======================================================================
@@ -554,8 +711,7 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
             },
             "long": {
                 "roe": 0.30, "margin_quality": 0.20, "eps_cagr_3y": 0.10,
-                "dividend": 0.25, "valuation": 0.15,
-            },
+                "dividend": 0.25, "valuation": 0.15            },
         },
     },
     "growth": {
@@ -573,8 +729,7 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
             },
             "long": {
                 "roe": 0.25, "margin_quality": 0.20, "eps_cagr_3y": 0.35,
-                "dividend": 0.05, "valuation": 0.15,
-            },
+                "dividend": 0.05, "valuation": 0.15            },
         },
     },
     "technical": {
@@ -592,8 +747,7 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
             },
             "long": {
                 "roe": 0.20, "margin_quality": 0.20, "eps_cagr_3y": 0.20,
-                "dividend": 0.10, "valuation": 0.30,
-            },
+                "dividend": 0.10, "valuation": 0.30            },
         },
     },
     "chip": {
@@ -611,8 +765,7 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
             },
             "long": {
                 "roe": 0.20, "margin_quality": 0.15, "eps_cagr_3y": 0.15,
-                "dividend": 0.20, "valuation": 0.30,
-            },
+                "dividend": 0.20, "valuation": 0.30            },
         },
     },
     "fundamental": {
@@ -630,8 +783,7 @@ BUILTIN_WEIGHT_PRESETS: dict[str, dict] = {
             },
             "long": {
                 "roe": 0.30, "margin_quality": 0.30, "eps_cagr_3y": 0.20,
-                "dividend": 0.10, "valuation": 0.10,
-            },
+                "dividend": 0.10, "valuation": 0.10            },
         },
     },
 }

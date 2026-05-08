@@ -41,7 +41,7 @@ MIN_DATES_PER_FACTOR = 5
 # cache 會自動失效不再回舊版結果。bump 範例：v3 → v4-yyyy-mm-dd。
 # 純資料補回（重跑 backfill_signal_history --clear）不需要 bump — `--clear` 已 DELETE cache，
 # 但**沒帶 --clear** 的情境（如 daily_update 推進 MAX(as_of)）若沒 bump 就會混 v3/v4 分數。
-IC_ALGO_VERSION = "v3-2026-04-30"  # v4 LONG weights (eps_cagr_3y 0.05→0.20、margin 0.30→0.20、dividend 0.15→0.10)
+IC_ALGO_VERSION = "v5b-2026-05-08"  # v5b: recurring_earnings_warning + ROE floor 40（撤回 asset_value 子因子）；mid eps_growth 補 warning + 負/低基期保護；金融業 completeness cap；ETF mid None；vol_ratio5 改 20d
 
 
 @dataclass(frozen=True)
