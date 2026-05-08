@@ -627,6 +627,10 @@ def score_stock(
     signals["is_stale"] = is_stale
     signals["is_pending"] = is_pending
     signals["stale_days"] = (taipei_today() - date.fromisoformat(as_of)).days if is_stale else 0
+    # 4 個風格分數（v5c Wave 2）：Value / Growth / Momentum / Income
+    # 用既有 sub-factor 加權平均、不新增 sub-factor、不影響 long/mid/short/composite
+    from app.scoring.style import compute_style_scores
+    signals["style_scores"] = compute_style_scores(short.parts, mid.parts, long_.parts)
     if live_price is not None and live_price > 0:
         signals["live_price_used"] = True
         signals["live_price"] = float(live_price)
