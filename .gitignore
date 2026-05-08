@@ -37,3 +37,6 @@ scripts/screenshots-all/
 # 暫時除錯產物
 probe*.json
 probe*.html
+
+# 私有 / 一次性分析 script（_ 前綴慣例，與 .bat 的 _launch-servers / _kill-servers 對齊）
+scripts/_*.py
