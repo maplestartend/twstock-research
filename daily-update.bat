@@ -41,6 +41,20 @@ if %RC% equ 0 (
     echo [SKIP] refresh_recent_financials skipped because market_update failed.
 )
 
+REM 全市場最新月營收 (TWSE/TPEX OpenAPI, ~1 秒)
+REM idempotent: 月初 1~10 號 OpenAPI 仍是上月資料 (re-upsert 無副作用),
+REM 月中 10 號 deadline 後才會換到當月。每天順手跑就不會漏抓。
+if %RC% equ 0 (
+    %PYTHON% -m scripts.update_monthly_revenue --mops
+    set RC3=!errorlevel!
+    if !RC3! neq 0 (
+        set RC=!RC3!
+        echo [WARN] update_monthly_revenue --mops failed with code !RC3!.
+    )
+) else (
+    echo [SKIP] update_monthly_revenue skipped because market_update failed.
+)
+
 echo.
 if %RC% neq 0 (
     echo [ERROR] Update failed with code %RC%. Check logs/app.log or Discord.

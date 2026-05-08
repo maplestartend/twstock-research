@@ -39,7 +39,8 @@ python -m scripts.update_adj
 # 5. 全市場產業別（~3 秒，日後偶爾跑）
 python -m scripts.refresh_industry
 
-# 6. 全市場最新月營收（~2 秒，每月 11 號後跑）
+# 6. 全市場最新月營收（~2 秒）
+# 已接到 daily-update.bat 自動跑，不需手動；月初 1~10 號 OpenAPI 仍是上月資料，11 號後換成當月。
 python -m scripts.update_monthly_revenue --mops
 
 # 7. 一次回補近 5 季全市場財報（~15 秒，新季公告後跑）
@@ -256,7 +257,7 @@ python -m scripts.backfill_financials_history --quarters 8
 | `python -m scripts.update_adj` | 自選股還原（已整合進 market_update） | ~5 秒/檔 |
 | `python -m scripts.update_adj --all-in-db` | 全市場還原（慢，不建議） | 數小時 |
 | `python -m scripts.update_monthly_revenue` | watchlist + holdings 月營收（FinMind 逐檔） | ~1 秒/檔 |
-| `python -m scripts.update_monthly_revenue --mops` | 全市場最新月（TWSE/TPEX OpenAPI） | ~2 秒 |
+| `python -m scripts.update_monthly_revenue --mops` | 全市場最新月（TWSE/TPEX OpenAPI）。**已接到 `daily-update.bat`** | ~2 秒 |
 | `python -m scripts.update_monthly_revenue --mops --from 2022-01 --to 2026-03` | 全市場歷史回補（MOPS 舊版） | 51 月約 1 分鐘 |
 | `python -m scripts.update_financials_mops` | 全市場最新季財報（綜損 + 資產負債） | ~10 秒 |
 | `python -m scripts.update_financials_mops --income` / `--balance` | 只抓綜損 / 資產負債 | ~5 秒 |
