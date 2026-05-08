@@ -152,7 +152,37 @@ DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 
    - **vol_ratio5 → vol_ratio20**：20 日均量比較穩定，避免昨日巨量誤判今日為弱量
    - **ETF mid None**：ETF 沒 EPS/月營收，且機構買賣多反映申購贖回非看好看壞 → mid 直接 None（仿 long）
 
-   **v4 IC 量測（2026-04-30 baseline，仍為主要設計依據）**：
+   **v5b IC 量測（2026-05-08，986 天 backfill 全期 HAC 95% CI）**：
+
+   | 維度 | 5d IC | 20d IC | 60d IC | 60d IR | 60d HAC CI 過 0? | vs v4 變化 |
+   |---|---|---|---|---|---|---|
+   | composite | +0.010 | +0.017 | +0.017 | +0.24 | 過 0 | -0.034（小降但點估計穩定）|
+   | short | -0.009 | -0.000 | +0.005 | +0.09 | 過 0 | 持平 |
+   | mid | +0.002 | +0.007 | +0.005 | +0.07 | 過 0 | -0.023（M3 副作用）|
+   | **long** | **+0.027** | **+0.030** | **+0.035** | **+0.40** | **過 0**（CI -0.008~+0.077）| **+0.007（B/C/D 治本）** |
+
+   long sub-factor（5 因子）：
+   - **valuation 60d +0.0485 IR 0.59 不過 0 顯著**（v4 +0.033 過 0；撤回 asset_value 後 valuation 訊號變強）
+   - dividend 60d +0.043 IR 0.40 過 0（同產業 z-score 規一化已修偽穩定）
+   - eps_cagr_3y 60d +0.020 IR 0.35 過 0（recurring_warning 修補後仍正）
+   - margin_quality 60d +0.017 IR 0.24 過 0
+   - roe 60d N/A（金融業 cap 後 ROE 樣本減少 — 設計意圖）
+
+   mid sub-factor 注意點：
+   - **revenue_growth 60d -0.030 IR -0.59 反向顯著** — M3 建設股切 TTM YoY 後，revenue_yoy 整體有 mean-reversion 性質。可考慮下版直接降 revenue_growth 權重 0.10 → 0.05
+   - eps_growth 60d +0.012 IR 0.23 仍正（M1+M2 保護沒打掉 signal）
+   - trust_cum 60d +0.020 IR 0.29 仍正
+
+   short sub-factor 注意點：
+   - **volume 60d +0.011 IR 0.28 不過 0 顯著**（vol_ratio5 → 20 的改善）
+   - **kd 60d -0.028 IR -0.40 反向顯著** — 台股 KD 過熱反轉是常態，下版可考慮反向解讀或降權重
+   - rsi / margin_change 也呈反向訊號
+
+   **整體判讀**：v5b 在 **long 維度治本成功**（valuation 從雜訊→顯著、long IC IR 0.40 維持）；mid 因 M3 副作用略降但 sub-factor 結構更乾淨；composite 60d +0.017 仍統計正。撤回 asset_value 子因子（cohort audit 副作用 19× 治療效果）+ 撤回 dividend/margin 權重縮水的決策被 IC 驗證為正確 — 沒有「治了 X 病傷了 Y 路人」。
+
+   ---
+
+   **v4 IC 量測（2026-04-30 baseline，歷史對照）**：
      - **`eps_cagr_3y` 從 0.05 拉到 0.20**：之前以為是 data quality 問題（全 null）→ 2026-04-30 發現是 [`_fill_from_quarterly_derived`](../app/indicators/fundamentals.py) 漏算 CAGR + radar.py 財報視窗 3 年不夠 16 季 + financials 只回到 2022Q1 的三重 bug。修完並擴充 financials 到 2018Q1 後，1741 檔有 ≥16 季 EPS 可算 CAGR。**它是 long 維度裡唯一 60d HAC CI 不過 0 的因子**（IC +0.031、IR +0.45），統計顯著性最高。
      - **`margin_quality` 從 0.30 砍到 0.20**：60d IC +0.045 點估計高、但 HAC CI [-0.015, +0.106] 過 0，顯著性不足。
      - **`dividend` 從 0.15 砍到 0.10**：60d IC +0.046 但 CI [-0.009, +0.101] 過 0；獨立 reviewer 警告 dividend 跨 horizon 全 +0.035 太完美（殖利率變動慢的自相關偽穩定），HAC CI 印證警告。
