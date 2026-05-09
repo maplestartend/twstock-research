@@ -188,15 +188,24 @@ def score_long_term(fund_snap: dict, stock_id: str | None = None) -> ScoreBreakd
 
 
 def composite_score(
-    short: Optional[float], mid: Optional[float], long_: Optional[float]
+    short: Optional[float], mid: Optional[float], long_: Optional[float],
+    regime: str | None = None,
 ) -> tuple[Optional[float], float]:
     """綜合分數：短/中/長跳過 None 維度、re-normalize 權重。
 
     回傳 (composite, completeness)
     - completeness = 用到的維度權重 / 三維總權重 (1.0 = 三維都有分)
+
+    `regime` 參數（v5e #1）：傳入「bull / bear / neutral」改用 regime-aware 權重表。
+    None → fallback 到固定 R.COMPOSITE_WEIGHTS（向後相容、單元測試用）。
     """
     dims: dict[str, Optional[float]] = {"short": short, "mid": mid, "long": long_}
-    return _weighted(dims, R.COMPOSITE_WEIGHTS, min_completeness=R.MIN_DIM_COMPLETENESS)
+    if regime:
+        from app.scoring.regime import composite_weights_for_regime
+        weights = composite_weights_for_regime(regime)
+    else:
+        weights = R.COMPOSITE_WEIGHTS
+    return _weighted(dims, weights, min_completeness=R.MIN_DIM_COMPLETENESS)
 
 
 def overall_completeness(short: ScoreBreakdown, mid: ScoreBreakdown, long_: ScoreBreakdown) -> float:
@@ -254,16 +263,19 @@ def build_signals(
     mid: ScoreBreakdown,
     long_: ScoreBreakdown,
     chip_snap: dict,
+    regime: str | None = None,
 ) -> dict[str, Any]:
     last = price_df.iloc[-1]
     close = float(last["close"])
     signals: dict[str, Any] = {}
 
-    # 綜合建議：None-aware
-    composite, comp_completeness = composite_score(short.total, mid.total, long_.total)
+    # 綜合建議：None-aware + regime-aware（v5e #1）
+    composite, comp_completeness = composite_score(short.total, mid.total, long_.total, regime=regime)
     signals["composite_score"] = composite
     signals["composite_completeness"] = round(comp_completeness, 3)
     signals["recommendation"] = recommendation_label(composite)
+    if regime:
+        signals["regime"] = regime
 
     # 進場建議（必須分數存在才考慮）
     entry: list[str] = []
@@ -620,7 +632,11 @@ def score_stock(
     is_stale = check_stale(as_of)
     is_pending = is_pending_intraday(as_of)
 
-    signals = build_signals(price, short, mid, long_, chip_snap)
+    # v5e #1：偵測 regime 給 composite_score 動態調權
+    from app.scoring.regime import detect_regime
+    regime = detect_regime(db, as_of=as_of_str or as_of)
+
+    signals = build_signals(price, short, mid, long_, chip_snap, regime=regime)
     signals["chip_snapshot"] = chip_snap
     signals["fundamental_snapshot"] = fund_snap
     signals["data_completeness"] = overall_completeness(short, mid, long_)

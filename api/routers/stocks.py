@@ -163,6 +163,16 @@ def score(
             raise HTTPException(status_code=404, detail="stock not found")
         raise HTTPException(status_code=422, detail="insufficient data: 至少需 60 個交易日的資料才能評分")
 
+    # v5c Wave 2 / v5e #4：4 個風格分數從 signals 帶出
+    raw_styles = s.signals.get("style_scores") or {}
+    from api.schemas.stock import StyleScores
+    style_view = StyleScores(
+        value=_safe_float(raw_styles.get("value")),
+        growth=_safe_float(raw_styles.get("growth")),
+        momentum=_safe_float(raw_styles.get("momentum")),
+        income=_safe_float(raw_styles.get("income")),
+    )
+
     return StockScoreView(
         stock_id=s.stock_id,
         stock_name=s.stock_name,
@@ -179,6 +189,8 @@ def score(
         live_price_used=bool(s.signals.get("live_price_used", False)),
         live_price=_safe_float(s.signals.get("live_price")),
         recommendation=str(s.signals.get("recommendation", "")),
+        regime=s.signals.get("regime"),
+        style_scores=style_view,
         entry=list(s.signals.get("entry") or []),
         stop_loss=list(s.signals.get("stop_loss") or []),
         take_profit=list(s.signals.get("take_profit") or []),

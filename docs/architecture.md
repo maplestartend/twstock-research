@@ -156,6 +156,24 @@ DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 
    - **vol_ratio5 → vol_ratio20**：20 日均量比較穩定，避免昨日巨量誤判今日為弱量
    - **ETF mid None**：ETF 沒 EPS/月營收，且機構買賣多反映申購贖回非看好看壞 → mid 直接 None（仿 long）
 
+   **v5e #1 IC 量測（2026-05-09，986 天 regime-aware composite weights）**：
+
+   regime-aware：bull (0.20/0.60/0.20) / bear (0.20/0.45/0.35) / neutral (0.20/0.55/0.25)。
+   加權指數 close vs MA200 + MA50 5 日 slope 偵測。
+
+   | 維度 | v5c (986d) | v5e #1 (986d) | 改善 | HAC CI |
+   |---|---|---|---|---|
+   | composite 60d | +0.0283 IR 0.39 | **+0.0305 IR 0.42** | +8% / +8% | **[+0.0020, +0.0590] 不過 0 ✓** |
+   | short 60d | +0.020 | +0.020 | 持平 | [-0.0004, +0.0397] |
+   | mid 60d | +0.015 | +0.015 | 持平 | 過 0 |
+   | long 60d | +0.039 | +0.039 | 持平 | 過 0 |
+
+   改善幅度小但方向正確、跨完整 4 年 regime（2022 熊 + 2023-2024 牛 + 2025 整理 + 2026 多頭）
+   驗證、HAC CI 不過 0 顯著（**統計顯著從 v5c 邊緣升到 v5e1 明確**）。regime 同時 expose 給前端
+   (StockScoreView.regime)，可作為 UI 提示。
+
+   ---
+
    **v5c IC 量測（2026-05-09，986 天 full backfill HAC 95% CI）— 跨 regime 驗證版**：
 
    | 維度 | 5d IC | 20d IC | 60d IC | 60d IR | 60d HAC CI 過 0? | vs v5b |

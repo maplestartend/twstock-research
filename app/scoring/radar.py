@@ -311,6 +311,10 @@ def score_all(
     industry_by_sid = _load_industry_map(db)
     yield_z_map = _industry_yield_z_map(per_all, industry_by_sid)
 
+    # v5e #1：偵測本日 regime（一次、不在每檔重算）
+    from app.scoring.regime import detect_regime
+    regime = detect_regime(db, as_of=as_of_str)
+
     # group by stock_id
     price_groups = {k: g for k, g in price_all.groupby("stock_id")} if not price_all.empty else {}
     inst_groups = {k: g for k, g in inst_all.groupby("stock_id")} if not inst_all.empty else {}
@@ -376,7 +380,7 @@ def score_all(
             vr26_val = float(last_row["vr26"]) if pd.notna(last_row.get("vr26")) else None
             macd_hist_val = float(last_row["macd_hist"]) if pd.notna(last_row.get("macd_hist")) else None
 
-            composite, _comp_usage = eng.composite_score(short.total, mid.total, long_.total)
+            composite, _comp_usage = eng.composite_score(short.total, mid.total, long_.total, regime=regime)
             data_completeness = eng.overall_completeness(short, mid, long_)
             as_of_str = str(price.iloc[-1]["date"].date())
             is_stale = eng.check_stale(as_of_str)

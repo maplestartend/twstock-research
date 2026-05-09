@@ -36,6 +36,20 @@ class ScoreParts(CamelModel):
     parts: dict[str, float | None]
 
 
+class StyleScores(CamelModel):
+    """v5c Wave 2 / v5e #4：投資風格分數。Score 0-100，None=資料不足。
+
+    Value：低 PER/PBR + 高殖利率 + ROE 排除便宜爛公司
+    Growth：EPS 短中長三段成長 + ROE 排除無利潤成長 + 趨勢確認
+    Momentum：mid.trend + ma_alignment + 量能 + 法人連買
+    Income：高股利 + 穩定毛利 + ROE 排除掏空配息
+    """
+    value: float | None = None
+    growth: float | None = None
+    momentum: float | None = None
+    income: float | None = None
+
+
 class StockScoreView(StockRef):
     as_of: str
     close: float
@@ -52,6 +66,10 @@ class StockScoreView(StockRef):
     live_price_used: bool = False
     live_price: float | None = None
     recommendation: str
+    # v5e #1：當前加權指數 regime（bull/bear/neutral）— composite weights 動態調整依據
+    regime: str | None = None
+    # v5c Wave 2 / v5e #4：4 個投資風格分數（與 long/mid/short 並列、不互相覆蓋）
+    style_scores: StyleScores | None = None
     entry: list[str] = []
     stop_loss: list[str] = []
     take_profit: list[str] = []
