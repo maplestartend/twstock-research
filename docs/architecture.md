@@ -97,6 +97,10 @@ DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 
    - 雷達/短期分數不用還原價（影響微小）
    - 回測會用還原價（如果有）
    - 個股詳情 K 線圖可勾選「使用還原價」
+   - **ETF 例外（v5d 2026-05-09）**：0050 / 00631L / 00692 / 00878 跨年資料還原不一致（混分割前/後），用
+     [scripts/backfill_etf_adj_yfinance.py](../scripts/backfill_etf_adj_yfinance.py) 從 yfinance 抓
+     auto_adjust=True 完整還原寫入 `daily_price_adj`。建議每年至少跑一次補洞（新 ETF 上市時也跑）。
+     回測腳本只讀 `daily_price_adj.close_adj`，不再 fallback 到 raw close（避免 17x 虛漲 bug）
 
 4. **ROE 計算優先序**
    - 優先 `financials_cumulative` 的 `EquityAttributableToOwnersOfParent`（TWSE OpenAPI 期末餘額，最準確）
