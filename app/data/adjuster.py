@@ -132,7 +132,8 @@ def update_stock_adjusted(
 
     if fresh:
         events = _load_cached_events(db, stock_id)
-        logger.debug("%s adj 用 7 天內快取 (last=%s)，跳過 FinMind", stock_id, last_run)
+        logger.debug("%s adj 用 %d 天內快取 (last=%s)，跳過 FinMind",
+                     stock_id, ADJ_FETCH_TTL_DAYS, last_run)
     else:
         events = fetch_events(fetcher, stock_id)
         if not events.empty:

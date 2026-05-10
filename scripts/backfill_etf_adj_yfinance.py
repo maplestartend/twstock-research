@@ -1,22 +1,24 @@
-"""ETF 還原資料修補（v5d Wave 1）— 用 yfinance 抓 0050/00631L/00878/00692 完整還原歷史。
+"""ETF 還原資料修補（v5d Wave 1）— 用 yfinance 抓 ETF 完整還原歷史。
 
 問題背景：
-- daily_price.close 對 0050 跨年資料還原不一致（見 docs/architecture.md v5d notes）：
-  2022 raw=33（分割還原後）、2024 raw=133（分割前）、2026 raw=70（分割後）
-- 三種 mode 混在一起，回測 ETF buy-and-hold 結果完全失真
-- daily_price_adj 也只有部分日期有 close_adj、且最新缺值
+- daily_price.close 對 0050 / 00631L 跨年資料還原模式不一致（早期已還原、後期未還原）
+- FinMind 對槓桿 ETF（00631L）沒提供 split events → adj_event 表空 → adjuster.py 算不出還原價
+- 三種還原模式混在一起，ETF buy-and-hold 回測完全失真
 
 修法：
 - yfinance auto_adjust=True 自動處理配息 + 分割還原
 - 灌進 daily_price_adj 表，覆蓋既有不一致 row
-- 回測腳本只讀 daily_price_adj（不再 fallback 到 raw close）
+- 回測 / scoring 只讀 daily_price_adj（不 fallback 到 raw close）
 
-涵蓋範圍：2022-01-01 ~ 2026-05-08（4 年完整 4 ETF）
+每日整合：daily-update.bat 在 market_update 之後跑一次此腳本，自動補當天還原價。
+end 日期動態取「明天」（yfinance 的 end 是 exclusive），確保覆蓋到最新交易日。
 """
 from __future__ import annotations
 
+import argparse
 import sqlite3
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -36,12 +38,11 @@ ETFS = [
 ]
 
 
-def fetch_etf_yf(ticker: str, start: str = "2022-01-01", end: str = "2026-05-09") -> pd.DataFrame:
+def fetch_etf_yf(ticker: str, start: str, end: str) -> pd.DataFrame:
     """yfinance 抓 ETF 完整還原 OHLC。auto_adjust=True 自動處理配息 + 分割。"""
     df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
     if df.empty:
         return df
-    # multiindex 處理
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [c[0] for c in df.columns]
     df = df.reset_index()
@@ -54,52 +55,54 @@ def fetch_etf_yf(ticker: str, start: str = "2022-01-01", end: str = "2026-05-09"
 
 
 def main():
+    ap = argparse.ArgumentParser(description="Backfill ETF adjusted prices via yfinance.")
+    ap.add_argument("--start", default="2014-01-01", help="Backfill start date (YYYY-MM-DD)")
+    ap.add_argument("--end", default=None,
+                    help="Backfill end date (YYYY-MM-DD, exclusive); default = tomorrow")
+    ap.add_argument("--quiet", action="store_true", help="Suppress per-ETF logs (still prints summary)")
+    args = ap.parse_args()
+
+    end_str = args.end or (date.today() + timedelta(days=1)).isoformat()
+
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
 
-    # 確認 daily_price_adj schema
-    cur.execute("PRAGMA table_info(daily_price_adj)")
-    cols = {r[1] for r in cur.fetchall()}
-    print(f"daily_price_adj cols: {cols}")
-
+    summary: list[tuple[str, int, str, str]] = []
     for sid, ticker in ETFS:
-        print(f"\n=== {sid} ({ticker}) ===")
-        df = fetch_etf_yf(ticker)
-        if df.empty:
-            print(f"  yfinance returned empty")
+        if not args.quiet:
+            print(f"\n=== {sid} ({ticker}) ===")
+        try:
+            df = fetch_etf_yf(ticker, args.start, end_str)
+        except Exception as e:
+            print(f"  [ERROR] {sid} fetch failed: {e}")
+            summary.append((sid, 0, "-", "fetch error"))
             continue
-        print(f"  yfinance: {len(df)} rows, range {df['date'].min()} ~ {df['date'].max()}")
+        if df.empty:
+            print(f"  [WARN] {sid} yfinance returned empty")
+            summary.append((sid, 0, "-", "empty"))
+            continue
+        if not args.quiet:
+            print(f"  yfinance: {len(df)} rows, range {df['date'].min()} ~ {df['date'].max()}")
 
-        # 灌進 daily_price_adj — 用 INSERT OR REPLACE 覆蓋不一致資料
-        # 注意 schema：daily_price_adj 的 close_adj 是還原價、其他欄通常 None
-        # 我們把 yfinance close 寫入 close_adj
-        n = 0
-        for _, r in df.iterrows():
-            cur.execute(
-                """INSERT OR REPLACE INTO daily_price_adj
-                   (stock_id, date, open_adj, high_adj, low_adj, close_adj)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (sid, r["date"],
-                 float(r["open"]), float(r["high"]),
-                 float(r["low"]), float(r["close"])),
-            )
-            n += 1
-        con.commit()
-        print(f"  upserted {n} rows into daily_price_adj")
-
-    # Verify: 重新檢查 0050 跨年趨勢（應該一致還原）
-    print("\n=== Verify 0050 close_adj yearly snapshot ===")
-    for y in (2022, 2023, 2024, 2025, 2026):
-        cur.execute(
-            "SELECT date, close_adj FROM daily_price_adj WHERE stock_id='0050' AND date BETWEEN ? AND ? ORDER BY date LIMIT 1",
-            (f"{y}-01-15", f"{y}-01-25"),
+        rows = [
+            (sid, r["date"], float(r["open"]), float(r["high"]),
+             float(r["low"]), float(r["close"]))
+            for _, r in df.iterrows()
+        ]
+        cur.executemany(
+            """INSERT OR REPLACE INTO daily_price_adj
+               (stock_id, date, open_adj, high_adj, low_adj, close_adj)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            rows,
         )
-        r = cur.fetchone()
-        if r:
-            print(f"  {r[0]}: {r[1]:.2f}")
+        con.commit()
+        summary.append((sid, len(rows), df["date"].min(), df["date"].max()))
+
+    print("\n=== Summary ===")
+    for sid, n, dmin, dmax in summary:
+        print(f"  {sid}: {n} rows ({dmin} ~ {dmax})")
 
     con.close()
-    print("\nDone.")
 
 
 if __name__ == "__main__":

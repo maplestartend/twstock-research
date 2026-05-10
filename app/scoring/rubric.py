@@ -301,10 +301,7 @@ def _scale_by_adv(cum20: float, avg_vol_20: Optional[float]) -> Optional[float]:
         return None
     if avg_vol_20 < 1_000_000:
         return 0.0  # 低流動性 → 中性，不參與 institutional 訊號
-    total = avg_vol_20 * 20.0
-    if total <= 0:
-        return None
-    return cum20 / total
+    return cum20 / (avg_vol_20 * 20.0)
 
 
 def score_foreign_mid(chip: dict) -> Optional[float]:
