@@ -1,5 +1,6 @@
 annotated-doc==0.0.4
 annotated-types==0.7.0
+anthropic==0.97.0
 anyio==4.13.0
 certifi==2026.4.22
 charset-normalizer==3.4.7
@@ -15,6 +16,7 @@ iniconfig==2.3.0
 llvmlite==0.44.0
 numba==0.61.2
 numpy==2.2.6
+openpyxl==3.1.5
 packaging==26.2
 pandas==3.0.2
 pandas-ta==0.4.71b0
@@ -38,3 +40,4 @@ urllib3==2.6.3
 uvicorn==0.46.0
 watchfiles==1.1.1
 websockets==16.0
+yfinance==1.2.2

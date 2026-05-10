@@ -208,9 +208,22 @@ def composite_score(
     return _weighted(dims, weights, min_completeness=R.MIN_DIM_COMPLETENESS)
 
 
-def overall_completeness(short: ScoreBreakdown, mid: ScoreBreakdown, long_: ScoreBreakdown) -> float:
-    """把三個維度的子指標 completeness 依 composite 權重加權平均，作為整體評分可信度。"""
-    w = R.COMPOSITE_WEIGHTS
+def overall_completeness(
+    short: ScoreBreakdown,
+    mid: ScoreBreakdown,
+    long_: ScoreBreakdown,
+    regime: str | None = None,
+) -> float:
+    """把三個維度的子指標 completeness 依 composite 權重加權平均，作為整體評分可信度。
+
+    `regime` 對齊 `composite_score`：給定時走 regime-aware 權重，否則 fallback 固定 COMPOSITE_WEIGHTS。
+    若 data_completeness 仍用固定權重、composite 卻用 regime-aware，雷達警告與實際評分加權會在多/空頭不一致。
+    """
+    if regime:
+        from app.scoring.regime import composite_weights_for_regime
+        w = composite_weights_for_regime(regime)
+    else:
+        w = R.COMPOSITE_WEIGHTS
     total_w = w["short"] + w["mid"] + w["long"]
     return round(
         (short.completeness * w["short"] + mid.completeness * w["mid"] + long_.completeness * w["long"]) / total_w,
@@ -329,7 +342,7 @@ def build_signals(
     if chip_snap.get("foreign_streak_sell", 0) >= C.WARN_FOREIGN_STREAK_SELL:
         warnings.append(f"⚠️ 外資連賣 {chip_snap['foreign_streak_sell']} 日")
     # 完整度過低則增加提醒
-    dim_completeness = overall_completeness(short, mid, long_)
+    dim_completeness = overall_completeness(short, mid, long_, regime=regime)
     if dim_completeness < C.WARN_LOW_COMPLETENESS:
         warnings.append(f"⚠️ 評分可信度 {dim_completeness*100:.0f}%：部分指標缺資料，請審慎參考")
     signals["warnings"] = warnings
@@ -639,7 +652,7 @@ def score_stock(
     signals = build_signals(price, short, mid, long_, chip_snap, regime=regime)
     signals["chip_snapshot"] = chip_snap
     signals["fundamental_snapshot"] = fund_snap
-    signals["data_completeness"] = overall_completeness(short, mid, long_)
+    signals["data_completeness"] = overall_completeness(short, mid, long_, regime=regime)
     signals["is_stale"] = is_stale
     signals["is_pending"] = is_pending
     signals["stale_days"] = (taipei_today() - date.fromisoformat(as_of)).days if is_stale else 0

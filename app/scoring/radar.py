@@ -381,7 +381,7 @@ def score_all(
             macd_hist_val = float(last_row["macd_hist"]) if pd.notna(last_row.get("macd_hist")) else None
 
             composite, _comp_usage = eng.composite_score(short.total, mid.total, long_.total, regime=regime)
-            data_completeness = eng.overall_completeness(short, mid, long_)
+            data_completeness = eng.overall_completeness(short, mid, long_, regime=regime)
             as_of_str = str(price.iloc[-1]["date"].date())
             is_stale = eng.check_stale(as_of_str)
             rs20 = mkt_ctx.compute_rs(price, taiex, 20)

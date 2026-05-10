@@ -73,7 +73,7 @@ python -m scripts.run_stats --show-errors  # 只看錯誤
 ```bash
 pip install pytest
 python -m pytest tests/ -q
-# 402 passed in ~11s (2026-04-30)
+# 497 passed (2026-05-10)
 ```
 
 覆蓋（重點）：
