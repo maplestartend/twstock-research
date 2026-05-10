@@ -151,8 +151,8 @@ async function RealizedPnlSection() {
             </tr>
           </thead>
           <tbody>
-            {realized.rows.map((r, i) => (
-              <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
+            {realized.rows.map((r) => (
+              <tr key={`${r.stockId}-${r.buyDate}-${r.sellDate}-${r.shares}`} className="border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
                 <Td>
                   <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                 </Td>

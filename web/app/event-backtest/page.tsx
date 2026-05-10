@@ -303,8 +303,8 @@ function TradesTable({ trades }: { trades: EventTradeRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {trades.map((t, i) => (
-            <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle">
+          {trades.map((t) => (
+            <tr key={`${t.stockId}-${t.exDate}`} className="border-t border-[var(--border-default)] hover:bg-subtle">
               <Td numeric className="text-xs">{t.exDate}</Td>
               <Td>
                 <StockIdCell stockId={t.stockId} stockName={t.stockName} />

@@ -369,8 +369,8 @@ export default async function BacktestPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {result.trades.map((t, i) => (
-                      <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle">
+                    {result.trades.map((t) => (
+                      <tr key={`${t.entryDate}-${t.exitDate}`} className="border-t border-[var(--border-default)] hover:bg-subtle">
                         <Td numeric>{t.entryDate}</Td>
                         <Td numeric>{t.exitDate}</Td>
                         <Td align="right" numeric>{t.holdDays}</Td>

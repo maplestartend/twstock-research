@@ -206,11 +206,11 @@ export default async function DqPage({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((a, i) => {
+                {filtered.map((a) => {
                   const sev = SEV_META[a.severity];
                   const km = KIND_META[a.kind];
                   return (
-                    <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle">
+                    <tr key={`${a.stockId}-${a.date}-${a.kind}`} className="border-t border-[var(--border-default)] hover:bg-subtle">
                       <Td>
                         <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border", sev.cls)}>
                           {sev.label}
@@ -271,10 +271,10 @@ export default async function DqPage({
                 </tr>
               </thead>
               <tbody>
-                {dq.gaps.map((g, i) => {
+                {dq.gaps.map((g) => {
                   const completeness = g.expected > 0 ? (g.expected - g.missingDays) / g.expected : 0;
                   return (
-                    <tr key={i} className="border-t border-[var(--border-default)] hover:bg-subtle">
+                    <tr key={`${g.stockId}-${g.table}`} className="border-t border-[var(--border-default)] hover:bg-subtle">
                       <Td>
                         <StockIdCell stockId={g.stockId} stockName={g.stockName} />
                       </Td>

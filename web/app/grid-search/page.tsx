@@ -381,7 +381,7 @@ function GridResultBlock({ result }: { result: GridSearchResponse }) {
             </thead>
             <tbody>
               {result.rows.map((r, i) => (
-                <tr key={i} className={cn("border-t border-[var(--border-default)] hover:bg-subtle", i === 0 && "bg-[var(--info-bg)]/50")}>
+                <tr key={`${r.entry}-${r.exit}-${r.sl}-${r.tp}-${r.trailingTpK ?? ""}`} className={cn("border-t border-[var(--border-default)] hover:bg-subtle", i === 0 && "bg-[var(--info-bg)]/50")}>
                   <Td align="right" numeric>{r.entry}</Td>
                   <Td align="right" numeric>{r.exit}</Td>
                   <Td align="right" numeric>{(r.sl*100).toFixed(1)}%</Td>
