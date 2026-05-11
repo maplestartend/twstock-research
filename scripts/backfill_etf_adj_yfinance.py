@@ -84,6 +84,19 @@ def main():
         if not args.quiet:
             print(f"  yfinance: {len(df)} rows, range {df['date'].min()} ~ {df['date'].max()}")
 
+        # Sanity check: 跨日 close 跳變 >5× 通常是 yfinance 拼接不同 source。
+        # 00631L 在 2014-12-31→2015-01-05 有 22× gap（已知 bug）；其他 ETF 也可能
+        # 在歷史早期遇到。截掉最後一個 big-jump 前的資料，避免污染 daily_price_adj。
+        df = df.sort_values("date").reset_index(drop=True)
+        ratio = df["close"] / df["close"].shift(1)
+        bad = ((ratio > 5.0) | (ratio < 0.2)).fillna(False)
+        if bad.any():
+            cut_idx = int(bad[bad].index.max())  # 最後一個 bad transition 的位置
+            dropped = df.iloc[:cut_idx]
+            df = df.iloc[cut_idx:].reset_index(drop=True)
+            print(f"  [SANITY] {sid} 偵測到 {bad.sum()} 個 close 跳變，截掉 {len(dropped)} 列 "
+                  f"({dropped['date'].min()} ~ {dropped['date'].max()})")
+
         rows = [
             (sid, r["date"], float(r["open"]), float(r["high"]),
              float(r["low"]), float(r["close"]))
