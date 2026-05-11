@@ -45,8 +45,8 @@ export function RiskAlertList({ alerts }: { alerts: RiskAlert[] }) {
               </span>
             </div>
             <ul className="flex flex-col gap-1.5 ml-8">
-              {list.map((a) => (
-                <li key={`${a.severity}-${a.title}`} className="text-sm text-[var(--text-primary)]">
+              {list.map((a, i) => (
+                <li key={`${a.severity}-${a.title}-${i}`} className="text-sm text-[var(--text-primary)]">
                   <span className="font-medium">{a.title}</span>
                   <span className="text-[var(--text-secondary)] ml-1.5">— {a.description}</span>
                 </li>
