@@ -59,12 +59,11 @@ REM ETF 還原價 backfill (yfinance auto_adjust)
 REM 0050 / 00631L / 00692 / 00878 的 daily_price_adj 跟著 daily_price 一起更新,
 REM 否則最新交易日的 close_adj 會是 NULL → 回測 / scoring 對 ETF 斷層。
 REM idempotent: INSERT OR REPLACE，每天跑沒副作用。
-if %RC% equ 0 (
-    %PYTHON% -m scripts.backfill_etf_adj_yfinance --quiet
-    set RC4=!errorlevel!
-    if !RC4! neq 0 (
-        echo [WARN] backfill_etf_adj_yfinance failed with code !RC4!.
-    )
+REM 不綁 market_update 的 RC: 來源獨立 (yfinance), market_update 中斷時仍應補上 ETF adj。
+%PYTHON% -m scripts.backfill_etf_adj_yfinance --quiet
+set RC4=%errorlevel%
+if %RC4% neq 0 (
+    echo [WARN] backfill_etf_adj_yfinance failed with code %RC4%.
 )
 
 echo.

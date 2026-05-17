@@ -35,7 +35,7 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 公開（雙擊）：`launch` / `stop` / `restart` / `status` / `daily-update` / `install-schedule` / `uninstall-schedule`。私有（被 call）：`_launch-servers` / `_kill-servers`。改 stop / restart 共用的殺 process 邏輯時改 `_kill-servers.bat`，兩邊都會吃到。
 
 ### 7. ETF 還原價必須走 `daily_price_adj`、不要直接用 `daily_price.close`
-`daily_price` 對 0050 / 00631L 跨年資料**還原模式不一致**（早期已還原、2025-06-18 1:4 split 之後是 raw post-split），直接拿來算 buy-and-hold 會誇大報酬 5×。FinMind 對槓桿 ETF 也沒提供 split events → `adj_event` 表對 00631L 是空的、`adjuster.py` 算不出。修補機制：[scripts/backfill_etf_adj_yfinance.py](scripts/backfill_etf_adj_yfinance.py) 用 yfinance `auto_adjust=True` 把 0050 / 00631L / 00692 / 00878 完整還原歷史灌進 `daily_price_adj`，已整合進 `daily-update.bat` 每日跑。回測 / scoring / 過熱指標一律走 `daily_price_adj.close_adj`（或 `read_close_with_adj_coalesced` helper），不要直接讀 `daily_price.close`。
+`daily_price` 對 0050 / 00631L 跨年資料**還原模式不一致**（早期已還原、2025-06-18 1:4 split 之後是 raw post-split），直接拿來算 buy-and-hold 會誇大報酬 5×。FinMind 對槓桿 ETF 也沒提供 split events → `adj_event` 表對 00631L 是空的、`adjuster.py` 算不出。修補機制：[scripts/backfill_etf_adj_yfinance.py](scripts/backfill_etf_adj_yfinance.py) 用 yfinance `auto_adjust=True` 把 0050 / 00631L / 00692 / 00878 完整還原歷史灌進 `daily_price_adj`，已整合進 `daily-update.bat` 每日跑（**無條件執行**，不綁 market_update 的 RC，避免後者中途被中斷時 ETF 還原價斷層）。回測 / scoring / 過熱指標一律走 `daily_price_adj.close_adj`（或 `read_close_with_adj_coalesced` helper），不要直接讀 `daily_price.close`。
 
 ## 跑測試
 
