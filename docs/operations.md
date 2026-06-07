@@ -54,6 +54,28 @@
 
 若 path 資料夾不存在會 fallback 到本機 `data/backup/`（並記 log 警告）。
 
+## 歷史表保留 / VACUUM 維運
+
+`signal_history`（~2k 列/天）與 `signal_history_factor_parts`（~48k 列/天 = 每檔 × 3 horizon × ~21 sub-factor）每天 `market_update` 都會寫入，**不清理就無限長大**——後者曾累積 ~3.7 年、~4.2 GB（占全庫 8.8 GB 的 81%）。
+
+**保留策略（兩表共用）**：近 **365 天逐日** + 更早**只留週一**（壓縮率 ≈ 5x）。`/diagnostics` 預設 `lookback=120` 天完全落在逐日窗內 → 預設畫面不受影響；`lookback` 365~2000 的長回看在舊段退化為週一抽樣（cross-sectional IC 在稀疏日期下仍成立，只是 `n_dates` 變少）。
+
+**自動執行**：`daily-update.bat` 每天盤後跑 `python -m scripts.prune_signals --vacuum-weekly`：
+- 每天 **DELETE** 舊列（快、idempotent、WAL-safe），與當日抓取成敗無關（獨立 `RC5`，失敗只 WARN 不中斷）。
+- **VACUUM 只在週日** best-effort：API server（uvicorn）持鎖時拿不到 exclusive lock → 記 WARN 跳過，free pages 留在檔內、下次成功 VACUUM 再回收。
+
+> **刪 `signal_history_factor_parts` 必須清 `factor_ic_cache`**：IC cache key 只追蹤 `signal_history` 的 `MAX(as_of)`、不追蹤 factor_parts 內容；不清的話 `lookback > 365` 的 sub-factor IC 會 cache hit 回到 prune 前的舊結果。`prune_all()` 已在「真的刪到 parts 列」時自動 `DELETE FROM factor_ic_cache`。
+
+**一次性清積壓（首次部署本功能時手動跑一次）**：首刪 ~40M+ 列是數分鐘的大 WAL 操作，別塞進 16:45 排程（dashboard 可能開著）。流程：
+```bash
+stop.bat                                          # 釋放 API server 的 DB 鎖
+python -m scripts.prune_signals --dry-run         # 確認會刪多少
+python -m scripts.prune_signals --vacuum          # 實刪兩表 + 清 cache + 完整 VACUUM 回收磁碟
+python -m pytest tests/ -q                        # 驗證
+launch.bat                                         # 重啟
+```
+> ⚠️ VACUUM 會寫整份暫存副本 → **先確認磁碟有 ~6 GB 以上空閒**。跑完後 DB 由 ~8.8 GB 降到 ~6 GB；此後每日增量 prune 只碰剛跨過 365 天界線的那一天，極小。VACUUM 與上面「備份」用的 `VACUUM INTO` 不同：前者就地縮小 `data/stock.db`，後者產生壓縮過的*副本*供雲端。
+
 ## 執行記錄 (Observability)
 
 每次 `market_update` 執行都會記到 `run_log` 表（自動建）。查詢：

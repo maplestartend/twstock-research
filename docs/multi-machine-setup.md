@@ -176,13 +176,13 @@ git add -A && git commit -m "..." && git push
 A: `git pull` 只同步**程式碼**，DB 是分開走 OneDrive。副機要再跑 `sync-from-cloud.bat`。
 
 ### Q: OneDrive 還沒同步好就跑 sync-from-cloud.bat？
-A: 雙擊 .bat 之前確認 OneDrive 工具列 icon 是綠勾（不是同步中的圈圈）。OneDrive 同步 600MB 通常 1-3 分鐘。
+A: 雙擊 .bat 之前確認 OneDrive 工具列 icon 是綠勾（不是同步中的圈圈）。OneDrive 同步一份 DB（prune 後 ~6 GB）通常數分鐘到十幾分鐘。
 
 ### Q: 副機跑 launch 後，分數跟主機不一致？
 A: 99% 是 DB 沒同步到最新。重跑 `sync-from-cloud.bat`。如果還是不一致，主機 `git push`、副機 `git pull` 確保 scoring 程式碼也對齊。
 
 ### Q: 主機 OneDrive 容量爆了？
-A: `config.yaml` 的 `keep_days: 14, keep_weeks: 8, keep_months: 12` 會自動輪刪。每份 DB ~600MB × 14 日 + 8 週 + 12 月 ≈ 20GB。OneDrive 免費 5GB 不夠，要 365 訂閱（1TB）才夠。撐不住可降到 `keep_days: 7, keep_weeks: 4, keep_months: 0`，~6GB。
+A: `config.yaml` 的 `keep_days: 14, keep_weeks: 8, keep_months: 12` 會自動輪刪。每份 DB（歷史表 prune 後 ~6 GB；備份是 `VACUUM INTO` 壓縮副本）× 14 日 + 8 週 + 12 月 → 數百 GB，OneDrive 免費 5GB 完全不夠，需 365 訂閱（1TB）。撐不住可大幅降 `keep_days: 7, keep_weeks: 2, keep_months: 0`。**真正控制單份大小的是 `scripts.prune_signals` 的歷史表保留**（見 [operations.md「歷史表保留 / VACUUM 維運」](operations.md)）；備份大小只會跟著 prune 後的本機 DB 走。
 
 ### Q: 副機要不要也排程備份？
 A: 不要。只有主機跑 daily-update + 備份；副機只是讀取端。

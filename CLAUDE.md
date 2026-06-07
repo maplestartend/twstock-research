@@ -39,6 +39,11 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 ### 7. ETF 還原價必須走 `daily_price_adj`、不要直接用 `daily_price.close`
 `daily_price` 對 0050 / 00631L 跨年資料**還原模式不一致**（早期已還原、2025-06-18 1:4 split 之後是 raw post-split），直接拿來算 buy-and-hold 會誇大報酬 5×。FinMind 對槓桿 ETF 也沒提供 split events → `adj_event` 表對 00631L 是空的、`adjuster.py` 算不出。修補機制：[scripts/backfill_etf_adj_yfinance.py](scripts/backfill_etf_adj_yfinance.py) 用 yfinance `auto_adjust=True` 把 0050 / 00631L / 00692 / 00878 完整還原歷史灌進 `daily_price_adj`，已整合進 `daily-update.bat` 每日跑（**無條件執行**，不綁 market_update 的 RC，避免後者中途被中斷時 ETF 還原價斷層）。回測 / scoring / 過熱指標一律走 `daily_price_adj.close_adj`（或 `read_close_with_adj_coalesced` helper），不要直接讀 `daily_price.close`。
 
+### 8. 兩張歷史表會無限長大，`daily-update.bat` 已每日 prune；改保留邏輯要連動清 cache
+`signal_history` 與 `signal_history_factor_parts`（每檔 × 3 horizon × ~21 sub-factor，~48k 列/天）每天都寫，不清就爆（後者曾 4.2 GB / 占全庫 81%）。[scripts/prune_signals.py](scripts/prune_signals.py) 的 `prune_all()` 把兩表壓成「近 365 天逐日 + 之前只留週一」，`daily-update.bat` 每天跑 `--vacuum-weekly`（每天刪列、**週日**才 best-effort VACUUM）。兩個地雷：
+- **刪 `signal_history_factor_parts` 必須 `DELETE FROM factor_ic_cache`**：IC cache key 只追蹤 `signal_history` 的 `MAX(as_of)`、不看 factor_parts 內容；不清的話 `/diagnostics` 的 sub-factor IC（lookback > 365）會 cache hit 回舊結果。`prune_all()` 已在刪到 parts 列時自動清。改保留窗 / 改 IC 演算法時記得這條不變式（同 `backfill_signal_history.py --clear`）。
+- **VACUUM 需 exclusive lock**：API server（uvicorn）開著會 SQLITE_BUSY → `--vacuum-weekly` 是 best-effort、拿不到鎖記 WARN 跳過。要就地縮小 `data/stock.db` 的完整 VACUUM 必須先 `stop.bat`（首次清 ~3.7 年積壓的 SOP 見 [docs/operations.md「歷史表保留 / VACUUM 維運」](docs/operations.md)）。VACUUM 與備份的 `VACUUM INTO`（產壓縮*副本*）是兩回事。
+
 ## 跑測試
 
 ```bash
