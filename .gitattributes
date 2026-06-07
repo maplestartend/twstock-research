@@ -1,5 +1,6 @@
-# Windows .bat / .cmd 必須用 CRLF，否則 cmd.exe 無法正確 parse REM 註解和 () 括號
-# （多機同步時若 core.autocrlf=input 會把 CRLF 偷偷轉成 LF → 整支批次檔報廢）
+# Windows .bat / .cmd / .ps1 一律鎖 CRLF + UTF-8 無 BOM（多機同步 / autocrlf 都不偷改）。
+# 真正會弄壞 .bat 的是 UTF-8 BOM（第一行 @echo off 失效、報 '∩╗┐@echo' is not recognized）
+# 與 CR-only 行尾（整檔被當成一行）；純 LF 在現代 cmd 多半能跑，但 autocrlf 可能弄成混合行尾 → 鎖 CRLF 最安全。
 *.bat   text eol=crlf
 *.cmd   text eol=crlf
 *.ps1   text eol=crlf

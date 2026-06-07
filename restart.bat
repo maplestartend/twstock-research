@@ -41,7 +41,7 @@ echo.
 set "PYTHONIOENCODING=utf-8"
 %PYTHON% -c "from pathlib import Path; from app.data.db import Database; from app.scoring.history import snapshot_today; n = snapshot_today(Database(Path('data/stock.db'))); print(f'[OK] signal_history rewritten: {n} rows')"
 if errorlevel 1 (
-    echo [WARN] snapshot rebuild failed; launching anyway (radar/watchlist may still be stale).
+    echo [WARN] snapshot rebuild failed; launching anyway ^(radar/watchlist may still be stale^).
     timeout /t 2 >nul
 )
 

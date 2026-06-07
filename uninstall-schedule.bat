@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 REM Remove the scheduled task
 setlocal
 set TASK_NAME=TWStockDailyUpdate

@@ -1,4 +1,5 @@
-﻿@echo off
+@echo off
+chcp 65001 >nul
 REM ============================================================
 REM TW Stock - Install Windows Task Scheduler entry
 REM One-click setup: registers a daily task that runs market_update at 16:45

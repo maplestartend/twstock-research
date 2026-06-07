@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM ============================================================
 REM sync-from-cloud.bat — 副機從 OneDrive 拉最新 stock.db
 REM
