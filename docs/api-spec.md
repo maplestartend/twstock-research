@@ -52,7 +52,8 @@
 | GET | /api/dashboard/data-freshness | [dashboard.py:107](../api/routers/dashboard.py#L107) | 各資料表新鮮度燈號 |
 | GET | /api/dashboard/snapshot-delta | [dashboard.py](../api/routers/dashboard.py) | **🆕** 戰情室「今日 vs 昨日」delta（新進命中 / 跌出命中 / 分數 \|Δ\|≥5） |
 | GET | /api/radar/strategies | [radar.py:16](../api/routers/radar.py#L16) | 雷達策略 + 當日命中數 |
-| GET | /api/radar/hits | [radar.py:39](../api/routers/radar.py#L39) | 雷達命中清單（依策略 / 市場過濾） |
+| GET | /api/radar/hits | [radar.py:39](../api/routers/radar.py#L39) | 雷達命中清單（依策略 / 市場過濾；**🆕 分頁回 `{rows,total}`**） |
+| GET | /api/radar/export.csv | [radar.py](../api/routers/radar.py) | **🆕** 雷達命中 CSV 匯出（同 /hits 過濾條件，含 BOM） |
 | GET | /api/radar/export.xlsx | [radar.py](../api/routers/radar.py) | **🆕** 雷達命中 Excel 匯出（同 /hits 過濾條件） |
 | GET | /api/history/dates | [history.py:19](../api/routers/history.py#L19) | 可回看的歷史快照日 |
 | GET | /api/history/strategies | [history.py:24](../api/routers/history.py#L24) | 指定 as_of 各策略命中數 |
@@ -300,10 +301,16 @@
 - **副作用**：開頭呼叫 `ensure_fresh()`
 
 #### GET /api/radar/hits
-- **用途**：當日 signal_history 依策略 + 市場過濾，依對應分數降序（短/中/長期/`量能動能` 各依自己的維度，其他 fallback composite）
-- **Query params**：`strategy` (str, 可選)、`market` (list, 預設 `["上市","上櫃","ETF"]`)、`top` (int, 預設 50；`top=0` 視為「全部」不截斷)
-- **Response model**：`list[RadarHit]`
+- **用途**：當日 signal_history 依策略 + 市場過濾，依對應分數降序（短/中/長期/`量能動能` 各依自己的維度，其他 fallback composite），**分頁回傳**
+- **Query params**：`strategy` (str, 可選)、`market` (list, 預設 `["上市","上櫃","ETF"]`)、`top` (int, 預設 0；`top=0` = 全部，>0 = 只取前 N 名)、`page` (int, 預設 1)、`page_size` (int, 預設 50)
+- **Response model**：`RadarHitsPage`＝`{ rows: list[RadarHit], total: int }`（`rows` 只含當前頁、`total` 為過濾後總筆數；市場過濾在 Python 端，故分頁在記憶體切片以保證 total 與頁內容正確）
 - **副作用**：開頭呼叫 `ensure_fresh()`
+
+#### GET /api/radar/export.csv
+- **用途**：把當前過濾條件下的雷達命中匯出為 .csv（含 UTF-8 BOM，Excel 開繁中不亂碼）；與 /export.xlsx 同欄位、同預設（`top=0` 全部）
+- **Query params**：`strategy` (str, 可選)、`market` (list)、`top` (int, 預設 0)
+- **Response**：`text/csv; charset=utf-8`，`Content-Disposition: attachment`；檔名規則同 .xlsx（RFC 5987 + ASCII fallback）
+- **欄位**：代號 / 名稱 / 市場 / 收盤 / 短期 / 中期 / 長期 / 綜合 / 建議 / VR-MACD / 命中策略
 
 #### GET /api/radar/export.xlsx
 - **用途**：把當前過濾條件下的雷達命中匯出為 .xlsx；與 /hits 共用 `query_radar_hits`，排序 / 過濾邏輯一致

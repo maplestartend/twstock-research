@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { apiGet, type RadarHit, type RadarStrategy } from "@/lib/api";
+import { apiGet, type RadarHit, type RadarHitsPage, type RadarStrategy } from "@/lib/api";
 import { Icon } from "@/components/primitives/Icon";
 import { PageHeader } from "@/components/primitives/PageHeader";
 import { EmptyState } from "@/components/primitives/EmptyState";
@@ -11,7 +11,6 @@ import { Th, Td } from "@/components/primitives/Table";
 import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { TableContainer } from "@/components/primitives/TableContainer";
 import { Pagination } from "@/components/primitives/Pagination";
-import { DownloadCsvButton } from "@/components/primitives/DownloadCsvButton";
 import { DownloadXlsxButton } from "@/components/primitives/DownloadXlsxButton";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { PrefetchLink } from "@/components/primitives/PrefetchLink";
@@ -84,12 +83,16 @@ export default async function RadarPage({
       : (strategies[0]?.name ?? "");
   const activeStrategyInfo = strategies.find((s) => s.name === activeStrategy);
 
-  let hits: RadarHit[];
+  // Server-side 分頁：只取當前頁的 rows + 過濾後 total（不再撈全部回前端 client slice）
+  let pagedHits: RadarHit[];
+  let totalHits: number;
   try {
-    hits = await apiGet<RadarHit[]>(
-      buildHitsUrl(activeStrategy, effectiveMarkets, topApi),
+    const res = await apiGet<RadarHitsPage>(
+      buildHitsUrl(activeStrategy, effectiveMarkets, topApi, page),
       { tags: ["snapshot"] },
     );
+    pagedHits = res.rows;
+    totalHits = res.total;
   } catch (e) {
     return <BackendDownError error={e} pageTitle="雷達掃描" />;
   }
@@ -97,13 +100,8 @@ export default async function RadarPage({
   // 「量能動能」策略：依 vr_macd 排序，UI 多顯示一個 VR 欄
   const showVrMacdCol = activeStrategy === "量能動能";
 
-  // Client-side 50/頁分頁
-  const totalHits = hits.length;
   const totalPages = Math.max(1, Math.ceil(totalHits / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const pageStart = (safePage - 1) * PAGE_SIZE;
-  const pageEnd = pageStart + PAGE_SIZE;
-  const pagedHits = hits.slice(pageStart, pageEnd);
 
   return (
     <div className="p-4 lg:p-8 flex flex-col gap-8 max-w-[1600px] mx-auto">
@@ -240,30 +238,17 @@ export default async function RadarPage({
             </span>
           </SectionTitle>
           <div className="flex items-center gap-2">
-            <DownloadCsvButton
-              headers={showVrMacdCol ? RADAR_CSV_HEADERS_VR : RADAR_CSV_HEADERS}
-              rows={hits.map((h) => showVrMacdCol ? [
-                h.stockId, h.stockName, h.market ?? "", h.close ?? "",
-                h.short ?? "", h.mid ?? "", h.long ?? "", h.composite ?? "", h.vrMacd ?? "",
-                h.recommendation ?? "", h.strategies ?? "",
-              ] : [
-                h.stockId, h.stockName, h.market ?? "", h.close ?? "",
-                h.short ?? "", h.mid ?? "", h.long ?? "", h.composite ?? "",
-                h.recommendation ?? "", h.strategies ?? "",
-              ])}
-              filename={`radar_${activeStrategy || "all"}_${typeTab}`}
+            {/* CSV / XLSX 都走後端 href 下載（top 預設 0 = 全部），命中表不再內嵌全部列進 client props */}
+            <DownloadXlsxButton
+              href={buildExportUrl("csv", activeStrategy, effectiveMarkets)}
+              label="下載 CSV"
               size="sm"
+              disabled={totalHits === 0}
             />
             <DownloadXlsxButton
-              href={
-                "/api/radar/export.xlsx?" +
-                new URLSearchParams({
-                  ...(activeStrategy ? { strategy: activeStrategy } : {}),
-                }).toString() +
-                effectiveMarkets.map((m) => `&market=${encodeURIComponent(m)}`).join("")
-              }
+              href={buildExportUrl("xlsx", activeStrategy, effectiveMarkets)}
               size="sm"
-              disabled={hits.length === 0}
+              disabled={totalHits === 0}
             />
           </div>
         </div>
@@ -348,12 +333,22 @@ export default async function RadarPage({
   );
 }
 
-function buildHitsUrl(strategy: string | undefined, markets: string[], top: number): string {
+function buildHitsUrl(strategy: string | undefined, markets: string[], top: number, page: number): string {
   const q = new URLSearchParams();
   if (strategy) q.set("strategy", strategy);
   markets.forEach((m) => q.append("market", m));
   q.set("top", String(top));
+  q.set("page", String(page));
+  q.set("page_size", String(PAGE_SIZE));
   return `/api/radar/hits?${q.toString()}`;
+}
+
+// 匯出 URL（csv / xlsx 共用）：保留當前策略 + 市場過濾，top 由後端預設 0（全部）。
+function buildExportUrl(fmt: "csv" | "xlsx", strategy: string | undefined, markets: string[]): string {
+  const q = new URLSearchParams();
+  if (strategy) q.set("strategy", strategy);
+  markets.forEach((m) => q.append("market", m));
+  return `/api/radar/export.${fmt}?${q.toString()}`;
 }
 
 function buildQuery({ strategy, market, top, type, page }: {
@@ -367,18 +362,5 @@ function buildQuery({ strategy, market, top, type, page }: {
   if (page && page > 1) q.set("page", String(page));
   return q.toString();
 }
-
-
-const RADAR_CSV_HEADERS = [
-  "代號", "名稱", "市場", "收盤",
-  "短期", "中期", "長期", "綜合",
-  "建議", "命中策略",
-];
-
-const RADAR_CSV_HEADERS_VR = [
-  "代號", "名稱", "市場", "收盤",
-  "短期", "中期", "長期", "綜合", "VR",
-  "建議", "命中策略",
-];
 
 

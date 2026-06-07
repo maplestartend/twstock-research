@@ -20,9 +20,18 @@ from app.scoring.version import current_engine_version
 
 logger = logging.getLogger(__name__)
 
-# 跨 request 共用的鎖。第一個發現過舊的 request 會阻塞重跑，其他併發的 request 會等
-# 同一把鎖；double-check 後若已被別人重算過就直接返回，避免重複工作。
+# 跨 request 共用的鎖。實際重算（snapshot_today）一次只跑一個：拿到鎖後 double-check
+# is_stale，被別人重算過就直接返回，避免重複工作（single-flight）。
 _refresh_lock = threading.Lock()
+# 背景重算的「進行中」旗標：避免每個併發 request 都各自 spawn 一條 thread。
+_refresh_in_progress = threading.Event()
+# 守護「要不要 spawn 背景 thread」的決策，讓最多只有一條被啟動。
+_spawn_lock = threading.Lock()
+
+
+def refresh_in_progress() -> bool:
+    """是否有背景重算正在進行（給 freshness 指示器顯示「重算中」用）。"""
+    return _refresh_in_progress.is_set()
 
 
 def _latest_price_date(db: Database) -> str | None:
@@ -142,22 +151,65 @@ def is_stale(db: Database) -> bool:
     return bool(freshness_status(db)["is_stale"])
 
 
-def ensure_fresh(db: Database) -> bool:
-    """檢查並（若有需要）阻塞重跑 snapshot。回傳是否實際觸發了重算。
-
-    呼叫成本：一次 SQL MAX query（< 5ms）。實際重算只在過舊時發生。
-    失敗（例如重算過程例外）只記 log，不擲出 — 列表頁仍可用舊 snapshot 顯示。
-    """
-    if not is_stale(db):
-        return False
+def _do_refresh(db: Database) -> int | None:
+    """實際重算：single-flight（_refresh_lock）+ 拿到鎖後 double-check。
+    回傳寫入筆數；若拿到鎖時已不 stale（被別人跑完）回 None。"""
     with _refresh_lock:
-        # 等到鎖時可能已被別人跑完，再 check 一次避免重做
         if not is_stale(db):
-            return False
+            return None
+        n = snapshot_today(db)
+        logger.info("snapshot_freshness: 重算完成，寫入 %d 筆", n)
+        return n
+
+
+def _background_refresh(db: Database) -> None:
+    """背景 thread entry：跑 _do_refresh，無論成敗都清掉 in-progress 旗標。"""
+    try:
+        _do_refresh(db)
+    except Exception:
+        logger.exception("snapshot_freshness: 背景重算失敗，將沿用舊 snapshot")
+    finally:
+        _refresh_in_progress.clear()
+
+
+def ensure_fresh(db: Database, *, blocking: bool = False) -> bool:
+    """檢查 snapshot 新鮮度；過舊時觸發重算。回傳是否「同步」完成了一次重算。
+
+    呼叫成本：一次 freshness query（< 1ms）。預設 **不阻塞** request：
+    - 有舊 snapshot 可服務時 → 把重算丟到背景 daemon thread（single-flight），request 立即
+      用現有（略舊）snapshot 回應。UI 的新鮮度指示器（/api/system/snapshot-status 的 is_stale）
+      會顯示需重算 + 提供手動觸發。這移除了「資料更新後第一個訪客被卡 20-60 秒」的尾延遲。
+    - 完全沒有任何 snapshot（首次啟動，沒有舊資料可服務）→ 仍**同步阻塞**跑一次，避免列表全空。
+    - blocking=True：強制同步（保留給「要跑完才回」的呼叫者；目前 daily-update / restart.bat 走
+      snapshot_today，不經此路徑）。
+
+    失敗只記 log、不擲出 — 列表頁仍可用舊 snapshot 顯示。
+    重算與個股詳情頁即時計分的對齊改由「背景跑完後」達成；要立刻對齊請用 restart.bat 或
+    Topbar 的手動重算（兩者都走同步 snapshot_today）。
+    """
+    status = freshness_status(db)
+    if not status["is_stale"]:
+        return False
+
+    # 沒有舊 snapshot 可服務（首次）或呼叫者要求同步 → 阻塞重算
+    if blocking or status["snapshot_as_of"] is None:
         try:
-            n = snapshot_today(db)
-            logger.info("snapshot_freshness: 自動重算完成，寫入 %d 筆", n)
-            return True
+            return _do_refresh(db) is not None
         except Exception:
-            logger.exception("snapshot_freshness: 自動重算失敗，將沿用舊 snapshot")
+            logger.exception("snapshot_freshness: 同步重算失敗，將沿用舊 snapshot")
             return False
+
+    # 有舊 snapshot → 背景單飛重算，立即用舊 snapshot 回應
+    with _spawn_lock:
+        if _refresh_in_progress.is_set():
+            return False
+        _refresh_in_progress.set()
+    try:
+        threading.Thread(
+            target=_background_refresh, args=(db,), name="snapshot-refresh", daemon=True
+        ).start()
+    except Exception:
+        # thread 啟動失敗（極罕見）→ 清旗標，下個 request 可再試
+        _refresh_in_progress.clear()
+        logger.exception("snapshot_freshness: 背景重算 thread 啟動失敗")
+    return False

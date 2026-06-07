@@ -20,40 +20,50 @@ import { PositionSuggestCard } from "./PositionSuggestCard";
 import { LivePriceHeader } from "./LivePriceHeader";
 import { AtrStopSection } from "./AtrStopSection";
 
-// 個股頁的分數是使用者最在意的即時資訊；若沿用 ISR/RSC cache，
-// 軟導頁可能暫時看到舊分數（需 Ctrl+F5 才刷新）。改成 dynamic + noCache，
-// 確保每次進頁都拿到最新 score_stock 結果。
-export const dynamic = "force-dynamic";
-
+// score（分數）走 noCache → 永遠即時、不受快取影響；其餘 day-stable 的重酬載
+// （meta / 180 日價格 / 分數走勢 / 同業 / ATR）改走 ISR 快取，軟導頁與重訪不必每次重打後端。
+// snapshot tag 在 restart.bat / Topbar 手動重算時失效（revalidateTag），確保改完 scoring 後快取會清。
+// 不再用 force-dynamic — 它會強制整條 route 的所有 fetch 都不快取，正是個股頁 loading 偏慢的主因。
+// 頁面仍是動態 render（score / intraday 是 no-store fetch），只是 day-stable 的部分改吃 Data Cache。
 const SCORE_NOCACHE = { noCache: true } as const;
+// day-stable 酬載共用：15 分鐘 ISR + snapshot tag（手動重算/restart 立即失效）
+const DAY_STABLE: { revalidate: number; tags: string[] } = { revalidate: 900, tags: ["snapshot"] };
 
 export default async function StockDetailPage({ params }: { params: Promise<{ stockId: string }> }) {
   const { stockId } = await params;
 
   // 先平行抓不依賴 entry context 的東西。intraday 一起 prefetch：client mount 第一次渲染就用即時值，
   // 不會「先看到昨收、輪詢一回後跳成即時」的肉眼可見閃爍。422（興櫃 / 休市）會 fallback null，client 仍會自己輪詢。
-  const [meta, score, price, history, myHolding, intraday] = await Promise.all([
-    apiGetOptional<StockMeta>(`/api/stocks/${stockId}/meta`),
+  const [meta, score, price, history, myHolding, intraday, atrDefault] = await Promise.all([
+    apiGetOptional<StockMeta>(`/api/stocks/${stockId}/meta`, { revalidate: 3600 }),
     apiGetOptional<StockScoreView>(`/api/stocks/${stockId}/score`, SCORE_NOCACHE),
-    apiGetOptional<StockPriceBundle>(`/api/stocks/${stockId}/price?days=180`),
-    apiGetOptional<ScoreHistoryPoint[]>(`/api/stocks/${stockId}/score-history?days=90`, {
-      tags: ["snapshot"],
-    }).then((v) => v ?? []),
+    apiGetOptional<StockPriceBundle>(`/api/stocks/${stockId}/price?days=180`, DAY_STABLE),
+    apiGetOptional<ScoreHistoryPoint[]>(`/api/stocks/${stockId}/score-history?days=90`, DAY_STABLE)
+      .then((v) => v ?? []),
     apiGetOptional<HoldingContext>(`/api/portfolio/holding-context/${stockId}`, {
       tags: ["watchlist", "snapshot"],
     }),
     apiGetOptional<IntradayQuoteView>(`/api/stocks/${stockId}/intraday`, { noCache: true }),
+    // ATR 預設參數版（無 entry context）一起平行抓 → 非持有者（多數）直接用這份，
+    // 免去原本「等上面 6 個 fetch 全完才串接第 7 個」的一次 round-trip 瀑布。
+    apiGetOptional<AtrStopView>(`/api/stocks/${stockId}/atr-stop?multiplier=2.0`, DAY_STABLE),
   ]);
 
-  // 若使用者持有此檔，把 entry_date / entry_price 拿來算 trailing 停損 + Chandelier 動態停利
-  const atrParams = new URLSearchParams({ multiplier: "2.0" });
+  // 持有此檔才需要 entry-aware ATR（trailing 停損 + Chandelier 動態停利）；
+  // 此時才多打一次帶 entry_date / entry_price 的請求覆蓋預設版（少數使用者才會走到）。
+  let atr = atrDefault;
   if (myHolding?.entryDate && myHolding.avgCost > 0) {
-    atrParams.set("entry_date", myHolding.entryDate);
-    atrParams.set("entry_price", String(myHolding.avgCost));
+    const atrParams = new URLSearchParams({
+      multiplier: "2.0",
+      entry_date: myHolding.entryDate,
+      entry_price: String(myHolding.avgCost),
+    });
+    atr =
+      (await apiGetOptional<AtrStopView>(
+        `/api/stocks/${stockId}/atr-stop?${atrParams.toString()}`,
+        DAY_STABLE,
+      )) ?? atrDefault;
   }
-  const atr = await apiGetOptional<AtrStopView>(
-    `/api/stocks/${stockId}/atr-stop?${atrParams.toString()}`,
-  );
 
   // 完全找不到資料 → 404；有 meta（後端對任何代號都吐 fallback meta）但無 price 也視為不存在
   if (!meta || (!price && !score)) {

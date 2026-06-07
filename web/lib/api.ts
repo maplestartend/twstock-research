@@ -335,6 +335,12 @@ export type RadarHit = {
   market?: string | null;   // "上市" | "上櫃" | "ETF" | "其他"
 };
 
+// 雷達命中分頁回應：當前頁 rows + 過濾後總數（給「共 N 檔」與分頁器）
+export type RadarHitsPage = {
+  rows: RadarHit[];
+  total: number;
+};
+
 export type RadarStrategy = {
   name: string;
   description: string;

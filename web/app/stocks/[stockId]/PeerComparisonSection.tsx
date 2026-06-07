@@ -15,9 +15,12 @@ import { SectionTitle } from "@/components/primitives/SectionTitle";
 import { cn } from "@/lib/utils";
 
 export async function PeerComparisonSection({ stockId }: { stockId: string }) {
-  // ETF / 興櫃 / 樣本不足 → API 回 404；用 Optional 變 null 後整段不渲染
+  // ETF / 興櫃 / 樣本不足 → API 回 404；用 Optional 變 null 後整段不渲染。
+  // 同業中位數是 day-stable 資料 → 15 分鐘 ISR + snapshot tag（手動重算/restart 失效），
+  // 不必每次進個股頁都重算同業比較（父頁已不再 force-dynamic）。
   const peers = await apiGetOptional<PeerComparison>(
     `/api/stocks/${encodeURIComponent(stockId)}/peers`,
+    { revalidate: 900, tags: ["snapshot"] },
   );
   if (!peers || peers.metrics.length === 0) return null;
 

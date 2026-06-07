@@ -10,7 +10,7 @@ import { BackendDownError } from "@/components/primitives/BackendDownError";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { Th, Td } from "@/components/primitives/Table";
 import { TableContainer } from "@/components/primitives/TableContainer";
-import { RollingICChart } from "@/components/charts/RollingICChart";
+import { RollingICChart } from "@/components/charts/RollingICChartLazy";
 import { NextStepCards } from "@/components/primitives/NextStepCard";
 
 // 6-week TTL：IC 算一次 ~5-30s，沒必要每次重算（資料每天才寫一次）。

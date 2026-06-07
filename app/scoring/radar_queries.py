@@ -109,3 +109,28 @@ def query_radar_hits(
         if not unlimited and len(out) >= limit:
             break
     return out
+
+
+def query_radar_hits_page(
+    db: Database,
+    *,
+    strategy: str | None = None,
+    markets: set[str] | None = None,
+    top: int = 0,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[dict[str, Any]], int]:
+    """分頁版：回 (當前頁的列, 過濾後總筆數)。
+
+    市場過濾在 Python 端（classify_market 混 stock_id 規則 + stock_info.type，無法乾淨寫進
+    SQL），所以先撈當日全部命中（單日 ~1000 列、sub-ms）、過濾後才在記憶體切頁 —— 這樣 total
+    與頁內容才正確（裸 SQL OFFSET 會在市場過濾「之前」切頁，導致頁數與 total 都錯）。
+
+    - top：使用者「顯示前 N 名」上限（0 = 全部）；分頁在這個上限內進行
+    - page / page_size：1-based 頁碼與每頁筆數
+    """
+    full = query_radar_hits(db, strategy=strategy, markets=markets, limit=None)
+    capped = full[: top] if top and top > 0 else full
+    total = len(capped)
+    start = max(0, (page - 1) * page_size)
+    return capped[start: start + page_size], total

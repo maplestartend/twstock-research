@@ -69,24 +69,41 @@ def test_radar_strategies_returns_full_list():
 
 
 def test_radar_hits_etf_filter():
-    """0050 應該只在 ETF tab 出現，不在個股 tab。"""
-    r1 = client.get("/api/radar/hits", params={"market": ["上市", "上櫃"], "top": 100})
+    """0050 應該只在 ETF tab 出現，不在個股 tab。/hits 回 {rows,total} envelope。"""
+    r1 = client.get("/api/radar/hits", params={"market": ["上市", "上櫃"], "top": 100, "page_size": 100})
     assert r1.status_code == 200
-    stock_ids = {h["stockId"] for h in r1.json()}
+    body1 = r1.json()
+    assert set(body1.keys()) >= {"rows", "total"}
+    stock_ids = {h["stockId"] for h in body1["rows"]}
     assert "0050" not in stock_ids, "0050 不應出現在個股 tab"
 
-    r2 = client.get("/api/radar/hits", params={"market": ["ETF"], "top": 100})
+    r2 = client.get("/api/radar/hits", params={"market": ["ETF"], "top": 100, "page_size": 100})
     assert r2.status_code == 200
-    # ETF 至少有一些命中
-    etf_ids = {h["stockId"] for h in r2.json()}
-    assert all(h["market"] == "ETF" for h in r2.json())
+    # ETF tab 的列市場全為 ETF
+    assert all(h["market"] == "ETF" for h in r2.json()["rows"])
 
 
 def test_radar_hits_with_strategy_filter():
     r = client.get("/api/radar/hits", params={"strategy": "短線強勢", "top": 5})
     assert r.status_code == 200
-    for h in r.json():
+    body = r.json()
+    assert "total" in body
+    for h in body["rows"]:
         assert "短線強勢" in (h.get("strategies") or "")
+
+
+def test_radar_hits_pagination_envelope():
+    """分頁：page=1 與 page=2 的 rows 不重疊；total 一致；rows 不超過 page_size。"""
+    common = {"market": ["上市", "上櫃"], "top": 0}
+    r1 = client.get("/api/radar/hits", params={**common, "page": 1, "page_size": 10})
+    r2 = client.get("/api/radar/hits", params={**common, "page": 2, "page_size": 10})
+    assert r1.status_code == 200 and r2.status_code == 200
+    b1, b2 = r1.json(), r2.json()
+    assert b1["total"] == b2["total"]
+    assert len(b1["rows"]) <= 10
+    ids1 = {h["stockId"] for h in b1["rows"]}
+    ids2 = {h["stockId"] for h in b2["rows"]}
+    assert ids1.isdisjoint(ids2), "相鄰頁不應有重複股票"
 
 
 def test_factor_ic_response_contains_assumptions():

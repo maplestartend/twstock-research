@@ -3964,6 +3964,28 @@
         "title": "RadarHit",
         "type": "object"
       },
+      "RadarHitsPage": {
+        "description": "雷達命中分頁回應：當前頁的列 + 過濾後總筆數（給「共 N 檔」與分頁器用）。\n\n為什麼回 envelope 而非裸 list：server 端只傳當前頁（省掉「撈全部回前端再 client slice」\n的傳輸與序列化），但前端仍需要 total 才能畫「共 N 檔」與分頁控制。",
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RadarHit"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "total"
+        ],
+        "title": "RadarHitsPage",
+        "type": "object"
+      },
       "RadarStrategy": {
         "properties": {
           "description": {
@@ -5101,6 +5123,17 @@
             "title": "Recommendation",
             "type": "string"
           },
+          "regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime"
+          },
           "short": {
             "$ref": "#/components/schemas/ScoreParts"
           },
@@ -5124,6 +5157,16 @@
             },
             "title": "Stoploss",
             "type": "array"
+          },
+          "styleScores": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StyleScores"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "takeProfit": {
             "default": [],
@@ -5153,6 +5196,57 @@
           "recommendation"
         ],
         "title": "StockScoreView",
+        "type": "object"
+      },
+      "StyleScores": {
+        "description": "v5c Wave 2 / v5e #4：投資風格分數。Score 0-100，None=資料不足。\n\nValue：低 PER/PBR + 高殖利率 + ROE 排除便宜爛公司\nGrowth：EPS 短中長三段成長 + ROE 排除無利潤成長 + 趨勢確認\nMomentum：mid.trend + ma_alignment + 量能 + 法人連買\nIncome：高股利 + 穩定毛利 + ROE 排除掏空配息",
+        "properties": {
+          "growth": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Growth"
+          },
+          "income": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Income"
+          },
+          "momentum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Momentum"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "title": "StyleScores",
         "type": "object"
       },
       "SubFactorICResponse": {
@@ -8024,6 +8118,81 @@
         ]
       }
     },
+    "/api/radar/export.csv": {
+      "get": {
+        "description": "匯出當前過濾條件下的雷達命中為 .csv（含 BOM，Excel 開繁中不亂碼）。\n\n與 /export.xlsx 同欄位、同預設（top=0 → 全部），只差純文字格式。改成後端 href 下載後，\n前端命中表不必再把全部列內嵌進 client props（原本 client 端組 CSV 會把整包 hits 序列化進\nRSC payload）。",
+        "operationId": "export_csv_api_radar_export_csv_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "strategy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market",
+            "required": false,
+            "schema": {
+              "default": [
+                "上市",
+                "上櫃",
+                "ETF"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "title": "Market",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "top",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Top",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Csv",
+        "tags": [
+          "radar"
+        ]
+      }
+    },
     "/api/radar/export.xlsx": {
       "get": {
         "description": "匯出當前過濾條件下的雷達命中為 .xlsx。\n\n與 /hits 共用 query_radar_hits，所以排序 / 過濾邏輯一致；不同處只在輸出格式\n與「預設不截斷」（top=0 → 全部，避免使用者匯出時還要手動加參數）。",
@@ -8101,7 +8270,7 @@
     },
     "/api/radar/hits": {
       "get": {
-        "description": "當日 signal_history 依策略 + 市場過濾 → composite 降序。\n`top=0` 視為「全部」（不截斷）。否則回傳 top 筆。",
+        "description": "當日 signal_history 依策略 + 市場過濾 → composite 降序，分頁回傳。\n\n- `top`：使用者「顯示前 N 名」上限（0 = 全部）；分頁在此上限內進行。\n- `page` / `page_size`：1-based 頁碼、每頁筆數。\n- 回傳 `{rows, total}`：rows = 當前頁、total = 過濾後總筆數（給「共 N 檔」與分頁器）。\n  只傳當前頁，省掉「撈全部回前端再 client slice」的傳輸成本。",
         "operationId": "hits_api_radar_hits_get",
         "parameters": [
           {
@@ -8142,8 +8311,28 @@
             "name": "top",
             "required": false,
             "schema": {
-              "default": 50,
+              "default": 0,
               "title": "Top",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Page Size",
               "type": "integer"
             }
           }
@@ -8153,11 +8342,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/RadarHit"
-                  },
-                  "title": "Response Hits Api Radar Hits Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/RadarHitsPage"
                 }
               }
             },

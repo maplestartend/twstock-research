@@ -282,7 +282,9 @@ def _single_q_yoy_from_derived(
     return _yoy_same_quarter(_wide_by_quarter(derived_df), type_name)
 
 
-def _fill_balance_sheet_ratios(snap: dict, cum_df: pd.DataFrame | None) -> None:
+def _fill_balance_sheet_ratios(
+    snap: dict, cum_df: pd.DataFrame | None, *, wide: pd.DataFrame | None = None
+) -> None:
     """從 financials_cumulative 取最新一季的資產負債表科目，算出兩個槓桿/流動性比率。
 
     - `debt_ratio`     = TotalLiabilities / TotalAssets        （越低越穩；金融業天生偏高）
@@ -298,7 +300,8 @@ def _fill_balance_sheet_ratios(snap: dict, cum_df: pd.DataFrame | None) -> None:
     """
     if cum_df is None or cum_df.empty:
         return
-    wide = _wide_by_quarter(cum_df)
+    if wide is None:
+        wide = _wide_by_quarter(cum_df)
     if wide.empty:
         return
 
@@ -323,7 +326,7 @@ def _fill_balance_sheet_ratios(snap: dict, cum_df: pd.DataFrame | None) -> None:
     # 需要 cum 表有 TTM Revenue（rolling 公式）+ 期末總資產。MOPS OpenAPI 對歷史 BS 缺漏的股票
     # 此欄會 None，讓 score_asset_value 自動跳過、不影響該股長期分數歸一化。
     if total_assets and total_assets > 0:
-        ttm_rev = _ttm_rolling_from_cumulative(cum_df, "Revenue")
+        ttm_rev = _ttm_rolling_from_cumulative(cum_df, "Revenue", wide=wide)
         if ttm_rev is not None and ttm_rev > 0:
             turnover = ttm_rev / total_assets
             if 0 < turnover < 20:
@@ -331,7 +334,7 @@ def _fill_balance_sheet_ratios(snap: dict, cum_df: pd.DataFrame | None) -> None:
 
 
 def _ttm_rolling_from_cumulative(
-    cum_df: pd.DataFrame, type_name: str
+    cum_df: pd.DataFrame, type_name: str, *, wide: pd.DataFrame | None = None
 ) -> float | None:
     """從累計資料算 rolling TTM：(本期 YTD) + (去年全年) − (去年同期 YTD)。
 
@@ -340,8 +343,11 @@ def _ttm_rolling_from_cumulative(
 
     若本期已是 Q4 → 直接 = 本期 YTD（即全年），不需要 rolling 公式。
     需要三筆資料：本期 / 去年同季 / 去年 Q4。任一缺則 None。
+
+    wide：caller 若已 pivot 過同一份 cum_df，可傳進來重用、省一次 pivot_table。
     """
-    wide = _wide_by_quarter(cum_df)
+    if wide is None:
+        wide = _wide_by_quarter(cum_df)
     yq = _latest_yq_with(wide, type_name)
     if yq is None:
         return None
@@ -427,10 +433,12 @@ def _fill_from_quarterly_derived(
     if peg is not None:
         snap["peg"] = peg
 
-    # ROE = TTM 淨利 / 最新 equity（從 cumulative 取）
+    # ROE = TTM 淨利 / 最新 equity（從 cumulative 取）。
+    # cum_df 只 pivot 一次（cum_wide），equity 與下面的資產負債比率共用，省每檔 2 次重複 pivot。
     eq_latest: float | None = None
-    if not cum_df.empty:
-        eq_latest = _latest_value(_wide_by_quarter(cum_df), "EquityAttributableToOwnersOfParent")
+    cum_wide = _wide_by_quarter(cum_df) if not cum_df.empty else pd.DataFrame()
+    if not cum_wide.empty:
+        eq_latest = _latest_value(cum_wide, "EquityAttributableToOwnersOfParent")
     if ttm_ni is not None and eq_latest and eq_latest > 0:
         roe = ttm_ni / eq_latest
         if 0 < roe < 0.6:
@@ -440,8 +448,8 @@ def _fill_from_quarterly_derived(
     if "OperatingIncome" in wide.columns:
         _fill_core_op_metrics(snap, wide["OperatingIncome"].dropna(), eq_latest)
 
-    # 槓桿 / 流動性比率
-    _fill_balance_sheet_ratios(snap, cum_df)
+    # 槓桿 / 流動性比率（重用上面 pivot 好的 cum_wide）
+    _fill_balance_sheet_ratios(snap, cum_df, wide=cum_wide)
 
     # YoY：單季比對（與主路徑同口徑；之前用累計 YoY 是 bug）
     eps_yoy = _yoy_same_quarter(wide, "EPS")
@@ -528,13 +536,13 @@ def _fill_from_cumulative(snap: dict, cum_df: pd.DataFrame) -> None:
     if eps is not None:
         snap["eps_q"] = eps
 
-    # TTM EPS：rolling 公式（Q4 退化成 = 本期 YTD = 全年）
-    ttm_eps = _ttm_rolling_from_cumulative(cum_df, "EPS")
+    # TTM EPS：rolling 公式（Q4 退化成 = 本期 YTD = 全年）。重用上面 pivot 好的 wide。
+    ttm_eps = _ttm_rolling_from_cumulative(cum_df, "EPS", wide=wide)
     if ttm_eps is not None:
         snap["eps_ttm"] = ttm_eps
 
     # ROE：用 rolling TTM 淨利 / 最新 equity（同期 anchor）
-    ttm_ni = _ttm_rolling_from_cumulative(cum_df, "IncomeAfterTaxes")
+    ttm_ni = _ttm_rolling_from_cumulative(cum_df, "IncomeAfterTaxes", wide=wide)
     equity = _value_at(wide, cur_year, quarter, "EquityAttributableToOwnersOfParent")
     if ttm_ni is not None and equity and equity > 0:
         roe = ttm_ni / equity
@@ -560,8 +568,8 @@ def _fill_from_cumulative(snap: dict, cum_df: pd.DataFrame) -> None:
     if rev_yoy is not None:
         snap["revenue_yoy"] = rev_yoy
 
-    # 槓桿 / 流動性比率（這條 fallback 路徑可能完全沒 BS 資料，helper 會自動 noop）
-    _fill_balance_sheet_ratios(snap, cum_df)
+    # 槓桿 / 流動性比率（這條 fallback 路徑可能完全沒 BS 資料，helper 會自動 noop；重用 wide）
+    _fill_balance_sheet_ratios(snap, cum_df, wide=wide)
 
 
 # ======================================================================
@@ -670,6 +678,13 @@ def fundamental_snapshot(
     if peg is not None:
         snap["peg"] = peg
 
+    # financials_cumulative 只 pivot 一次，equity 取值與下面的資產負債比率共用（省每檔重複 pivot）
+    fin_cum_wide = (
+        _wide_by_quarter(financials_cumulative)
+        if financials_cumulative is not None and not financials_cumulative.empty
+        else pd.DataFrame()
+    )
+
     # ROE 粗估：用最近 4 季稅後淨利 / 最近股東權益
     # 優先序：(1) financials_cumulative 的 OpenAPI 期末權益（最準確，TWSE 官方資料）
     #         (2) FinMind 的 EquityAttributableToOwnersOfParent（語意可能不準，作 fallback）
@@ -677,10 +692,10 @@ def fundamental_snapshot(
     if "IncomeAfterTaxes" in quarterly.columns and len(quarterly) >= 4:
         ttm_ni = float(quarterly["IncomeAfterTaxes"].tail(4).sum())
         latest_equity: float | None = None
-        # 來源 1: financials_cumulative
-        if financials_cumulative is not None and not financials_cumulative.empty:
+        # 來源 1: financials_cumulative（重用上面 pivot 好的 fin_cum_wide）
+        if not fin_cum_wide.empty:
             latest_equity = _latest_value(
-                _wide_by_quarter(financials_cumulative),
+                fin_cum_wide,
                 "EquityAttributableToOwnersOfParent",
             )
         # 來源 2: FinMind wide
@@ -705,8 +720,8 @@ def fundamental_snapshot(
                 latest_equity,
             )
 
-    # 槓桿 / 流動性比率（與 ROE 同來源 financials_cumulative）
-    _fill_balance_sheet_ratios(snap, financials_cumulative)
+    # 槓桿 / 流動性比率（與 ROE 同來源 financials_cumulative，重用 fin_cum_wide）
+    _fill_balance_sheet_ratios(snap, financials_cumulative, wide=fin_cum_wide)
 
     # 資產股折價旗標（需要在 PBR / dividend_yield / debt_ratio / operating_margin 全填好之後）
     _fill_asset_play_flag(snap)

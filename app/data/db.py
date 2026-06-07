@@ -628,6 +628,16 @@ class Database:
         # busy_timeout：多 writer 並發（FastAPI + market_update + ensure_fresh）
         # 同時拿 reserved lock 時最多等 5 秒，避免立刻 OperationalError
         conn.execute("PRAGMA busy_timeout=5000")
+        # 讀取效能調校（per-connection，單機自用工具安全；只動讀取記憶體配置，
+        # 不影響 durability / WAL 併發 / look-ahead 過濾，故對正確性零影響）：
+        #   cache_size=-65536 → 64 MB page cache（SQLite 預設僅 2 MB，9 GB DB 上會狂 evict）
+        #   mmap_size=1 GB    → memory-mapped 讀取，跳過 read() syscall；mmap 頁透過 OS
+        #                       page cache 跨連線共享，補償「每次查詢開新連線→私有 cache 全冷」
+        #   temp_store=MEMORY → ORDER BY / GROUP BY 的暫存 b-tree 留 RAM 不落地
+        # 最大效益在 diagnostics(IC) / 回測 / snapshot 這類大範圍掃描。
+        conn.execute("PRAGMA cache_size=-65536")
+        conn.execute("PRAGMA mmap_size=1073741824")
+        conn.execute("PRAGMA temp_store=MEMORY")
         try:
             yield conn
         finally:

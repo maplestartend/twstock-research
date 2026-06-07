@@ -179,10 +179,15 @@ def movers(
     sids = list(stocks.keys())
     out: list[WatchlistMover] = []
     with db.connect() as conn:
-        # 批次抓所有自選股近 2 日價格 → 記憶體分群
+        # 批次抓每檔最新 2 日價格 → 記憶體分群。
+        # 用 ROW_NUMBER 只取每檔 top-2（語意同「全歷史排序後取前兩列」），
+        # 避免把每檔上千列歷史全撈回 Python 端只用 rows[0]/rows[1]。
         price_rows = conn.execute(
-            f"SELECT stock_id, date, close FROM daily_price "
-            f"WHERE stock_id IN ({placeholders}) "
+            f"WITH ranked AS ("
+            f"  SELECT stock_id, date, close, "
+            f"         ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date DESC) AS rn "
+            f"  FROM daily_price WHERE stock_id IN ({placeholders})"
+            f") SELECT stock_id, date, close FROM ranked WHERE rn <= 2 "
             f"ORDER BY stock_id, date DESC",
             sids,
         ).fetchall()
@@ -245,10 +250,13 @@ def overview(db: Database = Depends(get_db)) -> list[WatchlistOverviewRow]:
     sids = list(stocks.keys())
     out: list[WatchlistOverviewRow] = []
     with db.connect() as conn:
-        # 批次抓近 2 日價格
+        # 批次抓每檔最新 2 日價格（ROW_NUMBER 只取 top-2/檔，避免撈全歷史）
         price_rows = conn.execute(
-            f"SELECT stock_id, date, close FROM daily_price "
-            f"WHERE stock_id IN ({placeholders}) "
+            f"WITH ranked AS ("
+            f"  SELECT stock_id, date, close, "
+            f"         ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date DESC) AS rn "
+            f"  FROM daily_price WHERE stock_id IN ({placeholders})"
+            f") SELECT stock_id, date, close FROM ranked WHERE rn <= 2 "
             f"ORDER BY stock_id, date DESC",
             sids,
         ).fetchall()

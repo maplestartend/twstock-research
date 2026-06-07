@@ -97,13 +97,13 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 - **檔案**：[web/app/radar/page.tsx](../web/app/radar/page.tsx)（354 行）
 - **類型**：RSC（`revalidate: 60`）
 - **searchParams**：`strategy, market[], top (30/50/100/all), type (stock/etf), page`
-- **API 呼叫**：`apiGet<RadarStrategy[]>("/api/radar/strategies")`、`apiGet<RadarHit[]>("/api/radar/hits?...")`
+- **API 呼叫**：`apiGet<RadarStrategy[]>("/api/radar/strategies")`、`apiGet<RadarHitsPage>("/api/radar/hits?...&page=&page_size=")`（🆕 回 `{rows,total}`，server 端分頁）
 - **主要 sections**：
   - PageHeader
   - Type tabs：個股 / ETF —— ETF 過濾掉 `stocksOnly` 策略
   - Strategy chips 含命中數
   - Filters：板別（上市/上櫃）+ Top N 切換
-  - Hits table 含 client-side 50/頁分頁、`<Pagination>`，標題列右側 `<DownloadCsvButton>` + **🆕** `<DownloadXlsxButton href="/api/radar/export.xlsx?strategy=...&market=...">`（保留當前過濾條件）
+  - Hits table 含 **🆕 server-side 50/頁分頁**（`/api/radar/hits` 帶 `page`/`page_size`，只傳當前頁）、`<Pagination>`，標題列右側 **🆕** CSV / XLSX 皆走後端 href 下載（`<DownloadXlsxButton href="/api/radar/export.csv?…" label="下載 CSV">` + `…export.xlsx`，保留當前過濾條件、不再內嵌全部列進 client props）
 - **欄寬**：`table-fixed`，固定欄寬；ETF tab 隱藏「長期」欄
 - **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`BackendDownError`、`Th/Td`、`Pagination`、`DownloadCsvButton`、`DownloadXlsxButton`
 

@@ -143,6 +143,16 @@ class RadarHit(StockRef):
     market: str | None = None  # "上市" | "上櫃" | "ETF" | "其他"
 
 
+class RadarHitsPage(CamelModel):
+    """雷達命中分頁回應：當前頁的列 + 過濾後總筆數（給「共 N 檔」與分頁器用）。
+
+    為什麼回 envelope 而非裸 list：server 端只傳當前頁（省掉「撈全部回前端再 client slice」
+    的傳輸與序列化），但前端仍需要 total 才能畫「共 N 檔」與分頁控制。
+    """
+    rows: list[RadarHit]
+    total: int
+
+
 class RadarStrategy(CamelModel):
     name: str
     description: str
