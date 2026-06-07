@@ -49,7 +49,20 @@ python -m scripts.backfill_financials_history --quarters 5
 
 ### 啟動儀表板
 
-**雙擊 `.bat`（推薦）**：
+**雙擊 `stock.bat`（推薦，單一入口）**：
+
+一支選單統整所有操作 — 不必記哪支 .bat 做什麼，雙擊 `stock.bat` 後依數字選：
+
+```
+台股研究系統 — 主選單
+  [ 啟動 / 關閉 ]   1) 開啟儀表板  2) 關閉  3) 重啟+重算分數  4) 查看狀態
+  [ 資料更新 ]      5) 立即更新今日資料  6) 從雲端拉最新 DB(副機)
+  [ 持股 ]          7) 盤後持股檢查
+  [ 排程 ]          8) 安裝每日排程  9) 移除排程
+                    0) 離開
+```
+
+> 各功能底層仍是下表的獨立 .bat，`stock.bat` 只是把它們收進一個選單。習慣直接雙擊個別 .bat 的人不受影響，仍可單獨使用：
 
 | 檔案 | 用途 |
 |------|------|
@@ -58,9 +71,10 @@ python -m scripts.backfill_financials_history --quarters 5
 | `restart.bat` | stop → 重生 `signal_history` snapshot → relaunch。**改完 `app/scoring/*` 用這個** |
 | `status.bat` | 不動 server，只看 port 8000 / 3000 在不在跑、snapshot 有沒有對齊 daily_price |
 | `daily-update.bat` | 只抓當日資料（不開 UI），給排程跑 |
-| `install-schedule.bat` | 安裝 Windows 工作排程，每日 15:30 自動 daily-update |
+| `install-schedule.bat` | 安裝 Windows 工作排程，每日 16:45 自動 daily-update |
 | `uninstall-schedule.bat` | 移除排程 |
 | `check-holdings.bat [本金]` | 盤後一鍵檢查持股：列出 ATR 停損 / 結構警戒線 / Chandelier 鎖利狀態與隔日動作清單。本金預設 760,000，可帶參數覆蓋 |
+| `sync-from-cloud.bat` | 副機從 OneDrive 拉主機備份的最新 `stock.db`（主機不需要） |
 
 > **找不到 uvicorn / next dev 在哪？** 不必翻 cmd 視窗，雙擊 `stop.bat` 就好（用 port 找 PID）。
 >
