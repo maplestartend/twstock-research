@@ -131,7 +131,11 @@ export function AlertRuleForm() {
         </button>
       </form>
       {error && (
-        <div className="text-xs text-[var(--color-down)] bg-[var(--color-down-bg)] border border-[var(--color-down-border)] rounded-md px-3 py-2">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="text-xs text-[var(--color-down)] bg-[var(--color-down-bg)] border border-[var(--color-down-border)] rounded-md px-3 py-2"
+        >
           {error}
         </div>
       )}

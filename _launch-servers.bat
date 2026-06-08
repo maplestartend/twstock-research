@@ -22,7 +22,7 @@ echo.
 if not exist "web\node_modules\" (
     echo [INFO] web\node_modules not found. Running npm install...
     pushd web
-    call npm install --no-audit --no-fund
+    call npm ci --no-audit --no-fund
     popd
     if errorlevel 1 (
         echo [ERROR] npm install failed.

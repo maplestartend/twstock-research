@@ -66,9 +66,9 @@
 | `financials` | 財報單季值（FinMind，僅 watchlist 股票），含 `publish_date` 法定下限 | 1.5K |
 | `financials_cumulative` | 全市場 5+ 季財報累計值（TWSE/TPEX OpenAPI + MOPS 歷史，2018Q1 起 33 季） | 785K |
 | `financials_quarterly_derived` | 累計差分後的單季值（含 TTM/CAGR 計算用），2018Q1 起 33 季 | 748K |
-| `signal_history` | 每日雷達評分快照 | 1.34M（1000 天 × ~1500 平均） |
-| `signal_history_factor_parts` | 子因子分數長表（給 /diagnostics sub-factor IC 用） | 27.9M |
-| `factor_ic_cache` | IC 計算結果快取（key 含 `IC_ALGO_VERSION` prefix） | 171（aggregate 15 + subfactor 63 × 演算法版本） |
+| `signal_history` | 每日雷達評分快照 | ~0.83M（近 365 天逐日 + 更早只留週一，每日 prune） |
+| `signal_history_factor_parts` | 子因子分數長表（給 /diagnostics sub-factor IC 用） | ~17.5M（同上保留窗，每日 prune） |
+| `factor_ic_cache` | IC 計算結果快取（key 含 `IC_ALGO_VERSION` prefix；factor_parts 被 prune 時自動清空） | ~15（動態；backfill 後重建） |
 | `adj_event` | 除權息/分割事件 | 每股幾筆 |
 | `daily_price_adj` | 還原 OHLC（僅已補還原的股票） | ~每股千筆 |
 | `index_daily` | 加權指數等（用於 RS 計算；含 yfinance 補回 2022-2023 的 ^TWII） | 37K |
@@ -77,7 +77,7 @@
 | `trade_log` | 買賣交易紀錄 append-only | 每筆 1 列 |
 | `user_weight_preset` | 權重調優頁存的命名 preset（含描述、weights JSON） | 隨用戶 |
 
-DB 目前約 **4.3 GB**（2026-04-30 prune + VACUUM 後；之前 6.0 GB 含 16M 列權證資料）。`signal_history_factor_parts` 是大宗（27.9M 列、~2.5 GB）。預計每年增長 100~150 MB（已過濾權證，純真股票）。
+DB 目前約 **3.2 GB**（2026-06-08 prune `signal_history` + `signal_history_factor_parts` 兩張歷史表後；之前約 8.8 GB 為歷史快照積壓）。`signal_history_factor_parts` 仍是大宗（~17.5M 列）。`daily-update.bat` 每日 prune（近 365 天逐日 + 更早只留週一）並於週日 best-effort VACUUM，避免再度膨脹。
 
 ## 注意事項與限制
 

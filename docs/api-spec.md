@@ -1,6 +1,6 @@
 # 後端 API 規格
 
-> 自動產出於 2026-04-26。修改 API 時請同步更新本檔。
+> 本檔是**手寫 narrative**；機器可讀、且為 single source of truth 的是 [api-spec.json](api-spec.json)（跑 `python -m scripts.dump_openapi` 重產，CI 的 `dump_openapi --check` 會擋 drift）。改 API 時兩邊都要更新。下方表格的行號連結為輔助、可能略為落後，以程式碼與 json 為準。
 > Camel/Snake 約定：FastAPI 的 alias_generator 是 `to_camel`（見 [api/schemas/common.py](../api/schemas/common.py)），request body 接 snake_case，response 出 camelCase（前端 TypeScript 直接拿即可）。
 
 ## 全域慣例
@@ -12,12 +12,15 @@
 - **snapshot 新鮮度**：列表型 router（radar / watchlist / portfolio / dashboard）開頭呼叫 `ensure_fresh(db)`（[app/scoring/snapshot_freshness.py](../app/scoring/snapshot_freshness.py)），signal_history 比 daily_price 舊時自動補跑當日快照
 - **list 預設排序**：雷達 / 自選總覽依 `composite` 降序；交易紀錄依 `trade_date DESC, id DESC`；漲跌排行依 `change_pct` 升/降序
 - **市場分類**：`classify_market(stock_id, type)` ([app/data/market_type.py:22](../app/data/market_type.py#L22)) 回傳 `"上市" | "上櫃" | "ETF" | "其他"`
+- **狀態碼慣例**：建立資源的 POST 回 `201`（自選 add / bulk-add、weight-tuner preset upsert）；計算型 POST（回測 / 重算 / 備份 / narrative）回 `200`。DELETE 一律 **idempotent `204`**（刪不存在的資源也回 204，retry 安全）。
+- **刻意未採用的契約特性（單機自用取捨）**：(1) 無 `/v1` 版本前綴 — 前後端同 repo 同步演進、破壞性改動直接改兩邊；(2) list 端點回裸陣列、不包 `{data, page}` 信封 — 清單量小、前端直接吃（雷達等大清單已有自己的 `*Page` 分頁）；(3) 寫入端點不支援 `Idempotency-Key` header — 單機本地、無網路逾時重送問題。要對外 / 多租戶時再補。
 
 ## 路由總覽
 
 | Method | Path | Router | 用途 |
 |---|---|---|---|
-| GET | /api/health | [main.py:47](../api/main.py#L47) | 健康檢查 |
+| GET | /api/health | [main.py](../api/main.py) | liveness（進程存活，純 200，不碰 DB） |
+| GET | /api/ready | [main.py](../api/main.py) | readiness（連 DB + `signal_history` 在 → 200，否則 503） |
 | GET | /api/market/snapshot | [market.py:37](../api/routers/market.py#L37) | 加權指數最新收盤 |
 | GET | /api/market/intraday | [market.py](../api/routers/market.py) | **🆕** 加權指數盤中即時值（mis.twse.com.tw，30s cache，Cache-Control: no-store） |
 | GET | /api/market/breadth | [market.py:63](../api/routers/market.py#L63) | 市場寬度 + 健康度標籤 |
@@ -77,8 +80,13 @@
 ### system — 健康檢查
 
 #### GET /api/health
-- **用途**：liveness 探測
+- **用途**：liveness 探測（進程活著就 200，不碰 DB / 外網）
 - **Response**：`{"status": "ok"}`
+
+#### GET /api/ready
+- **用途**：readiness 探測 — 實際連 DB 並確認 `signal_history` 快照表存在
+- **Response**：成功 → 200 `{"status": "ready"}`；DB 連不上或表缺失 → 503 `{"status": "not ready", "reason": "..."}`
+- **備註**：部署 / `restart.bat` 後判斷後端是否真的能服務用；`/api/health` 只證明進程活著
 
 ---
 
@@ -176,14 +184,16 @@
 - **Request body**：`AddBody` { stockId }
 - **驗證**：必須在 `stock_info` 或 `daily_price` 至少存在一筆，避免寫入垃圾代號
 - **錯誤**：400 = 代號為空；404 = 找不到股票；409 = 已在自選
+- **Status**：201（建立資源）
 - **Response**：`{ "ok": true, "stockName": "..." }`
 
 #### DELETE /api/watchlist/{stock_id}
-- **錯誤**：404 = 不在自選清單
-- **Response**：`{ "ok": true }`
+- **Status**：204（idempotent — 刪不存在的代號也回 204，與 portfolio trades 一致）
+- **Response**：無 body
 
 #### POST /api/watchlist/bulk-add
 - **Request body**：`BulkAddBody` { stockIds: list[str] }
+- **Status**：201（建立資源）
 - **Response**：`{ "added": N, "skipped": M }`
 
 #### POST /api/watchlist/bulk-remove
@@ -401,6 +411,7 @@
 - **用途**：新增/更新使用者 preset（同名 upsert）
 - **Request body**：`PresetUpsertRequest` { name, description?, weights }
 - **錯誤**：422 = weights 結構錯
+- **Status**：201（建立 / upsert 使用者 preset）
 - **Response model**：`UserPreset`
 
 #### GET /api/weight-tuner/presets/visible-keys
@@ -408,8 +419,9 @@
 - **Response model**：`VisibleKeysResponse` { short: str[], mid: str[], long: str[] }
 
 #### DELETE /api/weight-tuner/presets/{name}
-- **錯誤**：404 = 找不到 preset；422 = 內建 preset 不可刪
-- **Response**：`{ "deleted": name }`
+- **錯誤**：422 = 內建 preset 不可刪
+- **Status**：204（idempotent — 刪不存在的 user preset 也回 204）
+- **Response**：無 body
 
 ---
 

@@ -1,0 +1,106 @@
+# 品質關卡 CI。把 CLAUDE.md 一直以來只靠人工跑的檢查自動化：
+#   pytest（DB-independent 子集）/ OpenAPI 契約 drift / 前端 tsc / .bat lint / SCA / secret scan
+# 設計取捨見 docs/operations.md「CI 品質關卡」。
+# 護欄：top-level permissions 唯讀、每個 action 釘 commit SHA、concurrency 取消舊跑、cache 以 lockfile hash 為 key。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 預設最小權限（cicd-guardrails）。個別 job 需要更多再各自宣告。
+permissions:
+  contents: read
+
+# 同一 ref 的新 push 取消還在跑的舊 CI。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (pytest + openapi)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install locked deps
+        run: python -m pip install -r requirements.lock.txt
+      - name: Prepare CI runtime config (no prod secrets / no prod DB in CI)
+        run: |
+          cp config.yaml.example config.yaml
+          mkdir -p data logs
+      - name: Tests (DB-independent subset)
+        run: python -m pytest -m "not needs_prod_db" -q
+      - name: OpenAPI contract drift
+        run: python -m scripts.dump_openapi --check
+
+  frontend:
+    name: frontend (tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked deps
+        working-directory: web
+        run: npm ci
+      - name: Type-check
+        working-directory: web
+        run: npx tsc --noEmit
+      # 註：本專案未設定 ESLint（package.json 的 next lint 從未配置）→ 不納入 gate。
+      # 型別檢查是前端的硬關卡；若日後要 lint，先補 web/eslint config。
+
+  bat-lint:
+    name: windows .bat lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version-file: .python-version
+      - name: Lint .bat (BOM / CR-only = error)
+        run: python scripts/check_bat.py *.bat
+
+  sca:
+    name: dependency audit (informational)
+    runs-on: ubuntu-latest
+    # 報告型、不阻擋：advisory DB 會隨時間新增，不該讓無關 PR 因新公告變紅；
+    # 真正要擋的是 secret scan（見 secrets job）。本 job 讓 SCA 結果可見、可定期處理。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version-file: .python-version
+      - name: pip-audit (locked python deps)
+        run: |
+          python -m pip install pip-audit
+          pip-audit -r requirements.lock.txt
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: web/.nvmrc
+      - name: npm audit (frontend deps)
+        working-directory: web
+        run: npm audit --audit-level=high
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

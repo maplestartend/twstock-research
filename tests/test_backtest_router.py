@@ -18,6 +18,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from api.main import app  # noqa: E402
 
+# 吃 prod data/stock.db；CI 無此 DB → 以 -m "not needs_prod_db" 排除。
+pytestmark = pytest.mark.needs_prod_db
+
 client = TestClient(app)
 
 

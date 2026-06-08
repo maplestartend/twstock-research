@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM ============================================================
 REM pull-latest-db.bat — alias for sync-from-cloud.bat
 REM

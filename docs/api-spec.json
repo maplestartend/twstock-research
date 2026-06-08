@@ -7274,6 +7274,7 @@
     },
     "/api/health": {
       "get": {
+        "description": "Liveness：進程活著就回 200，不碰任何相依資源（DB / 外網）。",
         "operationId": "health_api_health_get",
         "responses": {
           "200": {
@@ -8391,6 +8392,26 @@
         ]
       }
     },
+    "/api/ready": {
+      "get": {
+        "description": "Readiness：實際連 DB 並確認 `signal_history` 快照表存在 → 200；否則 503。\n\n與 /api/health 的差別：health 只證明進程活著，ready 證明後端「真的能服務」\n（DB 連得上、schema 在）。部署 / `restart.bat` 後可用它判斷是否該放流量進來。",
+        "operationId": "ready_api_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ready",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/search/stocks": {
       "get": {
         "description": "模糊搜尋股票代號/名稱。\n規則：\n- 空字串 → 回自選股前 N 檔（最近瀏覽的常用入口）\n- 純數字（1~6 碼）→ 代號前綴比對優先，其次代號子字串\n- 含中文/英文 → 名稱模糊比對\n- 同時含數字+文字 → 代號 OR 名稱\n自選股置頂（in_watchlist=True 排第一），其次是代號嚴格匹配。",
@@ -9251,7 +9272,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9295,7 +9316,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9522,6 +9543,7 @@
     },
     "/api/watchlist/{stock_id}": {
       "delete": {
+        "description": "冪等刪除：刪不存在的代號也回 204（與 portfolio 的 DELETE 一致，retry 安全）。",
         "operationId": "remove_api_watchlist__stock_id__delete",
         "parameters": [
           {
@@ -9535,16 +9557,7 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Remove Api Watchlist  Stock Id  Delete",
-                  "type": "object"
-                }
-              }
-            },
+          "204": {
             "description": "Successful Response"
           },
           "422": {
@@ -9671,7 +9684,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9721,6 +9734,7 @@
     },
     "/api/weight-tuner/presets/{name}": {
       "delete": {
+        "description": "冪等刪除：刪不存在的 user preset 也回 204。內建 preset 不可刪（delete_preset 丟\nValueError → 422）。",
         "operationId": "delete_preset_api_weight_tuner_presets__name__delete",
         "parameters": [
           {
@@ -9734,16 +9748,7 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Preset Api Weight Tuner Presets  Name  Delete",
-                  "type": "object"
-                }
-              }
-            },
+          "204": {
             "description": "Successful Response"
           },
           "422": {

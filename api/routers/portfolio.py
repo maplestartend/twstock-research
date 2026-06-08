@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextvars
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Literal
@@ -28,6 +29,8 @@ import pandas as pd
 
 from app import portfolio as pf
 from app import risk as risk_mod
+
+logger = logging.getLogger(__name__)
 from app import watchlist as wl_mod
 from app.data import intraday as intraday_mod
 from app.data.db import Database
@@ -236,7 +239,8 @@ def _compute_holdings(db: Database) -> list[HoldingRow]:
                     close, float(short) if short is not None else 0.0,
                     price_df=price_df,
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning("風險訊號計算失敗 %s: %s", h.stock_id, e)
                 warnings = []
         atr_stop, atr_dist, atr_kind, atr_below = _atr_for_holding(
             price_df, h.entry_date, h.avg_cost, close,
@@ -337,7 +341,8 @@ def holdings_intraday(db: Database = Depends(get_db)) -> list[IntradayQuoteView]
     def _fetch(sid: str) -> tuple[str, intraday_mod.IntradayQuote | None]:
         try:
             return sid, intraday_mod.fetch_quote(sid, type_by_sid.get(sid))
-        except Exception:
+        except Exception as e:
+            logger.warning("盤中報價抓取失敗 %s: %s", sid, e)
             return sid, None
 
     # 8 個 worker：實務上持股很少超過 ~20 檔；30s cache hit 時這層幾乎是 no-op
@@ -430,7 +435,8 @@ def risk_alerts(db: Database = Depends(get_db)) -> list[RiskAlert]:
     try:
         holdings_mv = {r.stock_id: (r.market_value or 0.0) for r in rows if r.market_value}
         concent = concentration_warnings(db, holdings_mv)
-    except Exception:
+    except Exception as e:
+        logger.warning("集中度警示計算失敗: %s", e)
         concent = []
     for msg in concent or []:
         alerts.append(RiskAlert(severity="info", title="集中度提醒", description=msg))

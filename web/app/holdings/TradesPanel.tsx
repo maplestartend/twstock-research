@@ -9,7 +9,7 @@ import { StockIdCell } from "@/components/primitives/StockIdCell";
 import { TableContainer } from "@/components/primitives/TableContainer";
 import { apiDelete, apiPost, type TradeRow } from "@/lib/api";
 import { btnDestructive, btnPrimary, inputCls } from "@/lib/formClasses";
-import { fmtMoney, fmtPrice } from "@/lib/format";
+import { fmtMoney, fmtNum, fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Notice = { kind: "ok" | "err"; msg: string };
@@ -243,7 +243,7 @@ export function TradesPanel({ initialTrades }: { initialTrades: TradeRow[] }) {
                         {isBuy ? "買入" : "賣出"}
                       </span>
                     </Td>
-                    <Td align="right" numeric>{t.shares.toLocaleString("zh-TW")}</Td>
+                    <Td align="right" numeric>{fmtNum(t.shares)}</Td>
                     <Td align="right" numeric>{fmtPrice(t.price)}</Td>
                     <Td align="right" numeric>{fmtMoney(t.shares * t.price, 0)}</Td>
                     <Td align="right" numeric>

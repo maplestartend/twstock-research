@@ -1,6 +1,6 @@
 # 前端規格
 
-> 自動產出於 2026-04-26。新增/修改頁面或元件時請同步更新本檔。
+> 手寫規格；新增/修改頁面或元件時請同步更新本檔。各頁標註的「（NNN 行）」為概數、會隨改動漂移，以實際檔案為準。
 > 與 [docs/api-spec.md](api-spec.md) 搭配閱讀。
 
 ## 全域慣例
@@ -75,7 +75,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/stocks/[stockId]` — 個股詳情
 
-- **檔案**：[web/app/stocks/[stockId]/page.tsx](../web/app/stocks/[stockId]/page.tsx)（263 行）
+- **檔案**：[web/app/stocks/[stockId]/page.tsx](../web/app/stocks/[stockId]/page.tsx)（228 行）
 - **類型**：RSC（`revalidate: 60`），動態路由
 - **API 呼叫**：全 `apiGetOptional`
   - `/api/stocks/{id}/meta`、`/api/stocks/{id}/score`、`/api/stocks/{id}/price?days=180`、`/api/stocks/{id}/score-history?days=90`、**🆕** `/api/stocks/{id}/peers`（同業比較區塊；ETF/興櫃/樣本不足回 404 → 整段隱藏）
@@ -94,7 +94,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/radar` — 雷達掃描
 
-- **檔案**：[web/app/radar/page.tsx](../web/app/radar/page.tsx)（354 行）
+- **檔案**：[web/app/radar/page.tsx](../web/app/radar/page.tsx)（366 行）
 - **類型**：RSC（`revalidate: 60`）
 - **searchParams**：`strategy, market[], top (30/50/100/all), type (stock/etf), page`
 - **API 呼叫**：`apiGet<RadarStrategy[]>("/api/radar/strategies")`、`apiGet<RadarHitsPage>("/api/radar/hits?...&page=&page_size=")`（🆕 回 `{rows,total}`，server 端分頁）
@@ -109,7 +109,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/history` — 歷史追蹤
 
-- **檔案**：[web/app/history/page.tsx](../web/app/history/page.tsx)（336 行）
+- **檔案**：[web/app/history/page.tsx](../web/app/history/page.tsx)（379 行）
 - **類型**：RSC（`revalidate: 300`）
 - **searchParams**：`as_of, strategy, type (stock/etf), page`
 - **API 呼叫**：`apiGet<string[]>("/api/history/dates")`、`apiGet<RadarStrategy[]>("/api/history/strategies?...")`、`apiGetOptional<HistoryPerfSummary>("/api/history/performance?...")`
@@ -164,7 +164,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/dq` — 資料品質
 
-- **檔案**：[web/app/dq/page.tsx](../web/app/dq/page.tsx)（317 行）
+- **檔案**：[web/app/dq/page.tsx](../web/app/dq/page.tsx)（314 行）
 - **類型**：RSC（`revalidate: 60`）
 - **searchParams**：`days (3-60), kind, sev`
 - **API 呼叫**：`/api/dq/summary?days={N}`、`/api/dashboard/data-freshness`
@@ -195,7 +195,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/dividend-calendar` — 除權息行事曆
 
-- **檔案**：[web/app/dividend-calendar/page.tsx](../web/app/dividend-calendar/page.tsx)（192 行）
+- **檔案**：[web/app/dividend-calendar/page.tsx](../web/app/dividend-calendar/page.tsx)（209 行）
 - **類型**：RSC（`revalidate: 1800`，對齊後端 cache TTL）
 - **searchParams**：`days (7/30/60/90), tab (holdings/watchlist/all)`
 - **API 呼叫**：`apiGet<ExDividendCalendarEvent[]>("/api/calendar/ex-dividend?days_ahead={N}")`
@@ -208,7 +208,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/backtest` — 策略回測
 
-- **檔案**：[web/app/backtest/page.tsx](../web/app/backtest/page.tsx)（450 行）
+- **檔案**：[web/app/backtest/page.tsx](../web/app/backtest/page.tsx)（500 行）
 - **類型**：RSC form，POST 用 GET 參數帶入後 RSC 內 `apiPost`（`revalidate: 0`）
 - **searchParams**：`stockId, entry, exit, sl, tp, maxHold, slippage, lookback`
 - **API 呼叫**：`apiGet<WatchlistEntry[]>("/api/watchlist")`、POST `/api/backtest/stock`
@@ -226,7 +226,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/portfolio-backtest` — 投組回測
 
-- **檔案**：[web/app/portfolio-backtest/page.tsx](../web/app/portfolio-backtest/page.tsx)（343 行）
+- **檔案**：[web/app/portfolio-backtest/page.tsx](../web/app/portfolio-backtest/page.tsx)（373 行）
 - **類型**：RSC form（`revalidate: 0`）
 - **searchParams**：`run, source (watchlist/custom), tickers, entry, exit, sl, tp, maxHold, slippage, lookback`
 - **API 呼叫**：`/api/watchlist`、POST `/api/backtest/portfolio`
@@ -241,7 +241,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/event-backtest` — 除權息事件回測
 
-- **檔案**：[web/app/event-backtest/page.tsx](../web/app/event-backtest/page.tsx)（327 行）
+- **檔案**：[web/app/event-backtest/page.tsx](../web/app/event-backtest/page.tsx)（326 行）
 - **類型**：RSC form（`revalidate: 0`）
 - **searchParams**：`run, source, tickers, entry (-20~5), exit (1~60), year (2015~2024), minDiv`
 - **API 呼叫**：`/api/watchlist`、POST `/api/backtest/event-driven`
@@ -256,7 +256,7 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/grid-search` — 參數掃描
 
-- **檔案**：[web/app/grid-search/page.tsx](../web/app/grid-search/page.tsx)（444 行）
+- **檔案**：[web/app/grid-search/page.tsx](../web/app/grid-search/page.tsx)（474 行）
 - **類型**：RSC form（`revalidate: 0`）
 - **searchParams**：`run, mode (grid/wf), source, tickers, entries, exits, sls, tps, lookback, maxHold, splits, train`
 - **API 呼叫**：`/api/watchlist`、POST `/api/backtest/grid-search` 或 POST `/api/backtest/walk-forward`

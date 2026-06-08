@@ -210,7 +210,7 @@ export function CommandPalette() {
         aria-modal="true"
         aria-label="全域搜尋"
       >
-        <div className="flex items-center gap-2 px-4 h-12 border-b border-[var(--border-default)]">
+        <div className="flex items-center gap-2 px-4 h-12 border-b border-[var(--border-default)] focus-within:border-[var(--brand-400)]">
           <Icon name="search" size={18} className="text-[var(--text-tertiary)]" />
           <input
             ref={inputRef}

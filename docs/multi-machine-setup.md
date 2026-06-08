@@ -55,8 +55,8 @@ config.yaml（含 FinMind token / Discord webhook）→ 不進 git，手動帶
 
 ### 一次性環境準備
 
-1. **裝 Python 3.11+**（[python.org](https://www.python.org/downloads/)）— 安裝時勾「Add to PATH」
-2. **裝 Node.js 20+**（[nodejs.org](https://nodejs.org/)）
+1. **裝 Python**（[python.org](https://www.python.org/downloads/)）— 安裝時勾「Add to PATH」；版本以 repo 根的 `.python-version` 為準（目前 3.12.10，CI 也讀它）
+2. **裝 Node.js**（[nodejs.org](https://nodejs.org/)）— 版本以 `web/.nvmrc` 為準（目前 22.15.1，CI 也讀它；有裝 nvm 可 `nvm use`）
 3. **裝 Git**（[git-scm.com](https://git-scm.com/)）
 4. **裝 GitHub CLI**：PowerShell 跑 `winget install --id GitHub.cli -e`
 5. **登入 OneDrive**：用同一個 Microsoft 帳號登入 OneDrive Desktop。
@@ -78,9 +78,9 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.lock.txt
 
-# 前端
+# 前端（npm ci = 嚴格照 package-lock 重現安裝）
 cd web
-npm install
+npm ci
 cd ..
 ```
 
@@ -127,7 +127,7 @@ set "CLOUD_DIR=%USERPROFILE%\OneDrive - ACME\台股備份"
 
 雙擊 `sync-from-cloud.bat` → 自動找雲端最新一份覆蓋 `data\stock.db` → 雙擊 `launch.bat`。
 
-第一次建議跑一下 `python -m pytest tests/ -q` 驗證 DB 沒被同步壞掉（應該 323 passed + 1 xfailed）。
+第一次建議跑一下 `python -m pytest tests/ -q` 驗證 DB 沒被同步壞掉（應該 507 passed + 2 skipped）。
 
 > 命名澄清：`sync-from-cloud.bat` 名字像「雙向同步」其實是「**單向 pull**」（把 OneDrive
 > 的最新 DB 蓋到本機 `data\stock.db`）。新增 `pull-latest-db.bat` 為更精確的別名，

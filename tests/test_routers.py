@@ -22,6 +22,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from api.main import app  # noqa: E402
 
+# 此模組用 TestClient 打實際 endpoint，依賴 prod data/stock.db。CI 無此 DB →
+# 以 -m "not needs_prod_db" 排除；本機跑全套（含此模組）仍是 497 passed。
+pytestmark = pytest.mark.needs_prod_db
+
 client = TestClient(app)
 
 

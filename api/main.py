@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from api.deps import get_db
 from api.routers import alerts, backtest, calendar, dashboard, diagnostics, dq, history, market, portfolio, radar, search, stocks, system, watchlist, weight_tuner
 
 # Logger 設定：basicConfig 對 root 已有 handler 時是 no-op，所以 uvicorn 自己接管時不會干擾。
@@ -118,4 +119,32 @@ app.include_router(diagnostics.router)
 
 @app.get("/api/health", tags=["system"])
 def health() -> dict[str, str]:
+    """Liveness：進程活著就回 200，不碰任何相依資源（DB / 外網）。"""
     return {"status": "ok"}
+
+
+@app.get("/api/ready", tags=["system"])
+def ready() -> JSONResponse:
+    """Readiness：實際連 DB 並確認 `signal_history` 快照表存在 → 200；否則 503。
+
+    與 /api/health 的差別：health 只證明進程活著，ready 證明後端「真的能服務」
+    （DB 連得上、schema 在）。部署 / `restart.bat` 後可用它判斷是否該放流量進來。
+    """
+    try:
+        db = get_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='signal_history'"
+            ).fetchone()
+        if row is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not ready", "reason": "signal_history table missing"},
+            )
+        return JSONResponse(status_code=200, content={"status": "ready"})
+    except Exception as exc:  # DB 連不上 / 檔案損毀 / 鎖死
+        api_logger.warning("readiness check failed: %s: %s", type(exc).__name__, exc)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not ready", "reason": type(exc).__name__},
+        )

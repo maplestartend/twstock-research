@@ -23,7 +23,7 @@ import {
   TableSkeleton,
   CardSkeleton,
 } from "@/components/primitives/Skeleton";
-import { fmtMoney, fmtPct, fmtPrice, tone, toneClass } from "@/lib/format";
+import { fmtMoney, fmtNum, fmtPct, fmtPrice, tone, toneClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { TradesPanel } from "./TradesPanel";
 import { HoldingsLiveSection } from "./HoldingsLiveSection";
@@ -156,7 +156,7 @@ async function RealizedPnlSection() {
                 <Td>
                   <StockIdCell stockId={r.stockId} stockName={r.stockName} />
                 </Td>
-                <Td align="right" numeric>{r.shares.toLocaleString("zh-TW")}</Td>
+                <Td align="right" numeric>{fmtNum(r.shares)}</Td>
                 <Td align="right" numeric>
                   <div className="flex flex-col items-end">
                     <span>{fmtPrice(r.buyPrice)}</span>

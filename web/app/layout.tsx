@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { SidebarProvider } from "@/components/layout/SidebarProvider";
 import { Topbar } from "@/components/layout/Topbar";
 import { CommandPaletteLoader } from "@/components/primitives/CommandPaletteLoader";
+import { RouteFocus } from "@/components/primitives/RouteFocus";
 
 // 中文字不用 next/font：Noto Sans TC 的 latin subset 對中文字無效，徒增多餘 woff2。
 // 系統字 PingFang TC（Mac）/ Microsoft JhengHei（Windows）視覺上不差，已寫在 globals.css 的 --font-sans 字串。
@@ -61,6 +62,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
           <CommandPaletteLoader />
+          <RouteFocus />
         </SidebarProvider>
       </body>
     </html>

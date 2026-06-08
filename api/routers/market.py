@@ -1,6 +1,7 @@
 """/api/market/* — 大盤 snapshot + 廣度。"""
 from __future__ import annotations
 
+import logging
 import math
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -24,6 +25,8 @@ from app.indicators.market_scope import (
 )
 
 router = APIRouter(prefix="/api/market", tags=["market"])
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize(value):
@@ -99,7 +102,8 @@ def breadth(db: Database = Depends(get_db)) -> MarketBreadth:
         return MarketBreadth()
     try:
         color, label = breadth_health_label(data)
-    except Exception:
+    except Exception as e:
+        logger.debug("breadth_health_label 失敗，回退中性: %s", e)
         color, label = "gray", "中性"
     return MarketBreadth(
         n_total=int(data.get("n_total", 0) or 0),

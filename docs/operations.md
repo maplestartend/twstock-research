@@ -28,6 +28,9 @@
 
 - `NOTIFY_CHANNEL=none`：暫時關掉推播，不動 yaml
 - `DISCORD_WEBHOOK_URL=...`：覆寫 yaml 裡的 webhook URL（換新 URL 但不想碰檔案）
+- `FINMIND_TOKEN=...`：覆寫 yaml 的 FinMind token（見 [../app/config.py](../app/config.py)）
+
+> **機密管理**：`config.yaml`（含 FinMind token / Discord webhook）已 `.gitignore`、從未進 git。優先用上述環境變數，`config.yaml` 僅本機 fallback；`Config.load()` 啟動即驗證 token 非空。CI 內含 `gitleaks` secret-scan，擋未來誤 commit。
 
 ### 新增其他管道
 
@@ -88,15 +91,23 @@ python -m scripts.run_stats --show-errors  # 只看錯誤
 
 用途：排程設了之後偶爾掃一眼，失敗率突升或平均耗時明顯變長就表示該 debug。
 
+**健康探針**：`GET /api/health` = liveness（純 200，不碰 DB）；`GET /api/ready` = readiness（實連 DB + 確認 `signal_history` 表 → 200，否則 503）。部署 / `restart.bat` 後判斷後端是否真的能服務用。
+
+**例外可見性**：portfolio 的風險訊號 / 盤中報價 / 集中度 enrichment 失敗會記 `logger.warning`（不再靜默回空）；背景 snapshot 重算 thread 會記 start / 結束耗時 / 失敗耗時。
+
+> **刻意未做（單機自用會過度設計）**：correlation-ID middleware、structlog/JSON log 全面遷移、Prometheus `/metrics`。現有 logging 對單機單使用者已足夠；要多機 / 上雲再補。
+
 ## 測試
 
 核心純函式模組 + router 整合測試：
 
 ```bash
-pip install pytest
+pip install -r requirements.lock.txt   # 內含 pytest / httpx
 python -m pytest tests/ -q
-# 497 passed (2026-05-10)
+# 509 collected：本機 507 passed + 2 skipped（含吃 data/stock.db 的 prod-DB 整合測試）
 ```
+
+> CI（`.github/workflows/ci.yml`）只跑 `-m "not needs_prod_db"` 的 449 題 DB-independent 子集（`data/stock.db` ~9.4GB 不在 git），外加 `dump_openapi --check` / 前端 `tsc` / `scripts/check_bat.py` / gitleaks；SCA（pip-audit / npm audit）報告型不阻擋。
 
 覆蓋（重點）：
 - `tests/test_risk.py`：ATR、部位計算、集中度
@@ -125,7 +136,7 @@ python -m pytest tests/ -q
 | `restart.bat` | call `_kill-servers.bat` → `snapshot_today()` 強制重產 signal_history → call `_launch-servers.bat` |
 | `status.bat` | 顯示 port 8000 / 3000 LISTENING 狀態（含 PID）+ `signal_history.MAX(as_of)` vs `daily_price.MAX(date)` 對齊狀況 |
 | `daily-update.bat` | 跑 `scripts.market_update --push`，給 Windows 排程跑（人也可手動雙擊） |
-| `install-schedule.bat` | 註冊 Windows 工作排程，每日 15:30 自動跑 daily-update |
+| `install-schedule.bat` | 註冊 Windows 工作排程，每日 16:45 自動跑 daily-update（TWSE final 16:30 + 15 分緩衝） |
 | `uninstall-schedule.bat` | 移除排程 |
 
 **建議用法（改完策略/評分邏輯後）**

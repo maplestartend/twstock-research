@@ -1,6 +1,7 @@
 """/api/history/* — 歷史追蹤。回看某個快照日的雷達命中，比到現在的表現。"""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,6 +15,8 @@ from app.scoring import history as sh
 from app.scoring.radar import STRATEGIES
 
 router = APIRouter(prefix="/api/history", tags=["history"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/dates", response_model=list[str])
@@ -102,7 +105,8 @@ def performance(
         try:
             days = (datetime.fromisoformat(str(latest_date)[:10]).date()
                     - datetime.fromisoformat(as_of).date()).days
-        except Exception:
+        except Exception as e:
+            logger.debug("history days 計算失敗（latest_date=%s as_of=%s）: %s", latest_date, as_of, e)
             days = 0
 
     # 統計（勝率 / 平均漲幅）一律由完整集合計算，不受截斷影響

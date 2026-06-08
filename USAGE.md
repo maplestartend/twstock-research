@@ -22,8 +22,8 @@
 ### 一次性設定（電腦初次使用）
 
 ```bash
-# 1. 安裝相依套件
-pip install -r requirements.txt
+# 1. 安裝相依套件（重現安裝走 lock 檔；requirements.txt 僅供升級試驗）
+pip install -r requirements.lock.txt
 
 # 2. 設定 FinMind token（二選一）
 #    (a) 改 config.yaml 的 finmind.token（已 .gitignore）

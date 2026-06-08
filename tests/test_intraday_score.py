@@ -25,6 +25,10 @@ from app.data import intraday as intraday_mod  # noqa: E402
 from app.data.intraday import IndexQuote, IntradayQuote  # noqa: E402
 from app.scoring.engine import score_stock  # noqa: E402
 
+# 用 TestClient + score_stock 依賴 prod data/stock.db；CI 無此 DB →
+# 以 -m "not needs_prod_db" 排除。
+pytestmark = pytest.mark.needs_prod_db
+
 client = TestClient(app)
 
 

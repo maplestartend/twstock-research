@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from api.common import safe_float as _sf
 from api.deps import get_db
@@ -223,7 +223,7 @@ def list_presets(db: Database = Depends(get_db)) -> PresetListResponse:
     )
 
 
-@router.post("/presets", response_model=UserPreset)
+@router.post("/presets", response_model=UserPreset, status_code=201)
 def upsert_preset(payload: PresetUpsertRequest, db: Database = Depends(get_db)) -> UserPreset:
     try:
         saved = preset_mod.upsert_preset(
@@ -248,12 +248,12 @@ def get_preset(name: str, db: Database = Depends(get_db)) -> UserPreset:
     return UserPreset(**p)
 
 
-@router.delete("/presets/{name}")
-def delete_preset(name: str, db: Database = Depends(get_db)) -> dict:
+@router.delete("/presets/{name}", status_code=204)
+def delete_preset(name: str, db: Database = Depends(get_db)) -> Response:
+    """冪等刪除：刪不存在的 user preset 也回 204。內建 preset 不可刪（delete_preset 丟
+    ValueError → 422）。"""
     try:
-        ok = preset_mod.delete_preset(db, name)
+        preset_mod.delete_preset(db, name)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"找不到 preset '{name}'")
-    return {"deleted": name}
+    return Response(status_code=204)

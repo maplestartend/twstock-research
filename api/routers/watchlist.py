@@ -1,7 +1,7 @@
 """/api/watchlist/* — 自選股 CRUD + 排行。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from api.common import make_placeholders
@@ -90,7 +90,7 @@ class BulkRemoveBody(BaseModel):
     stock_ids: list[str]
 
 
-@router.post("")
+@router.post("", status_code=201)
 def add(body: AddBody, db: Database = Depends(get_db)) -> dict:
     """新增自選：名稱一律以 stock_info 為準。
     驗證：股票必須在 stock_info 或 daily_price 表中至少存在一筆資料才能加入，
@@ -118,15 +118,14 @@ def add(body: AddBody, db: Database = Depends(get_db)) -> dict:
     return {"ok": True, "stockName": name}
 
 
-@router.delete("/{stock_id}")
-def remove(stock_id: str) -> dict:
-    ok = wl_mod.remove(stock_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="不在自選清單")
-    return {"ok": True}
+@router.delete("/{stock_id}", status_code=204)
+def remove(stock_id: str) -> Response:
+    """冪等刪除：刪不存在的代號也回 204（與 portfolio 的 DELETE 一致，retry 安全）。"""
+    wl_mod.remove(stock_id)
+    return Response(status_code=204)
 
 
-@router.post("/bulk-add")
+@router.post("/bulk-add", status_code=201)
 def bulk_add(body: BulkAddBody, db: Database = Depends(get_db)) -> dict:
     """批次新增：若輸入只含代號，會自動從 stock_info 帶出名稱。"""
     to_add: dict[str, str] = {}

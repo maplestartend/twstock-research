@@ -18,11 +18,11 @@ export function EvaluateButton() {
     try {
       const res = await fetch("/api/alerts/check?push=false", { method: "POST" });
       if (!res.ok) {
-        setResult({ count: -1, ts: new Date().toLocaleTimeString("zh-TW", { hour12: false }) });
+        setResult({ count: -1, ts: new Date().toLocaleTimeString("zh-TW", { hour12: false, timeZone: "Asia/Taipei" }) });
         return;
       }
       const hits = (await res.json()) as Array<unknown>;
-      setResult({ count: hits.length, ts: new Date().toLocaleTimeString("zh-TW", { hour12: false }) });
+      setResult({ count: hits.length, ts: new Date().toLocaleTimeString("zh-TW", { hour12: false, timeZone: "Asia/Taipei" }) });
       router.refresh();
     } finally {
       setBusy(false);

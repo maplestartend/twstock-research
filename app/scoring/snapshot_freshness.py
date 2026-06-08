@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 from app.data.db import Database
 from app.scoring.history import snapshot_today
@@ -163,11 +164,23 @@ def _do_refresh(db: Database) -> int | None:
 
 
 def _background_refresh(db: Database) -> None:
-    """背景 thread entry：跑 _do_refresh，無論成敗都清掉 in-progress 旗標。"""
+    """背景 thread entry：跑 _do_refresh，無論成敗都清掉 in-progress 旗標。
+
+    記錄 thread 生命週期（start / 結束耗時 / 失敗耗時），讓「背景重算卡住或一直失敗」
+    在 log 裡看得見，而不是靜默地每次 request 都重觸發。
+    """
+    started = time.perf_counter()
+    logger.info("snapshot_freshness: 背景重算開始")
     try:
-        _do_refresh(db)
+        n = _do_refresh(db)
+        elapsed = time.perf_counter() - started
+        if n is None:
+            logger.info("snapshot_freshness: 背景重算跳過（已被其他流程跑完，%.1fs）", elapsed)
+        else:
+            logger.info("snapshot_freshness: 背景重算結束（%.1fs）", elapsed)
     except Exception:
-        logger.exception("snapshot_freshness: 背景重算失敗，將沿用舊 snapshot")
+        elapsed = time.perf_counter() - started
+        logger.exception("snapshot_freshness: 背景重算失敗（%.1fs），將沿用舊 snapshot", elapsed)
     finally:
         _refresh_in_progress.clear()
 

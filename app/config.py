@@ -62,7 +62,7 @@ class Config:
         broker_raw = raw.get("broker") or {}
         notify_raw = raw.get("notify") or {}
         backup_raw = raw.get("backup") or {}
-        return cls(
+        obj = cls(
             finmind=FinMindConfig(**finmind_raw),
             database=DatabaseConfig(path=PROJECT_ROOT / raw["database"]["path"]),
             fetch=FetchConfig(**raw["fetch"]),
@@ -74,6 +74,29 @@ class Config:
             notify=notify_raw,
             backup=backup_raw,
         )
+        obj._validate()
+        return obj
+
+    def _validate(self) -> None:
+        """啟動即驗證關鍵設定，把組態錯誤提早到第一次 load（而非第一個 data fetch 才炸）。
+
+        - finmind.token 為空 → 直接報錯（含修法提示）。環境變數 FINMIND_TOKEN 已在上面覆寫。
+        - 資料庫目錄不存在 → 報錯（sqlite 連不上時的錯誤訊息很難懂，這裡先擋）。
+        - log 目錄不存在 → 順手建好（非致命，免使用者手動 mkdir）。
+        """
+        if not (self.finmind.token or "").strip():
+            raise ValueError(
+                "config.yaml 的 finmind.token 為空：請填入 token，或設環境變數 FINMIND_TOKEN（優先）。"
+            )
+        db_parent = self.database.path.parent
+        if not db_parent.exists():
+            raise ValueError(
+                f"資料庫目錄不存在：{db_parent}。請建立該資料夾，或修正 config.yaml 的 database.path。"
+            )
+        try:
+            self.logging.file.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
 
 
 def load_watchlist(path: Path | str = PROJECT_ROOT / "watchlist.yaml") -> dict[str, str]:

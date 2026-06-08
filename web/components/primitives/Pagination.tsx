@@ -52,6 +52,7 @@ export function Pagination({
           p === "..." ? (
             <span
               key={`gap-${i}`}
+              aria-hidden="true"
               className="inline-flex items-center justify-center min-w-[2.25rem] h-8 text-[var(--text-tertiary)] text-xs"
             >
               …

@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM Remove the scheduled task
 setlocal
 set TASK_NAME=TWStockDailyUpdate

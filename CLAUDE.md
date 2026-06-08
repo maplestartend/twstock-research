@@ -47,11 +47,21 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 ## 跑測試
 
 ```bash
-python -m pytest tests/ -q     # 497 passed (2026-05-10)
+python -m pytest tests/ -q     # 全套 509 collected（本機含 data/stock.db 才跑得動 prod-DB 整合測試）
 cd web && npx tsc --noEmit     # frontend type check
 ```
 
 修 `app/scoring/`、`app/backtest/`、`app/risk.py`、`api/routers/`、`app/data/adjuster.py` 之前先跑過一次。
+
+### CI 自動化（`.github/workflows/ci.yml`）
+這些關卡以前只靠人工跑，現由 GitHub Actions 在 `push: main` / PR 自動執行（硬關卡）：
+- `pytest -m "not needs_prod_db"`（449 題的 DB-independent 子集）、`scripts.dump_openapi --check`（OpenAPI drift）
+- 前端 `tsc --noEmit`、`scripts/check_bat.py *.bat`（BOM/CR-only=fail）、`gitleaks`（secret scan）
+- SCA（`pip-audit` + `npm audit`）是**報告型**（`continue-on-error`），不阻擋。
+
+> **`needs_prod_db` marker（`pytest.ini`）**：用 `TestClient(app)` 打實際 endpoint、吃 `data/stock.db` 的整合測試（`test_routers` / `test_backtest_router` / `test_intraday_score`）標了這個 marker。`data/stock.db`（~3.2GB）不在 git，CI 用 `-m "not needs_prod_db"` 排除；**本機跑全套**仍涵蓋它們。若新測試在 CI 因缺 prod 資料而 fail，補標 `pytestmark = pytest.mark.needs_prod_db`。
+> CI 不跑 ESLint：本專案未配置 eslint（`package.json` 的 `next lint` 是 scaffold 殘留），前端關卡以 `tsc` 為準。
+> 建議在 GitHub `main` 的 branch protection 把 `backend` / `frontend` / `bat-lint` / `secrets` 設為 required checks。
 
 ## 台股慣例（會出現在 UI 與資料）
 
