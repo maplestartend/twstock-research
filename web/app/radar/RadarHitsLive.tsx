@@ -21,7 +21,16 @@ import { TableContainer } from "@/components/primitives/TableContainer";
 import { Icon } from "@/components/primitives/Icon";
 import { useLiveListData } from "@/lib/hooks/useIntraday";
 import type { RadarHit, RadarHitsPage } from "@/lib/api";
+import { fmtPrice, fmtPct, tone, toneIcon } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+/** tone → 紅漲綠跌 class（與 PriceCell 內部一致；該 helper 未 export，這裡小複製一份）。 */
+function toneClass(pct: number | null | undefined): string {
+  const t = tone(pct ?? null);
+  if (t === "up") return "text-[var(--color-up)]";
+  if (t === "down") return "text-[var(--color-down)]";
+  return "text-[var(--text-primary)]";
+}
 
 type Props = {
   initialRows: RadarHit[];
@@ -101,7 +110,7 @@ export function RadarHitsLive({
             <tr>
               <Th sticky className="w-[170px]">代號 / 名稱</Th>
               <Th align="center" className="w-[80px]">市場</Th>
-              <Th align="right" className="w-[112px]">{liveMode ? "即時 / 收盤" : "收盤"}</Th>
+              <Th align="right" className="w-[116px]">{liveMode ? "即時" : "收盤"}</Th>
               <Th align="center" className="w-[88px]">短期</Th>
               <Th align="center" className="w-[88px]">中期</Th>
               {showLongCol && <Th align="center" className="w-[88px]">長期</Th>}
@@ -138,11 +147,17 @@ export function RadarHitsLive({
                   <span className="text-xs text-[var(--text-secondary)]">{h.market ?? "—"}</span>
                 </Td>
                 <Td align="right">
-                  <PriceCell
-                    price={h.close}
-                    deltaPct={liveMode && h.isLive ? h.changePct : undefined}
-                    variant="compact"
-                  />
+                  {liveMode && h.isLive && h.changePct != null ? (
+                    // 即時模式：即時價 + 漲跌% 直向堆疊，避免在 table-fixed 窄欄內被截斷
+                    <div className="flex flex-col items-end leading-tight">
+                      <span className="numeric font-medium">{fmtPrice(h.close)}</span>
+                      <span className={cn("numeric text-[11px] inline-flex items-center gap-0.5 whitespace-nowrap", toneClass(h.changePct))}>
+                        <Icon name={toneIcon(h.changePct)} size={12} />{fmtPct(h.changePct, 2)}
+                      </span>
+                    </div>
+                  ) : (
+                    <PriceCell price={h.close} variant="compact" />
+                  )}
                 </Td>
                 <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.short} size="sm" horizon="short" /></div></Td>
                 <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.mid} size="sm" horizon="mid" /></div></Td>
