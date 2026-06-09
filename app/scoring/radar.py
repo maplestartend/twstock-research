@@ -115,18 +115,52 @@ def _industry_yield_z_map(per_all: pd.DataFrame, industry_by_sid: dict[str, str 
     return result
 
 
-def _bulk_load(db: Database, table: str, since: str, until: str | None = None, date_col: str = "date") -> pd.DataFrame:
+def _load_latest_yield_all(db: Database, since: str, until: str) -> pd.DataFrame:
+    """全市場每檔最新一筆殖利率（[stock_id, date, dividend_yield]）。
+
+    給「盤中即時重算一頁」用：此時 per_pbr 只載了該頁的股票，但同產業殖利率 z-score 是跨股票
+    聚合，必須看全市場才不偏。視窗與 score_all 的 per_since 對齊、取 latest-per-stock，
+    與全市場快照用 `_bulk_load('per_pbr', per_since).tail(1)` 抽出的最新殖利率等價。
+    """
     with db.connect() as conn:
-        if until is None:
-            df = pd.read_sql_query(
-                f"SELECT * FROM {table} WHERE {date_col} >= ?",
-                conn, params=[since],
-            )
-        else:
-            df = pd.read_sql_query(
-                f"SELECT * FROM {table} WHERE {date_col} BETWEEN ? AND ?",
-                conn, params=[since, until],
-            )
+        return pd.read_sql_query(
+            """
+            SELECT stock_id, date, dividend_yield FROM (
+                SELECT stock_id, date, dividend_yield,
+                       ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date DESC) AS rn
+                FROM per_pbr
+                WHERE date BETWEEN ? AND ?
+            ) WHERE rn = 1
+            """, conn, params=[since, until],
+        )
+
+
+def _bulk_load(
+    db: Database,
+    table: str,
+    since: str,
+    until: str | None = None,
+    date_col: str = "date",
+    *,
+    stock_ids: list[str] | None = None,
+) -> pd.DataFrame:
+    """批次載入單表的時間窗。
+
+    stock_ids: 提供 → 額外 `WHERE stock_id IN (...)`，給「盤中即時重算一頁」只載少數股票用，
+    避免全市場掃描。空 list 明確回空集合（不退化成全掃）。
+    """
+    where = f"{date_col} >= ?" if until is None else f"{date_col} BETWEEN ? AND ?"
+    params: list = [since] if until is None else [since, until]
+    if stock_ids is not None:
+        if not stock_ids:
+            return pd.DataFrame()
+        from app.data.sql_utils import make_placeholders
+        where += f" AND stock_id IN ({make_placeholders(len(stock_ids))})"
+        params.extend(stock_ids)
+    with db.connect() as conn:
+        df = pd.read_sql_query(
+            f"SELECT * FROM {table} WHERE {where}", conn, params=params,
+        )
     if not df.empty and date_col in df.columns:
         df[date_col] = pd.to_datetime(df[date_col])
     return df
@@ -140,6 +174,8 @@ def score_all(
     *,
     as_of: str | date | None = None,
     candidate_stocks: list[tuple[str, str]] | None = None,
+    stock_ids: list[str] | None = None,
+    live_prices: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """對 DB 所有有足夠資料的股票打分。
 
@@ -148,6 +184,20 @@ def score_all(
     as_of: 評分基準日（YYYY-MM-DD or date）。預設 None → taipei_today()，所有資料
     上限為今日。**指定 as_of 時所有 DB 查詢都會把 date <= as_of 設為上限**，避免歷史
     回放（snapshot replay / 回測）時把未來資料當成可用（金融分析師審查 Critical #3）。
+
+    stock_ids: 提供 → **所有批次載入都加 `WHERE stock_id IN (...)`**，只載這組股票的歷史，
+    把「全市場 ~2300 檔掃 20-30s」縮成「一頁 ≤50 檔掃 ~1s」。給雷達/自選的「盤中即時
+    重算當前頁」用。同產業殖利率 z-score 是跨股票聚合，仍以**全市場最新殖利率**計（見下方
+    分支），避免只在這 50 檔內算 z 而讓長期分數偏離快照（CLAUDE.md #5 invariant）。
+
+    live_prices: {stock_id: 盤中即時價}。提供 → 對每檔在 enrich 前用 `_override_last_close`
+    覆寫最後一根 close（與 score_stock 的 live_price 同機制），短/中期技術分數即反映盤中價；
+    長期（ROE/EPS/股利）不受影響。**只在 API 回應層使用、絕不寫入 signal_history**
+    （盤中價非 final、會污染回測/IC；同 app/data/intraday.py 的職責邊界）。
+
+    不變式：當 live_prices[sid] == 該檔快照當下的收盤、且 stock_ids 涵蓋該檔時，本函式對該檔
+    產出的 short/mid/long/composite 與「stock_ids=None 的全市場快照」逐位元相同
+    （override 為 no-op、z 用全市場、視窗一致）。由 tests/test_intraday_score.py 守住。
     """
     if as_of is None:
         as_of_d = taipei_today()
@@ -175,8 +225,10 @@ def score_all(
     # 用 LEFT JOIN 帶上 daily_price_adj，技術指標就能用還原價（除權息/分割不誤導）
     with db.connect() as conn:
         # extra_cols=False 省 turnover/spread（radar 不用），少 ~10% I/O
+        # stock_ids 提供時只載這頁的股票（盤中即時重算），否則全市場
         price_all = read_ohlc_with_adj(
             conn, since=price_since, until=as_of_str, extra_cols=False,
+            stock_ids=stock_ids,
         )
         # 在還原價覆寫前，用「原始 close」算流動性與當日漲跌（限漲跌停偵測要的是真實價格漲跌，
         # 還原價在除權息/分割日會讓 pct_change 看起來不對 → 漏掉限制鎖死訊號）
@@ -204,9 +256,9 @@ def score_all(
                 if adj_col in price_all.columns:
                     price_all[col] = price_all[adj_col].fillna(price_all[col])
             price_all = price_all.drop(columns=[c for c in ("close_adj", "open_adj", "high_adj", "low_adj") if c in price_all.columns])
-    inst_all = _bulk_load(db, "institutional", chip_since, until=as_of_str)
-    margin_all = _bulk_load(db, "margin", chip_since, until=as_of_str)
-    per_all = _bulk_load(db, "per_pbr", per_since, until=as_of_str)
+    inst_all = _bulk_load(db, "institutional", chip_since, until=as_of_str, stock_ids=stock_ids)
+    margin_all = _bulk_load(db, "margin", chip_since, until=as_of_str, stock_ids=stock_ids)
+    per_all = _bulk_load(db, "per_pbr", per_since, until=as_of_str, stock_ids=stock_ids)
 
     # 若需要基本面，載入所有財報。
     # 視窗 5 年：eps_cagr_3y 需 16 季（tail(4) + iloc[-16:-12]）= 4 年最低，5 年給點 buffer
@@ -214,14 +266,24 @@ def score_all(
     # （load 全表）出現「同股、長期分數不同」的 invariant 違反。
     if include_fundamentals:
         fin_since = (as_of_d - timedelta(days=365 * 5)).isoformat()
+        # stock_ids 提供時把財報三表也收斂到這頁的股票（盤中即時重算只需這些）
+        _fin_in = ""
+        _fin_extra: list = []
+        if stock_ids is not None:
+            from app.data.sql_utils import make_placeholders
+            if stock_ids:
+                _fin_in = f" AND stock_id IN ({make_placeholders(len(stock_ids))})"
+                _fin_extra = list(stock_ids)
+            else:
+                _fin_in = " AND 1=0"
         with db.connect() as conn:
             # FinMind 單季財報：用 publish_date 過濾避免 backtest 看到尚未公告的季報。
             # COALESCE 給尚未 backfill 的舊 row 兜底（NULL → 用 quarter-end 較保守、會少看到資料）。
             fin_all = pd.read_sql_query(
                 "SELECT * FROM financials "
                 "WHERE date BETWEEN ? AND ? "
-                "  AND COALESCE(publish_date, date) <= ?",
-                conn, params=[fin_since, as_of_str, as_of_str],
+                "  AND COALESCE(publish_date, date) <= ?" + _fin_in,
+                conn, params=[fin_since, as_of_str, as_of_str, *_fin_extra],
             )
             # 全市場累計財報（TWSE/TPEX OpenAPI），用於 fundamentals 的 fallback。
             # 用 publish_date 過濾 → 避免 backtest（as_of 在過去時）看到尚未公告的當季財報。
@@ -229,15 +291,15 @@ def score_all(
             fin_cum_all = pd.read_sql_query(
                 "SELECT * FROM financials_cumulative "
                 "WHERE date BETWEEN ? AND ? "
-                "  AND COALESCE(publish_date, date) <= ?",
-                conn, params=[fin_since, as_of_str, as_of_str],
+                "  AND COALESCE(publish_date, date) <= ?" + _fin_in,
+                conn, params=[fin_since, as_of_str, as_of_str, *_fin_extra],
             )
             # 累計差分後的單季值，用於 TTM / YoY / ROE 計算（同樣 publish_date 守則）
             fin_derived_all = pd.read_sql_query(
                 "SELECT * FROM financials_quarterly_derived "
                 "WHERE date BETWEEN ? AND ? "
-                "  AND COALESCE(publish_date, date) <= ?",
-                conn, params=[fin_since, as_of_str, as_of_str],
+                "  AND COALESCE(publish_date, date) <= ?" + _fin_in,
+                conn, params=[fin_since, as_of_str, as_of_str, *_fin_extra],
             )
         if not fin_all.empty:
             fin_all["date"] = pd.to_datetime(fin_all["date"])
@@ -258,28 +320,38 @@ def score_all(
 
     # 月營收（最新月全市場 + 近 12 個月 YoY 用於「連續 N 月 YoY」判斷）
     rev_lower = (as_of_d - timedelta(days=400)).isoformat()
+    # stock_ids 提供時收斂到這頁的股票（盤中即時重算）
+    _rev_in = ""
+    _rev_extra: list = []
+    if stock_ids is not None:
+        from app.data.sql_utils import make_placeholders
+        if stock_ids:
+            _rev_in = f" AND stock_id IN ({make_placeholders(len(stock_ids))})"
+            _rev_extra = list(stock_ids)
+        else:
+            _rev_in = " AND 1=0"
     with db.connect() as conn:
         # latest 也要設上限，避免歷史回放時取到未來月份。
         # 用 ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date DESC) 取代相關子查詢，
         # SQLite 對 correlated subquery 的執行計畫是「每筆 outer row 跑一次」，2700 檔 × 100 月 = 27 萬次掃描；
         # 換成 window function 只需單次 partition scan（同 watchlist.py:210 的寫法）。
         rev_all = pd.read_sql_query(
-            """
+            f"""
             SELECT stock_id, date, revenue, mom_pct, yoy_pct FROM (
                 SELECT stock_id, date, revenue, mom_pct, yoy_pct,
                        ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date DESC) AS rn
                 FROM monthly_revenue
-                WHERE date <= ?
+                WHERE date <= ?{_rev_in}
             ) WHERE rn = 1
-            """, conn, params=[as_of_str],
+            """, conn, params=[as_of_str, *_rev_extra],
         )
         # 近 12 個月 YoY 歷史（用於算「連續 YoY >0 或 >20% 月數」）
         rev_hist = pd.read_sql_query(
-            """
+            f"""
             SELECT stock_id, date, yoy_pct FROM monthly_revenue
-            WHERE date BETWEEN ? AND ?
+            WHERE date BETWEEN ? AND ?{_rev_in}
             ORDER BY stock_id, date
-            """, conn, params=[rev_lower, as_of_str],
+            """, conn, params=[rev_lower, as_of_str, *_rev_extra],
         )
     rev_latest = {r["stock_id"]: r for _, r in rev_all.iterrows()} if not rev_all.empty else {}
 
@@ -309,7 +381,13 @@ def score_all(
 
     # 同產業殖利率 z-score 預備：用 per_pbr 全市場最新一筆 + stock_info.industry_category
     industry_by_sid = _load_industry_map(db)
-    yield_z_map = _industry_yield_z_map(per_all, industry_by_sid)
+    if stock_ids is not None:
+        # 盤中即時重算：per_all 只含這頁的股票，z 必須看全市場最新殖利率才不偏（CLAUDE.md #5）
+        yield_z_map = _industry_yield_z_map(
+            _load_latest_yield_all(db, per_since, as_of_str), industry_by_sid,
+        )
+    else:
+        yield_z_map = _industry_yield_z_map(per_all, industry_by_sid)
 
     # v5e #1：偵測本日 regime（一次、不在每檔重算）
     from app.scoring.regime import detect_regime
@@ -334,6 +412,12 @@ def score_all(
         if price.empty or len(price) < min_days:
             continue
         try:
+            # 盤中即時重算：enrich 前覆寫最後一根 close（與 score_stock 的 live_price 同機制）。
+            # high/low 同步擴張包住新 close，技術指標（MA/KD/RSI/Bollinger/VR）才反映盤中價。
+            if live_prices is not None:
+                lp = live_prices.get(sid)
+                if lp is not None and lp > 0:
+                    price = eng._override_last_close(price, float(lp))
             # 批次掃描用精簡技術欄位，減少全市場 DataFrame 生成成本
             price = tech.enrich_for_scoring(price.copy())
             inst = inst_groups.get(sid, empty)
@@ -440,6 +524,86 @@ def score_all(
         parts_df = pd.DataFrame(parts_rows)
         parts_df["as_of"] = as_of_value
         out.attrs["parts"] = parts_df
+    return out
+
+
+def _score_to_float(v) -> float | None:
+    """把 score_all 回傳的 cell（可能是 numpy float / None / NaN）轉成乾淨的 float | None。"""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(f) else f
+
+
+def live_scores_for(
+    db: Database,
+    stocks: list[tuple[str, str]],
+    *,
+    as_of: str | None = None,
+) -> dict[str, dict]:
+    """對一小組股票（雷達/自選清單的「當前頁」，≤50 檔）抓盤中即時報價並重算分數。
+
+    回傳 {stock_id: {close, short, mid, long, composite, vr_macd, recommendation,
+    is_live, change_pct}}。is_live=True 表示該檔吃到盤中即時價；抓不到（興櫃/休市/mis 失敗）
+    的檔仍回分數（用收盤算、is_live=False），與快照一致，caller 可原樣顯示。
+
+    設計重點：
+    - intraday.fetch_quotes 一次批次抓全頁（'|' 串接 → ~1 個對外請求），只把 is_live 的當即時價；
+      避免一頁 50 檔對非官方 mis 端點打 50 次。
+    - 即時價灌進 score_all(stock_ids=這頁, live_prices=...)：**重用同一份 score_all 數學**，與
+      快照 / 個股詳情頁一致，不另開會 drift 的第二套評分路徑（CLAUDE.md #5）。
+    - as_of 綁快照日 → score_all 載到該日為止的歷史、override 替換最後一根，等同個股詳情頁的
+      live 行為；只是批次化到一整頁。
+    - **絕不寫入 signal_history**：純 API 回應層（盤中價非 final，會污染回測/IC）。
+    """
+    from app.data import intraday  # lazy：避免 radar import 時就拉 requests
+    from app.data.sql_utils import make_placeholders
+
+    stocks = [(sid, name) for sid, name in stocks if sid]
+    if not stocks:
+        return {}
+    ids = [sid for sid, _ in stocks]
+
+    # 每檔 market_type（決定 mis 的 tse_/otc_ 前綴；批次模式不做逐檔 tse→otc fallback）
+    with db.connect() as conn:
+        type_rows = conn.execute(
+            f"SELECT stock_id, type FROM stock_info WHERE stock_id IN ({make_placeholders(len(ids))})",
+            ids,
+        ).fetchall()
+    type_by_sid = {r["stock_id"]: r["type"] for r in type_rows}
+
+    quotes = intraday.fetch_quotes([(sid, type_by_sid.get(sid)) for sid in ids])
+    live_prices: dict[str, float] = {}
+    change_by_sid: dict[str, float] = {}
+    for sid, q in quotes.items():
+        if q.is_live and q.price and q.price > 0:
+            live_prices[sid] = float(q.price)
+        if q.prev_close and q.prev_close > 0 and q.price is not None:
+            change_by_sid[sid] = (q.price - q.prev_close) / q.prev_close
+
+    df = score_all(
+        db, as_of=as_of, candidate_stocks=stocks, stock_ids=ids, live_prices=live_prices,
+    )
+
+    out: dict[str, dict] = {}
+    if df.empty:
+        return out
+    for _, r in df.iterrows():
+        sid = r["stock_id"]
+        out[sid] = {
+            "close": _score_to_float(r.get("close")),
+            "short": _score_to_float(r.get("short")),
+            "mid": _score_to_float(r.get("mid")),
+            "long": _score_to_float(r.get("long")),
+            "composite": _score_to_float(r.get("composite")),
+            "vr_macd": _score_to_float(r.get("vr_macd")),
+            "recommendation": r.get("recommendation"),
+            "is_live": sid in live_prices,
+            "change_pct": change_by_sid.get(sid),
+        }
     return out
 
 

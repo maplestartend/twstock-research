@@ -42,6 +42,7 @@
 | GET | /api/watchlist/lookup/{stock_id} | [watchlist.py:107](../api/routers/watchlist.py#L107) | 代號 → 名稱 |
 | GET | /api/watchlist/movers | [watchlist.py:120](../api/routers/watchlist.py#L120) | 自選股漲跌排行 |
 | GET | /api/watchlist/overview | [watchlist.py:186](../api/routers/watchlist.py#L186) | 自選股總覽（分數 + 漲跌；含 tags） |
+| GET | /api/watchlist/overview/live | [watchlist.py](../api/routers/watchlist.py) | **🆕** 自選股總覽盤中即時版（抓 mis 即時價重算短/中/綜合、依即時綜合分排序；每列帶 `isLive`） |
 | GET | /api/watchlist/tags | [watchlist.py](../api/routers/watchlist.py) | **🆕** 列出所有 tag + 命中檔數（filter chip 用） |
 | PUT | /api/watchlist/{stock_id}/tags | [watchlist.py](../api/routers/watchlist.py) | **🆕** 覆寫單檔 tags（trim + 去重） |
 | GET | /api/stocks/{stock_id}/meta | [stocks.py:27](../api/routers/stocks.py#L27) | 個股 meta（名稱 / 產業） |
@@ -56,6 +57,7 @@
 | GET | /api/dashboard/snapshot-delta | [dashboard.py](../api/routers/dashboard.py) | **🆕** 戰情室「今日 vs 昨日」delta（新進命中 / 跌出命中 / 分數 \|Δ\|≥5） |
 | GET | /api/radar/strategies | [radar.py:16](../api/routers/radar.py#L16) | 雷達策略 + 當日命中數 |
 | GET | /api/radar/hits | [radar.py:39](../api/routers/radar.py#L39) | 雷達命中清單（依策略 / 市場過濾；**🆕 分頁回 `{rows,total}`**） |
+| GET | /api/radar/hits/live | [radar.py](../api/routers/radar.py) | **🆕** 雷達命中盤中即時版（對當前頁抓 mis 即時價重算短/中/綜合、頁內即時重排；每列帶 `isLive`/`changePct`） |
 | GET | /api/radar/export.csv | [radar.py](../api/routers/radar.py) | **🆕** 雷達命中 CSV 匯出（同 /hits 過濾條件，含 BOM） |
 | GET | /api/radar/export.xlsx | [radar.py](../api/routers/radar.py) | **🆕** 雷達命中 Excel 匯出（同 /hits 過濾條件） |
 | GET | /api/history/dates | [history.py:19](../api/routers/history.py#L19) | 可回看的歷史快照日 |
@@ -213,6 +215,12 @@
 - **用途**：自選股總覽，每檔最新分數 + 當日漲跌，依 composite 降序
 - **Response model**：`list[WatchlistOverviewRow]`（含 `tags[]`，前端用來在每列旁渲染 chip）
 
+#### GET /api/watchlist/overview/live 🆕
+- **用途**：/overview 的盤中即時版。對自選股批次抓 TWSE mis 即時報價，灌進**同一份 `score_all`**（`stock_ids=` 收斂載入 + `live_prices=` 覆寫最後收盤）重算短/中/綜合分數，依即時綜合分降序
+- **Response model**：`list[WatchlistOverviewRow]`，多回 `isLive`（True=該列吃到盤中即時價；False=休市/興櫃/mis 失敗/日線不足 → 退回收盤值）；`changePct` 在 isLive 時為即時價 vs 昨收、否則為當日（收盤）漲跌幅
+- **不變式**：當 `live_price == 快照收盤` 時各列分數與 /overview 逐位元相同（override 為 no-op）。**不寫 signal_history**（盤中價非 final）
+- **副作用**：開頭 `ensure_fresh()`；自選股通常 ≤ 數十檔，一個 mis 批次請求即可
+
 #### GET /api/watchlist/tags
 - **用途**：列出目前出現過的所有 tag + 每個 tag 命中檔數，供 `/watchlist` 頁的 filter chip 列使用
 - **排序**：依命中數降序，同數字按 tag 字典序
@@ -315,6 +323,13 @@
 - **Query params**：`strategy` (str, 可選)、`market` (list, 預設 `["上市","上櫃","ETF"]`)、`top` (int, 預設 0；`top=0` = 全部，>0 = 只取前 N 名)、`page` (int, 預設 1)、`page_size` (int, 預設 50)
 - **Response model**：`RadarHitsPage`＝`{ rows: list[RadarHit], total: int }`（`rows` 只含當前頁、`total` 為過濾後總筆數；市場過濾在 Python 端，故分頁在記憶體切片以保證 total 與頁內容正確）
 - **副作用**：開頭呼叫 `ensure_fresh()`
+
+#### GET /api/radar/hits/live 🆕
+- **用途**：/hits 的盤中即時版。**只對「當前這一頁」（≤page_size 檔）** 抓 TWSE mis 即時報價，灌進同一份 `score_all`（`stock_ids=` + `live_prices=`）重算短/中/綜合，並在**當前頁內**依即時分數重排（排序欄位與 /hits 同 = 策略對映）
+- **Query params**：同 /hits（`strategy`、`market`、`top`、`page`、`page_size`）
+- **Response model**：`RadarHitsPage`；每列多 `isLive`（True=吃到即時價）、`changePct`（即時價 vs 昨收）。`total` 仍為全過濾集合總數（給分頁器）。抓不到即時價的列退回收盤值、`isLive=False`
+- **範圍刻意限定當前頁**：成本有界（一頁 ~1-2s vs 全市場 20-30s）、對非官方 mis 端點只打 ~1 個批次請求；**不寫 signal_history**
+- **不變式**：`live_price == 快照收盤` 時各列分數與 /hits 逐位元相同
 
 #### GET /api/radar/export.csv
 - **用途**：把當前過濾條件下的雷達命中匯出為 .csv（含 UTF-8 BOM，Excel 開繁中不亂碼）；與 /export.xlsx 同欄位、同預設（`top=0` 全部）

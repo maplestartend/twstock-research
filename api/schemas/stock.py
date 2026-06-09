@@ -141,6 +141,9 @@ class RadarHit(StockRef):
     recommendation: str | None = None
     strategies: str | None = None
     market: str | None = None  # "上市" | "上櫃" | "ETF" | "其他"
+    # 盤中即時欄位：只有 /hits/live 會填。is_live=None → 此列來自收盤快照（/hits）。
+    is_live: bool | None = None      # True=分數用盤中即時價重算；False=抓不到即時價，仍用收盤
+    change_pct: float | None = None  # 即時價 vs 昨收（小數）；收盤快照為 None
 
 
 class RadarHitsPage(CamelModel):
@@ -178,6 +181,8 @@ class WatchlistOverviewRow(StockRef):
     as_of: str | None = None
     market: str | None = None             # "上市" | "上櫃" | "ETF" | "其他"
     tags: list[str] = []                  # 自訂分組標籤（可空）
+    # 盤中即時：只有 /overview/live 會填。is_live=None → 此列為收盤快照（/overview）。
+    is_live: bool | None = None           # True=分數用盤中即時價重算；False=抓不到即時價，仍用收盤
 
 
 class ExDividendEvent(StockRef):

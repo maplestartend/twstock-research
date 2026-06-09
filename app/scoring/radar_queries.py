@@ -25,6 +25,16 @@ _STRATEGY_SORT_COLUMN: dict[str, str] = {
 _ALLOWED_SORT_COLUMNS = {"short", "mid", "long", "composite", "vr_macd"}
 
 
+def strategy_sort_column(strategy: str | None) -> str:
+    """策略 → 排序欄位（短/中/長/量能各排自己的維度，其餘 composite）。
+
+    給 /hits（SQL ORDER BY）與 /hits/live（盤中以即時分數在當前頁內重排）共用同一份對映，
+    避免兩條路徑排序語意漂移。
+    """
+    col = _STRATEGY_SORT_COLUMN.get(strategy or "", "composite")
+    return col if col in _ALLOWED_SORT_COLUMNS else "composite"
+
+
 def latest_as_of(db: Database) -> str | None:
     """signal_history 最新快照日；表為空 → None。"""
     with db.connect() as conn:
@@ -53,10 +63,7 @@ def query_radar_hits(
         return []
 
     # 依策略選排序欄位：短/中/長期策略各排自己的分數，其他 fallback composite
-    sort_col = _STRATEGY_SORT_COLUMN.get(strategy or "", "composite")
-    if sort_col not in _ALLOWED_SORT_COLUMNS:
-        # 防禦：未來新增 mapping 漏寫時不要崩，回退 composite
-        sort_col = "composite"
+    sort_col = strategy_sort_column(strategy)
 
     unlimited = limit is None or limit <= 0
     sql = (

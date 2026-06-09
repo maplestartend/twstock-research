@@ -11,6 +11,7 @@ from api.schemas.stock import WatchlistMover, WatchlistOverviewRow
 from app import watchlist as wl_mod
 from app.data.db import Database
 from app.data.market_type import classify_market
+from app.scoring.radar import live_scores_for
 from app.scoring.radar_queries import latest_as_of
 from app.scoring.snapshot_freshness import ensure_fresh
 
@@ -307,5 +308,110 @@ def overview(db: Database = Depends(get_db)) -> list[WatchlistOverviewRow]:
             ))
 
     # None 永遠墊底（避免新股或 ETF 沒分數時冒到榜首）
+    out.sort(key=lambda r: r.composite if r.composite is not None else float("-inf"), reverse=True)
+    return out
+
+
+@router.get("/overview/live", response_model=list[WatchlistOverviewRow])
+def overview_live(db: Database = Depends(get_db)) -> list[WatchlistOverviewRow]:
+    """/overview 的盤中即時版：對自選股抓盤中即時價、用同一份 score_all 數學重算短/中/長/綜合，
+    依即時綜合分數降序。
+
+    與 /overview 的差異：
+    - 每檔多回 `isLive`（True=吃到盤中即時價）；`changePct` 在 isLive 時為即時價 vs 昨收，否則
+      退回當日（收盤）漲跌幅。
+    - 抓不到即時價（興櫃/休市/mis 失敗/日線不足）的檔退回收盤快照分數（與 /overview 一致）。
+    - 自選股通常 ≤ 數十檔 → 一個批次請求即可，不會 hammer mis。盤中結果不寫 signal_history。
+    """
+    stocks = wl_mod.load()
+    if not stocks:
+        return []
+    ensure_fresh(db)
+    tags_map = wl_mod.load_tags()
+    sids = list(stocks.keys())
+    placeholders = make_placeholders(len(sids))
+    as_of = latest_as_of(db)
+
+    with db.connect() as conn:
+        # 最新 2 日收盤：抓不到即時價時的 close + 當日漲跌幅 fallback（同 /overview）
+        price_rows = conn.execute(
+            f"WITH ranked AS ("
+            f"  SELECT stock_id, date, close, "
+            f"         ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY date DESC) AS rn "
+            f"  FROM daily_price WHERE stock_id IN ({placeholders})"
+            f") SELECT stock_id, date, close FROM ranked WHERE rn <= 2 "
+            f"ORDER BY stock_id, date DESC",
+            sids,
+        ).fetchall()
+        prices_by_stock: dict[str, list] = {}
+        for r in price_rows:
+            prices_by_stock.setdefault(r["stock_id"], []).append(r)
+
+        if as_of:
+            sig_rows = conn.execute(
+                f"SELECT stock_id, short, mid, long, composite, recommendation "
+                f"FROM signal_history WHERE stock_id IN ({placeholders}) AND as_of=?",
+                (*sids, as_of),
+            ).fetchall()
+            sig_by_stock = {r["stock_id"]: r for r in sig_rows}
+        else:
+            sig_by_stock = {}
+
+        type_rows = conn.execute(
+            f"SELECT stock_id, type FROM stock_info WHERE stock_id IN ({placeholders})",
+            sids,
+        ).fetchall()
+        type_by_stock = {r["stock_id"]: r["type"] for r in type_rows}
+
+    live = live_scores_for(db, list(stocks.items()), as_of=as_of)
+
+    def _f(v) -> float | None:
+        return float(v) if v is not None else None
+
+    out: list[WatchlistOverviewRow] = []
+    for sid, name in stocks.items():
+        prices = prices_by_stock.get(sid, [])
+        close_eod = float(prices[0]["close"]) if prices else None
+        change_eod = None
+        if len(prices) >= 2 and prices[1]["close"] not in (None, 0):
+            change_eod = (float(prices[0]["close"]) - float(prices[1]["close"])) / float(prices[1]["close"])
+
+        lv = live.get(sid)
+        sig = sig_by_stock.get(sid)
+        if lv is not None:
+            is_live = bool(lv["is_live"])
+            out.append(WatchlistOverviewRow(
+                stock_id=sid,
+                stock_name=name,
+                close=lv["close"] if lv["close"] is not None else close_eod,
+                change_pct=lv["change_pct"] if is_live else change_eod,
+                short=lv["short"],
+                mid=lv["mid"],
+                long=lv["long"],
+                composite=lv["composite"],
+                recommendation=lv["recommendation"] or (sig["recommendation"] if sig else None),
+                as_of=as_of,
+                market=classify_market(sid, type_by_stock.get(sid)),
+                tags=tags_map.get(sid, []),
+                is_live=is_live,
+            ))
+        else:
+            # live_scores_for 沒回此檔（日線不足 60 天）→ 退回收盤快照，標非即時
+            out.append(WatchlistOverviewRow(
+                stock_id=sid,
+                stock_name=name,
+                close=close_eod,
+                change_pct=change_eod,
+                short=_f(sig["short"]) if sig and sig["short"] is not None else None,
+                mid=_f(sig["mid"]) if sig and sig["mid"] is not None else None,
+                long=_f(sig["long"]) if sig and sig["long"] is not None else None,
+                composite=_f(sig["composite"]) if sig and sig["composite"] is not None else None,
+                recommendation=sig["recommendation"] if sig else None,
+                as_of=as_of,
+                market=classify_market(sid, type_by_stock.get(sid)),
+                tags=tags_map.get(sid, []),
+                is_live=False,
+            ))
+
     out.sort(key=lambda r: r.composite if r.composite is not None else float("-inf"), reverse=True)
     return out

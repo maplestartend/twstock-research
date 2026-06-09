@@ -333,6 +333,9 @@ export type RadarHit = {
   recommendation: string | null;
   strategies: string | null;
   market?: string | null;   // "上市" | "上櫃" | "ETF" | "其他"
+  // 盤中即時欄位：只有 /api/radar/hits/live 會填。isLive=null → 收盤快照（/hits）。
+  isLive?: boolean | null;  // true=分數用盤中即時價重算；false=抓不到即時價、仍用收盤
+  changePct?: number | null; // 即時價 vs 昨收（小數）
 };
 
 // 雷達命中分頁回應：當前頁 rows + 過濾後總數（給「共 N 檔」與分頁器）
@@ -395,6 +398,8 @@ export type WatchlistOverviewRow = {
   recommendation: string | null; asOf: string | null;
   market?: string | null;   // "上市" | "上櫃" | "ETF" | "其他"
   tags: string[];           // 自訂分組標籤；無 tag 為 []
+  // 盤中即時：只有 /api/watchlist/overview/live 會填。isLive=null → 收盤快照（/overview）。
+  isLive?: boolean | null;  // true=分數用盤中即時價重算；false=抓不到即時價、仍用收盤
 };
 
 /** GET /api/watchlist 回傳的單筆。 */

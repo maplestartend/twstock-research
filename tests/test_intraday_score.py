@@ -389,3 +389,200 @@ def test_market_intraday_endpoint_returns_422_when_unavailable():
     with patch.object(intraday_mod, "fetch_index_quote", return_value=None):
         r = client.get("/api/market/intraday")
     assert r.status_code == 422
+
+
+# ----------------------------------------------------------------------
+# 6) 雷達/自選「盤中即時重算一頁」批次路徑
+#    score_all(stock_ids=, live_prices=) + /api/radar/hits/live + /api/watchlist/overview/live
+# ----------------------------------------------------------------------
+from app.scoring import radar as radar_mod  # noqa: E402
+from app.scoring.radar_queries import latest_as_of  # noqa: E402
+
+
+def _snapshot_sample(n: int = 6) -> tuple[str, list[dict]]:
+    """從最新 signal_history 快照撈 n 檔（含 short/mid/long/composite/close）。"""
+    db = get_db()
+    as_of = latest_as_of(db)
+    if not as_of:
+        pytest.skip("signal_history 為空，跳過")
+    with db.connect() as c:
+        rows = c.execute(
+            "SELECT s.stock_id, COALESCE(i.stock_name, s.stock_id) AS name, "
+            "       s.close, s.short, s.mid, s.long, s.composite "
+            "FROM signal_history s LEFT JOIN stock_info i ON i.stock_id = s.stock_id "
+            "WHERE s.as_of=? AND s.composite IS NOT NULL "
+            "ORDER BY s.stock_id LIMIT ?",
+            (as_of, n),
+        ).fetchall()
+    if not rows:
+        pytest.skip("快照無可用列，跳過")
+    return as_of, [dict(r) for r in rows]
+
+
+def _approx_eq(a, b) -> bool:
+    """nan / None 視為相等；數值用 1e-6 容差。"""
+    a_none = a is None or (isinstance(a, float) and a != a)
+    b_none = b is None or (isinstance(b, float) and b != b)
+    if a_none or b_none:
+        return a_none and b_none
+    return abs(float(a) - float(b)) < 1e-6
+
+
+def test_score_all_live_equals_snapshot_when_price_unchanged():
+    """**核心不變式**：live_price == 快照當下收盤 → override 為 no-op → 過濾路徑重算的
+    short/mid/long/composite 與全市場快照逐位元相同。守住「即時列表 ≠ 另開一套會 drift 的評分」。"""
+    db = get_db()
+    as_of, snap = _snapshot_sample()
+    ids = [r["stock_id"] for r in snap]
+    names = [(r["stock_id"], r["name"]) for r in snap]
+    by = {r["stock_id"]: r for r in snap}
+
+    live = {r["stock_id"]: r["close"] for r in snap}
+    df = radar_mod.score_all(db, as_of=as_of, candidate_stocks=names, stock_ids=ids, live_prices=live)
+    assert not df.empty
+    seen = 0
+    for _, r in df.iterrows():
+        s = by[r["stock_id"]]
+        for col in ("short", "mid", "long", "composite"):
+            assert _approx_eq(r[col], s[col]), f"{r['stock_id']} {col}: {r[col]} != {s[col]}"
+        seen += 1
+    assert seen >= 1
+
+
+def test_score_all_live_moves_short_not_long():
+    """+5% 即時價：短期分數應改變（吃技術面），長期分數（ROE/EPS/股利）必須不變。"""
+    db = get_db()
+    as_of, snap = _snapshot_sample(1)
+    r0 = snap[0]
+    sid = r0["stock_id"]
+    df = radar_mod.score_all(
+        db, as_of=as_of, candidate_stocks=[(sid, r0["name"])], stock_ids=[sid],
+        live_prices={sid: float(r0["close"]) * 1.05},
+    )
+    assert not df.empty
+    row = df.iloc[0]
+    # 長期不受盤中價影響
+    assert _approx_eq(row["long"], r0["long"])
+    # close 反映覆寫價
+    assert abs(float(row["close"]) - float(r0["close"]) * 1.05) < 1e-4
+
+
+def test_live_scores_for_clean_floats_and_islive():
+    """live_scores_for：mock fetch_quotes 回即時報價 → is_live=True、分數為乾淨 float（nan→None）。"""
+    db = get_db()
+    as_of, snap = _snapshot_sample(3)
+    pairs = [(r["stock_id"], r["name"]) for r in snap]
+    fake = {
+        r["stock_id"]: IntradayQuote(
+            stock_id=r["stock_id"], price=float(r["close"]) * 1.02, prev_close=float(r["close"]),
+            open=None, high=None, low=None, is_live=True,
+        )
+        for r in snap
+    }
+    with patch.object(intraday_mod, "fetch_quotes", return_value=fake):
+        out = radar_mod.live_scores_for(db, pairs, as_of=as_of)
+    assert out
+    for r in snap:
+        v = out.get(r["stock_id"])
+        if v is None:
+            continue
+        assert v["is_live"] is True
+        assert v["change_pct"] == pytest.approx(0.02, rel=1e-3)
+        # 分數要嘛 None 要嘛 float（不能是 nan）
+        for col in ("short", "mid", "long", "composite"):
+            assert v[col] is None or isinstance(v[col], float)
+
+
+def test_radar_hits_live_endpoint_with_mock():
+    """/api/radar/hits/live：mock fetch_quotes 回即時價 → 每列 isLive=True、有分數，total 與 /hits 對齊。"""
+    base = client.get("/api/radar/hits", params={"page": 1, "page_size": 20}).json()
+    if not base["rows"]:
+        pytest.skip("當日雷達無命中，跳過")
+    db = get_db()
+    # 用快照 close 當 prev_close、+1% 當即時價
+    sids = [row["stockId"] for row in base["rows"]]
+    with db.connect() as c:
+        closes = dict(c.execute(
+            f"SELECT stock_id, close FROM signal_history WHERE as_of=(SELECT MAX(as_of) FROM signal_history) "
+            f"AND stock_id IN ({','.join('?' * len(sids))})", sids,
+        ).fetchall())
+    fake = {
+        sid: IntradayQuote(stock_id=sid, price=float(closes.get(sid) or 100) * 1.01,
+                           prev_close=float(closes.get(sid) or 100), open=None, high=None, low=None, is_live=True)
+        for sid in sids
+    }
+    with patch.object(intraday_mod, "fetch_quotes", return_value=fake):
+        r = client.get("/api/radar/hits/live", params={"page": 1, "page_size": 20})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["total"] == base["total"]
+    assert data["rows"]
+    assert all(row["isLive"] is True for row in data["rows"])
+    assert all(row["composite"] is not None for row in data["rows"])
+
+
+def test_radar_hits_live_fallback_when_quotes_empty():
+    """mis 全失敗（fetch_quotes 回 {}）→ isLive=False、分數退回收盤（與快照一致），不報錯。"""
+    base = client.get("/api/radar/hits", params={"page": 1, "page_size": 10}).json()
+    if not base["rows"]:
+        pytest.skip("當日雷達無命中，跳過")
+    with patch.object(intraday_mod, "fetch_quotes", return_value={}):
+        r = client.get("/api/radar/hits/live", params={"page": 1, "page_size": 10})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert all(row["isLive"] is False for row in data["rows"])
+
+
+def test_fetch_quotes_batch_maps_by_stock_id():
+    """fetch_quotes 批次：mock 一個回多筆 msgArray 的 session → 依 stock_id 正確映射、只打 1 次外部。"""
+    intraday_mod.clear_cache()
+    msg_array = [
+        {"c": "2330", "z": "1000.0", "y": "990.0", "o": "995", "h": "1005", "l": "992", "v": "100", "t": "10:00:00"},
+        {"c": "2317", "z": "120.0", "y": "118.0", "o": "119", "h": "121", "l": "117", "v": "50", "t": "10:00:00"},
+    ]
+
+    class _FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"msgArray": msg_array}
+
+    class _FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url, params=None, timeout=None):
+            self.calls += 1
+            return _FakeResp()
+
+    fake_sess = _FakeSession()
+    with patch.object(intraday_mod, "_get_session", return_value=fake_sess):
+        out = intraday_mod.fetch_quotes([("2330", "twse"), ("2317", "twse")])
+    assert fake_sess.calls == 1  # 一個批次請求，不是 2 次
+    assert set(out.keys()) == {"2330", "2317"}
+    assert out["2330"].price == 1000.0
+    assert out["2317"].price == 120.0
+    intraday_mod.clear_cache()
+
+
+def test_watchlist_overview_live_with_mock():
+    """/api/watchlist/overview/live：有自選股時 mock fetch_quotes → 列帶 isLive；無自選股回 []。"""
+    base = client.get("/api/watchlist/overview").json()
+    if not base:
+        # 沒有自選股，端點應乾淨回 []（不報錯）
+        with patch.object(intraday_mod, "fetch_quotes", return_value={}):
+            r = client.get("/api/watchlist/overview/live")
+        assert r.status_code == 200
+        assert r.json() == []
+        return
+    sids = [row["stockId"] for row in base]
+    fake = {
+        sid: IntradayQuote(stock_id=sid, price=100.0, prev_close=99.0, open=None, high=None, low=None, is_live=True)
+        for sid in sids
+    }
+    with patch.object(intraday_mod, "fetch_quotes", return_value=fake):
+        r = client.get("/api/watchlist/overview/live")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert len(data) == len(base)
+    assert any(row.get("isLive") for row in data)

@@ -13,7 +13,7 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet, apiGetOptional, type IntradayQuoteView, type MarketIntradayQuote } from "@/lib/api";
 
 const LIVE_REFRESH_MS = 30_000;
@@ -21,7 +21,7 @@ const LIVE_REFRESH_MS_OFFHOURS = 120_000;
 
 /** 台北時區判斷現在是否為交易時段（週一~週五 9:00–13:30）。
  *  非交易時段時降頻輪詢（mis 此時只回昨收，重複打沒意義）。 */
-function isTradingHoursTaipei(): boolean {
+export function isTradingHoursTaipei(): boolean {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Taipei",
     weekday: "short",
@@ -174,4 +174,51 @@ export function useHoldingsIntraday(
   );
 
   return quotes;
+}
+
+/**
+ * 通用「清單盤中即時重算」輪詢：給雷達 /hits/live 與自選 /overview/live 共用。
+ *
+ * - enabled=false（收盤模式）：直接回 initial（SSR 的收盤快照），不啟動 timer。
+ * - enabled=true（即時模式）：輪詢 `url`（trading-hour 30s / off-hour 120s / hidden pause），
+ *   成功就把整包換成即時版（每列自帶 isLive）；失敗保留收盤快照、refreshing=false。
+ * - 切回收盤（enabled false）時 reset 成 initial，避免殘留上一輪的即時數字。
+ *
+ * initial 用 ref 凍結，避免父層每次 render 產生新 ref 時觸發 effect churn。
+ */
+export function useLiveListData<T>(
+  url: string,
+  initial: T,
+  enabled: boolean,
+): { data: T; live: boolean } {
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
+  const [data, setData] = useState<T>(initial);
+  const [live, setLive] = useState(false);
+
+  // 切換模式 / 換頁（url 變）→ 先回到收盤快照基準
+  useEffect(() => {
+    if (!enabled) {
+      setData(initialRef.current);
+      setLive(false);
+    }
+  }, [enabled, url]);
+
+  usePolling(
+    async () => {
+      try {
+        const res = await apiGet<T>(url, { noCache: true });
+        setData(res);
+        setLive(true);
+      } catch {
+        setData(initialRef.current);
+        setLive(false);
+      }
+    },
+    [url],
+    enabled,
+    false,
+  );
+
+  return { data, live };
 }

@@ -36,10 +36,10 @@
 |---|---|---|---|
 | `/` | [web/app/page.tsx](../web/app/page.tsx) | RSC | `/api/portfolio/*`, `/api/dashboard/*`, `/api/watchlist/movers` |
 | `/stocks/[stockId]` | [web/app/stocks/[stockId]/page.tsx](../web/app/stocks/[stockId]/page.tsx) | RSC | `/api/stocks/{id}/{meta,score,price,score-history}` |
-| `/radar` | [web/app/radar/page.tsx](../web/app/radar/page.tsx) | RSC | `/api/radar/{strategies,hits}` |
+| `/radar` | [web/app/radar/page.tsx](../web/app/radar/page.tsx) + [RadarHitsLive.tsx](../web/app/radar/RadarHitsLive.tsx) | RSC + Client | `/api/radar/{strategies,hits}`、🆕 `/api/radar/hits/live` |
 | `/history` | [web/app/history/page.tsx](../web/app/history/page.tsx) | RSC | `/api/history/{dates,strategies,performance}` |
 | `/holdings` | [web/app/holdings/page.tsx](../web/app/holdings/page.tsx) | RSC + 1 client child | `/api/portfolio/{summary,holdings,risk-alerts,trades,realized-pnl}` |
-| `/watchlist` | [web/app/watchlist/page.tsx](../web/app/watchlist/page.tsx) | RSC | `/api/watchlist/overview` |
+| `/watchlist` | [web/app/watchlist/page.tsx](../web/app/watchlist/page.tsx) + [WatchlistResults.tsx](../web/app/watchlist/WatchlistResults.tsx) | RSC + Client | `/api/watchlist/overview`、🆕 `/api/watchlist/overview/live` |
 | `/watchlist-manage` | [web/app/watchlist-manage/page.tsx](../web/app/watchlist-manage/page.tsx) + [client.tsx](../web/app/watchlist-manage/client.tsx) | RSC + Client | `/api/watchlist`, `/api/watchlist/{lookup,bulk-add,bulk-remove}` |
 | `/dq` | [web/app/dq/page.tsx](../web/app/dq/page.tsx) | RSC | `/api/dq/summary`, `/api/dashboard/data-freshness` |
 | `/sectors` | [web/app/sectors/page.tsx](../web/app/sectors/page.tsx) | RSC + Client child | `/api/market/{breadth,industry-rotation,industry-members}` |
@@ -94,16 +94,17 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/radar` — 雷達掃描
 
-- **檔案**：[web/app/radar/page.tsx](../web/app/radar/page.tsx)（366 行）
-- **類型**：RSC（`revalidate: 60`）
+- **檔案**：[web/app/radar/page.tsx](../web/app/radar/page.tsx)（RSC）+ **🆕** [RadarHitsLive.tsx](../web/app/radar/RadarHitsLive.tsx)（client island：命中表 + 收盤/即時切換）
+- **類型**：RSC（`revalidate: 60`）外殼 + client 命中表
 - **searchParams**：`strategy, market[], top (30/50/100/all), type (stock/etf), page`
-- **API 呼叫**：`apiGet<RadarStrategy[]>("/api/radar/strategies")`、`apiGet<RadarHitsPage>("/api/radar/hits?...&page=&page_size=")`（🆕 回 `{rows,total}`，server 端分頁）
+- **API 呼叫**：`apiGet<RadarStrategy[]>("/api/radar/strategies")`、`apiGet<RadarHitsPage>("/api/radar/hits?...&page=&page_size=")`（🆕 回 `{rows,total}`，server 端分頁）；**🆕** client 端在「即時」模式輪詢 `/api/radar/hits/live?...`（同參數）
 - **主要 sections**：
   - PageHeader
   - Type tabs：個股 / ETF —— ETF 過濾掉 `stocksOnly` 策略
   - Strategy chips 含命中數
   - Filters：板別（上市/上櫃）+ Top N 切換
-  - Hits table 含 **🆕 server-side 50/頁分頁**（`/api/radar/hits` 帶 `page`/`page_size`，只傳當前頁）、`<Pagination>`，標題列右側 **🆕** CSV / XLSX 皆走後端 href 下載（`<DownloadXlsxButton href="/api/radar/export.csv?…" label="下載 CSV">` + `…export.xlsx`，保留當前過濾條件、不再內嵌全部列進 client props）
+  - **🆕** `<RadarHitsLive>`（client）：頂端「收盤 / 即時」切換 + Hits table。即時模式輪詢 `/hits/live`（trading-hour 30s / off-hour 120s / hidden-pause，走 `useLiveListData`），對當前頁重算分數並頁內重排；吃到即時價的列亮「即時」徽章、`<PriceCell deltaPct>` 顯示漲跌%
+  - **server-side 50/頁分頁**（`<Pagination>`），標題列右側 CSV / XLSX 皆走後端 href 下載（保留當前過濾條件）
 - **欄寬**：`table-fixed`，固定欄寬；ETF tab 隱藏「長期」欄
 - **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`BackendDownError`、`Th/Td`、`Pagination`、`DownloadCsvButton`、`DownloadXlsxButton`
 
@@ -141,17 +142,16 @@ Root layout：[web/app/layout.tsx](../web/app/layout.tsx) — 套上 `<Sidebar>`
 
 ### `/watchlist` — 自選股總覽
 
-- **檔案**：[web/app/watchlist/page.tsx](../web/app/watchlist/page.tsx)
-- **類型**：RSC（`revalidate: 60`）
+- **檔案**：[web/app/watchlist/page.tsx](../web/app/watchlist/page.tsx)（RSC 外殼）+ **🆕** [WatchlistResults.tsx](../web/app/watchlist/WatchlistResults.tsx)（client island：結果區排行卡 + 主表 + 收盤/即時切換）
+- **類型**：RSC（`revalidate: 60`）外殼 + client 結果區
 - **searchParams**：`type (stock/etf)`、**🆕** `tag`（過濾僅顯示帶該 tag 的檔；切 type tab 時保留）
-- **API 呼叫**：`apiGet<WatchlistOverviewRow[]>("/api/watchlist/overview")`、**🆕** `apiGetOptional<TagCount[]>("/api/watchlist/tags")`
+- **API 呼叫**：`apiGet<WatchlistOverviewRow[]>("/api/watchlist/overview")`、**🆕** `apiGetOptional<TagCount[]>("/api/watchlist/tags")`；**🆕** client 端在「即時」模式輪詢 `/api/watchlist/overview/live`
 - **主要 sections**：
   - PageHeader
   - Type tabs：個股 / ETF
   - **🆕** Tag filter chip 列：`<FilterChip>`「全部」+ 每個 tag 一個 chip（含命中數 badge）；無 tag 時整段隱藏
-  - 綜合評分前三 / 後三 RankingCard
-  - 全部自選股表，每列代號旁 **🆕** 渲染 tag chips（brand-tint 底色），含「今日%」`<PriceCell>`
-- **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`FilterChip`、`Th/Td`
+  - **🆕** `<WatchlistResults>`（client）：頂端「收盤 / 即時」切換；tab/tag 過濾在 client 套用（收盤與即時走同一套）；綜合評分前三/後三 RankingCard + 全部自選股表，每列代號旁渲染 tag chips（brand-tint）、即時模式下吃到即時價的列亮「即時」徽章；含「今日%」`<PriceCell>`
+- **用到 components**：`Icon`、`PageHeader`、`EmptyState`、`ScoreBadge`、`RecommendationTag`、`PriceCell`、`FilterChip`、`Th/Td`、`SectionTitle`、`StockIdCell`、`TableContainer`、`useLiveListData`
 
 ### `/watchlist-manage` — 自選股管理
 

@@ -158,6 +158,7 @@ def read_ohlc_with_adj(
     conn,
     *,
     stock_id: str | None = None,
+    stock_ids: list[str] | None = None,
     since: str | None = None,
     until: str | None = None,
     extra_cols: bool = True,
@@ -169,6 +170,8 @@ def read_ohlc_with_adj(
 
     參數：
     - stock_id: 提供 → 過濾單檔；None → 全市場
+    - stock_ids: 提供一組代號 → `WHERE stock_id IN (...)`（給「盤中即時重算一頁」這種
+      只需少數股票的場景，避免全市場掃描）。與 stock_id 二擇一；同給時 stock_id 優先。
     - since / until: SQL `BETWEEN since AND until`（含端點），任一可空
     - extra_cols=True → 多帶 turnover, spread；False → 8 欄精簡（給 radar bulk 省 I/O）
 
@@ -188,6 +191,14 @@ def read_ohlc_with_adj(
     if stock_id is not None:
         query += " AND p.stock_id = ?"
         params.append(stock_id)
+    elif stock_ids is not None:
+        # 空 list 明確回空集合，避免退化成「全市場掃描」這種 footgun（live 端不該觸發全掃）
+        if not stock_ids:
+            query += " AND 1=0"
+        else:
+            from app.data.sql_utils import make_placeholders
+            query += f" AND p.stock_id IN ({make_placeholders(len(stock_ids))})"
+            params.extend(stock_ids)
     if since is not None:
         query += " AND p.date >= ?"
         params.append(since)

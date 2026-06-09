@@ -304,6 +304,74 @@ def _do_fetch(stock_id: str, market_type: str | None) -> IntradayQuote | None:
     return None
 
 
+# mis 單一請求可串接的最大檔數。mis 的 ex_ch 用 '|' 串多檔（tse_2330.tw|otc_5483.tw|...），
+# 一次回傳整包 msgArray。實測 ~100 檔仍穩定，保守抓 50 以壓低 URL 長度與單請求失敗的爆炸半徑。
+_BATCH_CHUNK = 50
+
+
+def fetch_quotes(
+    pairs: list[tuple[str, str | None]],
+    *,
+    use_cache: bool = True,
+) -> dict[str, IntradayQuote]:
+    """批次抓多檔即時報價（給雷達/自選「盤中即時重算一頁」用）。
+
+    `pairs`：[(stock_id, market_type), ...]，market_type 同 fetch_quote（'twse'/'tpex'/None）。
+    回傳 `{stock_id: IntradayQuote}`，**只含成功抓到的檔**（興櫃 / mis 失敗 / 無此股的直接缺席，
+    caller 用「有就覆蓋、沒有就維持快照」邏輯，與 holdings/intraday 一致）。
+
+    與「for sid: fetch_quote(sid)」相比的差異與理由：
+    - 用 mis 原生的 '|' 串接，一次 HTTP 抓 ~50 檔，把一頁（≤50）的對外請求數從 50 壓到 1。
+      盤中清單每 30s 刷一次、多使用者同時看時，這是避免 hammer mis（非官方、會 rate-limit）的關鍵。
+    - 沿用 fetch_quote 的 30s per-symbol cache：cache 命中的檔不進這輪外部請求，
+      只把「真的 cold」的檔串成一個 batch query。
+    - market_type 不可為 None（呼叫端先查好 stock_info.type）：None 會無從決定 tse_/otc_ 前綴，
+      批次模式不做逐檔 tse→otc fallback（那會讓請求數翻倍、違背批次的初衷）。None 一律當 'twse' 試。
+    """
+    out: dict[str, IntradayQuote] = {}
+    cold: list[tuple[str, str | None]] = []
+    # 先吃 cache，把命中的直接收下，只有 miss 的才進 batch
+    for sid, mt in pairs:
+        if not sid:
+            continue
+        if use_cache:
+            hit, val = _cache.get(f"{sid}:{mt or '?'}", _CACHE_TTL_SEC)
+            if hit:
+                if val is not None:
+                    out[sid] = val
+                continue
+        cold.append((sid, mt))
+
+    # cold 依 chunk 切批，逐批打一次 mis
+    for i in range(0, len(cold), _BATCH_CHUNK):
+        chunk = cold[i:i + _BATCH_CHUNK]
+        ex_ch_list = "|".join(_ex_ch(sid, mt) for sid, mt in chunk)
+        parsed: dict[str, IntradayQuote] = {}
+        try:
+            sess = _get_session()
+            url = f"{_BASE}/api/getStockInfo.jsp"
+            resp = sess.get(url, params={"ex_ch": ex_ch_list, "json": "1", "delay": "0"}, timeout=10)
+            if resp.status_code == 200:
+                try:
+                    j = resp.json()
+                except ValueError:
+                    j = None
+                if j is not None:
+                    for msg in (j.get("msgArray") or []):
+                        q = _parse_msg(msg)
+                        if q is not None:
+                            parsed[q.stock_id] = q
+        except requests.RequestException as exc:
+            logger.debug("intraday batch fetch failed (%d symbols): %s", len(chunk), exc)
+        # 逐檔寫 cache（含 miss → None，避免同一檔 30s 內反覆進 cold batch）
+        for sid, mt in chunk:
+            q = parsed.get(sid)
+            _cache.put(f"{sid}:{mt or '?'}", q)
+            if q is not None:
+                out[sid] = q
+    return out
+
+
 _index_cache: dict[str, tuple[float, IndexQuote | None]] = {}
 _index_cache_lock = threading.Lock()
 

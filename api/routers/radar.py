@@ -12,8 +12,13 @@ from api.deps import get_db
 from api.schemas.stock import RadarHit, RadarHitsPage, RadarStrategy
 from app.data.db import Database
 from app.export import excel as excel_export
-from app.scoring.radar import STRATEGIES
-from app.scoring.radar_queries import latest_as_of, query_radar_hits, query_radar_hits_page
+from app.scoring.radar import STRATEGIES, live_scores_for
+from app.scoring.radar_queries import (
+    latest_as_of,
+    query_radar_hits,
+    query_radar_hits_page,
+    strategy_sort_column,
+)
 from app.scoring.snapshot_freshness import ensure_fresh
 
 router = APIRouter(prefix="/api/radar", tags=["radar"])
@@ -74,6 +79,76 @@ def hits(
         top=top, page=max(1, page), page_size=max(1, page_size),
     )
     return RadarHitsPage(rows=[RadarHit(**h) for h in rows], total=total)
+
+
+@router.get("/hits/live", response_model=RadarHitsPage)
+def hits_live(
+    strategy: str | None = None,
+    market: list[str] = Query(default=["上市", "上櫃", "ETF"]),
+    top: int = 0,
+    page: int = 1,
+    page_size: int = 50,
+    db: Database = Depends(get_db),
+) -> RadarHitsPage:
+    """/hits 的盤中即時版：同樣的策略 / 市場 / 分頁，但**對「當前這一頁」的股票抓盤中即時價、
+    用同一份 score_all 數學重算短/中/長/綜合分數**，並在這一頁內依即時分數重新排序。
+
+    與 /hits 的差異與邊界：
+    - **只重算當前頁（≤page_size 檔）**：成本有界（一頁 ~1s，而非全市場 20-30s），對非官方
+      mis 報價端點也只打 ~1 個批次請求。排序是「當前頁內」即時重排，不跨頁拉資料。
+    - 每列多回 `isLive`（True=吃到盤中即時價）與 `changePct`（即時價 vs 昨收）。抓不到即時價
+      （興櫃/休市/mis 失敗）的列 isLive=False、分數退回收盤值（與快照一致）。
+    - `total` 仍是全過濾集合的總數（給分頁器），與 /hits 對齊。
+    - 盤中即時結果**不寫入 signal_history**（純回應層）。
+    """
+    ensure_fresh(db)
+    rows, total = query_radar_hits_page(
+        db, strategy=strategy, markets=set(market),
+        top=top, page=max(1, page), page_size=max(1, page_size),
+    )
+    if not rows:
+        return RadarHitsPage(rows=[], total=total)
+
+    live = live_scores_for(
+        db, [(r["stock_id"], r["stock_name"]) for r in rows], as_of=latest_as_of(db),
+    )
+    merged: list[dict] = []
+    for r in rows:
+        lv = live.get(r["stock_id"])
+        if lv is not None:
+            merged.append({
+                **r,
+                "close": lv["close"] if lv["close"] is not None else r.get("close"),
+                "short": lv["short"],
+                "mid": lv["mid"],
+                "long": lv["long"],
+                "composite": lv["composite"],
+                "vr_macd": lv["vr_macd"],
+                "recommendation": lv["recommendation"] or r.get("recommendation"),
+                "is_live": lv["is_live"],
+                "change_pct": lv["change_pct"] if lv["is_live"] else None,
+            })
+        else:
+            # score_all 沒回此檔（如日線不足 60 天）→ 保留收盤快照值、標非即時
+            merged.append({**r, "is_live": False})
+
+    # 當前頁內依即時分數重排：主排序欄位（策略對應）降序、None 墊底，
+    # tie-break short DESC → composite DESC → stock_id ASC（與 /hits 的 SQL ORDER BY 一致）
+    sort_col = strategy_sort_column(strategy)
+
+    def _key(row: dict):
+        primary = row.get(sort_col)
+        short = row.get("short")
+        comp = row.get("composite")
+        return (
+            primary is None, -(primary or 0.0),
+            short is None, -(short or 0.0),
+            comp is None, -(comp or 0.0),
+            row.get("stock_id") or "",
+        )
+
+    merged.sort(key=_key)
+    return RadarHitsPage(rows=[RadarHit(**h) for h in merged], total=total)
 
 
 @router.get("/export.xlsx")

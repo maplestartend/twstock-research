@@ -3,13 +3,7 @@ import { apiGet, type RadarHit, type RadarHitsPage, type RadarStrategy } from "@
 import { Icon } from "@/components/primitives/Icon";
 import { PageHeader } from "@/components/primitives/PageHeader";
 import { EmptyState } from "@/components/primitives/EmptyState";
-import { ScoreBadge } from "@/components/primitives/ScoreBadge";
-import { RecommendationTag } from "@/components/primitives/RecommendationTag";
-import { PriceCell } from "@/components/primitives/PriceCell";
 import { BackendDownError } from "@/components/primitives/BackendDownError";
-import { Th, Td } from "@/components/primitives/Table";
-import { StockIdCell } from "@/components/primitives/StockIdCell";
-import { TableContainer } from "@/components/primitives/TableContainer";
 import { Pagination } from "@/components/primitives/Pagination";
 import { DownloadXlsxButton } from "@/components/primitives/DownloadXlsxButton";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
@@ -17,6 +11,7 @@ import { PrefetchLink } from "@/components/primitives/PrefetchLink";
 import { FilterChip } from "@/components/primitives/FilterChip";
 import { fmtNum } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { RadarHitsLive } from "./RadarHitsLive";
 
 export const revalidate = 60;
 
@@ -257,68 +252,14 @@ export default async function RadarPage({
             當日無符合 {activeStrategy} 的標的。可切策略或放寬市場篩選。
           </EmptyState>
         ) : (
-          <TableContainer>
-            <table className="w-full text-[15px] min-w-[1060px] table-fixed">
-              <thead className="bg-subtle">
-                <tr>
-                  <Th sticky className="w-[170px]">代號 / 名稱</Th>
-                  <Th align="center" className="w-[80px]">市場</Th>
-                  <Th align="right" className="w-[100px]">收盤</Th>
-                  <Th align="center" className="w-[88px]">短期</Th>
-                  <Th align="center" className="w-[88px]">中期</Th>
-                  {typeTab !== "etf" && <Th align="center" className="w-[88px]">長期</Th>}
-                  <Th align="center" className="w-[88px]">綜合</Th>
-                  {showVrMacdCol && <Th align="center" className="w-[96px]"><span title="VR(26) 量能分數">VR</span></Th>}
-                  <Th align="center" className="w-[108px]">建議</Th>
-                  <Th>命中策略</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagedHits.map((h) => (
-                  <tr key={h.stockId} className="tv-row group border-t border-[var(--border-default)] hover:bg-subtle transition-colors">
-                    <Td sticky>
-                      <StockIdCell stockId={h.stockId} stockName={h.stockName} />
-                    </Td>
-                    <Td align="center">
-                      <span className="text-xs text-[var(--text-secondary)]">{h.market ?? "—"}</span>
-                    </Td>
-                    <Td align="right">
-                      <PriceCell price={h.close} variant="compact" />
-                    </Td>
-                    <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.short} size="sm" horizon="short" /></div></Td>
-                    <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.mid} size="sm" horizon="mid" /></div></Td>
-                    {typeTab !== "etf" && (
-                      <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.long} size="sm" horizon="long" /></div></Td>
-                    )}
-                    <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.composite} size="sm" horizon="composite" /></div></Td>
-                    {showVrMacdCol && (
-                      <Td align="center"><div className="flex justify-center"><ScoreBadge score={h.vrMacd} size="sm" horizon="short" /></div></Td>
-                    )}
-                    <Td align="center">
-                      {h.recommendation ? <div className="flex justify-center"><RecommendationTag raw={h.recommendation} size="sm" /></div> : <span className="text-[var(--text-tertiary)]">—</span>}
-                    </Td>
-                    <Td>
-                      <div className="flex flex-wrap gap-1">
-                        {(h.strategies ?? "").split(",").filter(Boolean).map((s) => (
-                          <span
-                            key={s}
-                            className={cn(
-                              "text-[11px] font-medium px-1.5 py-0.5 rounded border",
-                              s.trim() === activeStrategy
-                                ? "bg-[var(--brand-tint-strong)] text-[var(--brand-700)] dark:text-[var(--brand-300)] border-[var(--brand-tint-border)]"
-                                : "bg-subtle text-[var(--text-secondary)] border-[var(--border-default)]",
-                            )}
-                          >
-                            {s.trim()}
-                          </span>
-                        ))}
-                      </div>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableContainer>
+          <RadarHitsLive
+            initialRows={pagedHits}
+            total={totalHits}
+            liveUrl={buildHitsUrl(activeStrategy, effectiveMarkets, topApi, page).replace("/hits?", "/hits/live?")}
+            showLongCol={typeTab !== "etf"}
+            showVrMacdCol={showVrMacdCol}
+            activeStrategy={activeStrategy}
+          />
         )}
 
         {totalPages > 1 && (
