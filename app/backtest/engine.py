@@ -574,6 +574,22 @@ def benchmark_return(
     return (last - first) / first
 
 
+def _full_score_series(db: Database, stock_id: str, use_adj: bool = True) -> pd.DataFrame | None:
+    """載入單檔全段歷史並算好逐日短期分數（date 欄已轉 datetime）。空資料回 None。
+
+    抽出來讓 walk_forward 預建 `{sid: series}` 快取：score series 只與 (price, inst, margin)
+    有關、與 StrategyConfig 參數（entry/exit/sl/tp...）無關，故同一檔在掃 param_grid /
+    切 train-test 時只需算一次。注意全段歷史是技術指標（MA60、RSI 等）的暖機需求，
+    不是 look-ahead；後續切片只切 backtest 實際要跑的日期範圍。
+    """
+    price, inst, margin = _load_stock_data(db, stock_id, use_adj=use_adj)
+    if price.empty:
+        return None
+    series = _vectorized_short_scores(price, inst, margin)
+    series["date"] = pd.to_datetime(series["date"])
+    return series
+
+
 def _backtest_on_slice(
     db: Database,
     stock_ids: list[str],
@@ -581,22 +597,29 @@ def _backtest_on_slice(
     start_date: str,
     end_date: str,
     use_adj: bool = True,
+    *,
+    series_cache: dict[str, pd.DataFrame] | None = None,
+    bm_cache: dict[tuple[str, str], float | None] | None = None,
 ) -> dict:
     """對指定日期區間跑一次投組回測，回傳彙總指標。
 
     **Flat-reset**：每個 slice 用獨立的 `_run_strategy_loop` 從 in_position=False 起跑，
     確保 train 區末尾持倉不會「拖」進 test 區，避免 walk-forward 邊界污染。
+
+    `series_cache` / `bm_cache`：walk_forward 預建的記憶化快取（score series 與 0050 基準
+    皆與 cfg 無關）。傳入即重用、不傳則即時計算（直接呼叫此函式時的 fallback）。
+    快取值僅讀取＋切片（切片必產生 copy），絕不就地改寫，跨 cfg 共用安全。
     """
     rows = []
     per_trade_returns: list[float] = []
     for sid in stock_ids:
-        price, inst, margin = _load_stock_data(db, sid, use_adj=use_adj)
-        if price.empty:
+        # score series 與 cfg 無關：有預建快取直接取，否則即時 load＋算（fallback 與舊行為一致）。
+        if series_cache is not None:
+            series = series_cache.get(sid)
+        else:
+            series = _full_score_series(db, sid, use_adj=use_adj)
+        if series is None:
             continue
-        # 注意：_vectorized_short_scores 用全段歷史算技術指標（MA60、RSI 等），
-        # 這是技術指標的暖機需求，不是 look-ahead；切片只切 backtest 跑的範圍。
-        series = _vectorized_short_scores(price, inst, margin)
-        series["date"] = pd.to_datetime(series["date"])
         sub = series[
             (series["date"] >= pd.Timestamp(start_date))
             & (series["date"] <= pd.Timestamp(end_date))
@@ -627,7 +650,14 @@ def _backtest_on_slice(
             "sharpe": None, "mean_alpha_vs_0050": None,
         }
     df = pd.DataFrame(rows)
-    bm = benchmark_return(db, start_date, end_date, source="0050")
+    # 0050 基準只與 (start, end) 有關：train 掃 grid 時同一段會被查 K 次 → 快取去重。
+    if bm_cache is not None:
+        bm_key = (start_date, end_date)
+        if bm_key not in bm_cache:
+            bm_cache[bm_key] = benchmark_return(db, start_date, end_date, source="0050")
+        bm = bm_cache[bm_key]
+    else:
+        bm = benchmark_return(db, start_date, end_date, source="0050")
     mean_ret = float(df["total_return"].mean())
     # Per-trade Sharpe ratio（信息比率風）：mean / std of single-trade net returns。
     # 用於 walk-forward 選參數，避開「報酬高但波動更高」的純運氣組。
@@ -685,6 +715,18 @@ def walk_forward(
         return pd.DataFrame()
 
     slice_days = total_days // n_splits
+
+    # 預建 {sid: 全段 score series} 快取：score series 與 param_grid 完全無關，
+    # 原本每組參數 × 每個 split × (train+test) 都重 load+重算評分（K=6/n_splits=3 → 同一檔算 ~21 次），
+    # 改成每檔只算一次。空資料的 sid 不入快取 → 下游 .get(sid) 回 None 跳過，與舊行為一致
+    # （故意保留空 dict 而非提早 return，讓「全空」仍退化成原本的零列結果）。
+    series_cache: dict[str, pd.DataFrame] = {}
+    for sid in stock_ids:
+        s = _full_score_series(db, sid, use_adj=use_adj)
+        if s is not None:
+            series_cache[sid] = s
+    bm_cache: dict[tuple[str, str], float | None] = {}
+
     out_rows = []
     for i in range(n_splits):
         s_start = full_start + pd.Timedelta(days=i * slice_days)
@@ -700,7 +742,10 @@ def walk_forward(
         best = None
         best_cfg = None
         for cfg in param_grid:
-            r = _backtest_on_slice(db, stock_ids, cfg, train_start, train_end, use_adj)
+            r = _backtest_on_slice(
+                db, stock_ids, cfg, train_start, train_end, use_adj,
+                series_cache=series_cache, bm_cache=bm_cache,
+            )
             if best is None:
                 best, best_cfg = r, cfg
                 continue
@@ -712,7 +757,10 @@ def walk_forward(
             continue
 
         # 把最佳 cfg 套到 test 區
-        test_r = _backtest_on_slice(db, stock_ids, best_cfg, test_start, test_end, use_adj)
+        test_r = _backtest_on_slice(
+            db, stock_ids, best_cfg, test_start, test_end, use_adj,
+            series_cache=series_cache, bm_cache=bm_cache,
+        )
 
         out_rows.append({
             "split": i + 1,
