@@ -61,9 +61,10 @@ REM 否則最新交易日的 close_adj 會是 NULL → 回測 / scoring 對 ETF 
 REM idempotent: INSERT OR REPLACE，每天跑沒副作用。
 REM 不綁 market_update 的 RC: 來源獨立 (yfinance), market_update 中斷時仍應補上 ETF adj。
 %PYTHON% -m scripts.backfill_etf_adj_yfinance --quiet
-set RC4=%errorlevel%
-if %RC4% neq 0 (
-    echo [WARN] backfill_etf_adj_yfinance failed with code %RC4%.
+set RC4=!errorlevel!
+if !RC4! neq 0 (
+    set RC=!RC4!
+    echo [WARN] backfill_etf_adj_yfinance failed with code !RC4!.
 )
 
 REM signal_history 保留（每天刪舊列；VACUUM 每週日一次回收磁碟）
