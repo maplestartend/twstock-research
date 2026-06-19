@@ -161,8 +161,10 @@ SCHEMA = [
         PRIMARY KEY (as_of, stock_id)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_signal_asof ON signal_history(as_of)",
-    "CREATE INDEX IF NOT EXISTS idx_signal_stock ON signal_history(stock_id)",
+    # idx_signal_asof(as_of) / idx_signal_stock(stock_id) 已於 2026-06-20 移除：前者被
+    # idx_signal_composite(as_of, composite DESC) 最左前綴覆蓋（EXPLAIN 證 planner 選 composite）、
+    # 後者被 idx_signal_stock_asof(stock_id, as_of DESC) 覆蓋。舊 DB 由
+    # _migrate_drop_redundant_signal_indexes 清掉（signal_history 每天 ~2k 列寫入，少維護 2 個冗餘索引）。
     "CREATE INDEX IF NOT EXISTS idx_signal_stock_asof ON signal_history(stock_id, as_of DESC)",
     "CREATE INDEX IF NOT EXISTS idx_signal_hit_asof ON signal_history(as_of, stock_id) "
     "WHERE strategies IS NOT NULL AND strategies <> ''",
@@ -355,6 +357,7 @@ class Database:
             self._migrate_financials_cumulative_publish_date(conn)
             self._migrate_financials_publish_date(conn)
             self._migrate_stock_info_last_seen_date(conn)
+            self._migrate_drop_redundant_signal_indexes(conn)
             conn.commit()
 
     @staticmethod
@@ -393,6 +396,19 @@ class Database:
             cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
             if col not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+
+    @staticmethod
+    def _migrate_drop_redundant_signal_indexes(conn: sqlite3.Connection) -> None:
+        """移除 signal_history 兩個冗餘索引（2026-06-20，效能審查波次一 #3）。
+
+        idx_signal_asof(as_of) 被 idx_signal_composite(as_of, composite DESC) 最左前綴覆蓋、
+        idx_signal_stock(stock_id) 被 idx_signal_stock_asof(stock_id, as_of DESC) 覆蓋——
+        EXPLAIN QUERY PLAN 證實 DROP 後 as_of=? 改走 composite、stock_id=? 改走 stock_asof，
+        access path 不變、零退化。signal_history 每天 ~2k 列寫入，少維護 2 個重複索引可加速
+        snapshot 寫入並省索引儲存。idempotent（DROP IF EXISTS），新 DB 無這兩個索引時為 no-op。
+        """
+        conn.execute("DROP INDEX IF EXISTS idx_signal_asof")
+        conn.execute("DROP INDEX IF EXISTS idx_signal_stock")
 
     @staticmethod
     def _migrate_stock_info_is_tradable(conn: sqlite3.Connection) -> None:
