@@ -166,34 +166,17 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_signal_stock_asof ON signal_history(stock_id, as_of DESC)",
     "CREATE INDEX IF NOT EXISTS idx_signal_hit_asof ON signal_history(as_of, stock_id) "
     "WHERE strategies IS NOT NULL AND strategies <> ''",
-    # 子因子分數歷史（給 /diagnostics 算 sub-factor IC 用）。
-    # 長格式：每檔 × 每天 × 每個 horizon × 每個 sub-factor 一列。
-    # short ~10 個 sub-factor + mid 6 + long 5 = 21 個 → 2300 檔 × 21 = ~48k 列/天，
-    # 90 天 ≈ 4.3M 列（SQLite 單表輕鬆）。橫格式（直接擴 signal_history 21 欄）
-    # 也能用，但長格式對「跑遍所有因子算 IC」是 GROUP BY factor 一行 query 解決。
-    """
-    CREATE TABLE IF NOT EXISTS signal_history_factor_parts (
-        as_of TEXT NOT NULL,
-        stock_id TEXT NOT NULL,
-        horizon TEXT NOT NULL,
-        factor TEXT NOT NULL,
-        score REAL,
-        PRIMARY KEY (stock_id, as_of, horizon, factor)
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_factor_parts_asof ON signal_history_factor_parts(as_of)",
-    "CREATE INDEX IF NOT EXISTS idx_factor_parts_factor ON signal_history_factor_parts(horizon, factor)",
-    # IC 計算結果快取：原始 query 要讀 4M 列 factor_parts、~2M 列 daily_price，74% 時間在 I/O。
-    # 把 compute_factor_ic / compute_subfactor_ic 的輸出存進這張 ~80 列的小表，UI 直接 SELECT
-    # 即秒回。失效條件：snapshot_max_as_of（與 lookback_days、scope）變了 → 重算。
+    # IC 計算結果快取：原始 query 要讀 ~2M 列 daily_price + 算 cross-sectional IC，cache 後 UI
+    # 直接 SELECT 即秒回。把 compute_factor_ic 的輸出存進這張 ~80 列的小表。
+    # 失效條件：snapshot_max_as_of（與 lookback_days、scope）變了 → 重算。
     """
     CREATE TABLE IF NOT EXISTS factor_ic_cache (
-        scope TEXT NOT NULL,                -- 'aggregate' | 'subfactor'
+        scope TEXT NOT NULL,                -- 'aggregate'（sub-factor IC 已於 2026-06 移除）
         snapshot_max_as_of TEXT NOT NULL,   -- 當下 signal_history.MAX(as_of)，用來判斷新鮮度
         lookback_days INTEGER NOT NULL,
-        horizon TEXT NOT NULL,              -- aggregate: forward 天數字串；subfactor: 'short'|'mid'|'long'
+        horizon TEXT NOT NULL,              -- aggregate: forward 天數字串
         factor TEXT NOT NULL,
-        forward_horizon INTEGER NOT NULL,   -- aggregate 同 horizon；subfactor 是 5/20/60
+        forward_horizon INTEGER NOT NULL,   -- aggregate 同 horizon
         ic REAL,
         ic_ir REAL,
         top_quintile_return REAL,

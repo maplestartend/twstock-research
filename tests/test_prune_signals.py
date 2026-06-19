@@ -1,4 +1,7 @@
-"""S2-4：scripts/prune_signals.prune() 邏輯驗證 — 用合成 signal_history 灌資料測。"""
+"""S2-4：scripts/prune_signals.prune() 邏輯驗證 — 用合成 signal_history 灌資料測。
+
+（2026-06：signal_history_factor_parts 子因子歷史表已整張移除，本檔只剩 signal_history。）
+"""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -33,34 +36,6 @@ def db_with_signals(tmp_path: Path) -> Database:
     return db
 
 
-@pytest.fixture
-def db_with_factor_parts(tmp_path: Path) -> Database:
-    """灌 420 天的合成 signal_history + signal_history_factor_parts（同一 db）。
-
-    420 天 > 365 → 預設 keep_days 也有舊資料可壓；3 檔 × 3 horizon × 2 factor = 18 列/天。
-    """
-    db = Database(tmp_path / "test_parts.db")
-    today = _REF_TODAY
-    sig_rows, part_rows = [], []
-    for d in range(420):
-        as_of = (today - timedelta(days=d)).isoformat()
-        for sid in ("2330", "2317", "0050"):
-            sig_rows.append({
-                "as_of": as_of, "stock_id": sid,
-                "short": 50.0, "mid": 60.0, "long": 70.0, "composite": 60.0,
-                "recommendation": "中性", "strategies": "",
-            })
-            for horizon in ("short", "mid", "long"):
-                for factor in ("ma_alignment", "trend"):
-                    part_rows.append({
-                        "as_of": as_of, "stock_id": sid,
-                        "horizon": horizon, "factor": factor, "score": 55.0,
-                    })
-    db.upsert_df(pd.DataFrame(sig_rows), "signal_history")
-    db.upsert_df(pd.DataFrame(part_rows), "signal_history_factor_parts")
-    return db
-
-
 def _seed_ic_cache(db: Database, n: int = 3) -> None:
     """塞 n 列假 factor_ic_cache（只填 NOT NULL 欄）。"""
     with db.connect() as conn:
@@ -68,7 +43,7 @@ def _seed_ic_cache(db: Database, n: int = 3) -> None:
             "INSERT INTO factor_ic_cache "
             "(scope, snapshot_max_as_of, lookback_days, horizon, factor, forward_horizon, computed_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [("subfactor", "2026-04-26", 120, "short", f"f{i}", 20, "2026-04-26T00:00:00")
+            [("aggregate", "2026-04-26", 120, "20", f"f{i}", 20, "2026-04-26T00:00:00")
              for i in range(n)],
         )
         conn.commit()
@@ -150,71 +125,36 @@ class TestPruneRetention:
         assert r["table"] == "signal_history"
 
 
-class TestPruneFactorParts:
-    def test_keeps_365_then_mondays(self, db_with_factor_parts: Database):
-        """factor_parts：365 天內逐日保留，之前只剩週一。"""
-        with _patched_today(_REF_TODAY):
-            r = prune(db_with_factor_parts, table="signal_history_factor_parts",
-                      keep_days=365, dry_run=False)
-        assert r["table"] == "signal_history_factor_parts"
-        assert r["deleted"] > 0  # 420 > 365 → 有舊資料被壓
-        cutoff_iso = (_REF_TODAY - timedelta(days=365)).isoformat()
-        with db_with_factor_parts.connect() as conn:
-            old = conn.execute(
-                "SELECT DISTINCT as_of FROM signal_history_factor_parts WHERE as_of < ?",
-                (cutoff_iso,),
-            ).fetchall()
-            recent = conn.execute(
-                "SELECT COUNT(*) FROM signal_history_factor_parts WHERE as_of >= ?",
-                (cutoff_iso,),
-            ).fetchone()[0]
-        for row in old:
-            d = date.fromisoformat(row["as_of"])
-            assert d.weekday() == 0, f"factor_parts 舊資料殘留非週一: {row['as_of']}"
-        # 近 365 天每天 3 檔 × 3 horizon × 2 factor = 18 列 → 至少 365×18
-        assert recent >= 365 * 18
-
-    def test_dry_run_does_not_modify(self, db_with_factor_parts: Database):
-        before = _count(db_with_factor_parts, "signal_history_factor_parts")
-        with _patched_today(_REF_TODAY):
-            r = prune(db_with_factor_parts, table="signal_history_factor_parts",
-                      keep_days=365, dry_run=True)
-        assert r["dry_run"] is True
-        assert _count(db_with_factor_parts, "signal_history_factor_parts") == before
-
-
 class TestPruneAll:
-    def test_prunes_both_tables(self, db_with_factor_parts: Database):
+    def test_prunes_signal_history(self, db_with_signals: Database):
         with _patched_today(_REF_TODAY):
-            result = prune_all(db_with_factor_parts, keep_days=365, dry_run=False)
+            result = prune_all(db_with_signals, keep_days=90, dry_run=False)
         assert result["signal_history"]["deleted"] > 0
-        assert result["factor_parts"]["deleted"] > 0
         assert result["signal_history"]["table"] == "signal_history"
-        assert result["factor_parts"]["table"] == "signal_history_factor_parts"
 
-    def test_clears_ic_cache_when_parts_deleted(self, db_with_factor_parts: Database):
-        _seed_ic_cache(db_with_factor_parts, n=3)
+    def test_clears_ic_cache_when_signals_deleted(self, db_with_signals: Database):
+        _seed_ic_cache(db_with_signals, n=3)
         with _patched_today(_REF_TODAY):
-            result = prune_all(db_with_factor_parts, keep_days=365, dry_run=False)
-        assert result["factor_parts"]["deleted"] > 0
+            result = prune_all(db_with_signals, keep_days=90, dry_run=False)
+        assert result["signal_history"]["deleted"] > 0
         assert result["ic_cache_cleared"] == 3
-        assert _count(db_with_factor_parts, "factor_ic_cache") == 0
+        assert _count(db_with_signals, "factor_ic_cache") == 0
 
-    def test_keeps_ic_cache_when_nothing_deleted(self, db_with_factor_parts: Database):
-        """keep_days 大到沒有任何 parts 被刪 → 不該動 cache（避免無謂失效）。"""
-        _seed_ic_cache(db_with_factor_parts, n=3)
+    def test_keeps_ic_cache_when_nothing_deleted(self, db_with_signals: Database):
+        """keep_days 大到沒有任何列被刪 → 不該動 cache（避免無謂失效）。"""
+        _seed_ic_cache(db_with_signals, n=3)
         with _patched_today(_REF_TODAY):
-            result = prune_all(db_with_factor_parts, keep_days=9999, dry_run=False)
-        assert result["factor_parts"]["deleted"] == 0
+            result = prune_all(db_with_signals, keep_days=9999, dry_run=False)
+        assert result["signal_history"]["deleted"] == 0
         assert result["ic_cache_cleared"] == 0
-        assert _count(db_with_factor_parts, "factor_ic_cache") == 3
+        assert _count(db_with_signals, "factor_ic_cache") == 3
 
-    def test_dry_run_does_not_clear_cache(self, db_with_factor_parts: Database):
-        _seed_ic_cache(db_with_factor_parts, n=2)
+    def test_dry_run_does_not_clear_cache(self, db_with_signals: Database):
+        _seed_ic_cache(db_with_signals, n=2)
         with _patched_today(_REF_TODAY):
-            result = prune_all(db_with_factor_parts, keep_days=365, dry_run=True)
+            result = prune_all(db_with_signals, keep_days=90, dry_run=True)
         assert result["ic_cache_cleared"] == 0
-        assert _count(db_with_factor_parts, "factor_ic_cache") == 2
+        assert _count(db_with_signals, "factor_ic_cache") == 2
 
 
 class TestVacuum:
@@ -226,12 +166,12 @@ class TestVacuum:
             mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         assert mode.lower() == "wal"
 
-    def test_shrinks_after_delete(self, db_with_factor_parts: Database):
-        """刪一大段 + VACUUM 後檔案應變小。"""
+    def test_shrinks_after_delete(self, db_with_signals: Database):
+        """刪一大段 + VACUUM 後檔案應不大於刪除前。"""
         import os
         with _patched_today(_REF_TODAY):
-            prune_all(db_with_factor_parts, keep_days=30, dry_run=False)
-        before = os.path.getsize(db_with_factor_parts.path)
-        vacuum(db_with_factor_parts, best_effort=False)
-        after = os.path.getsize(db_with_factor_parts.path)
+            prune_all(db_with_signals, keep_days=30, dry_run=False)
+        before = os.path.getsize(db_with_signals.path)
+        vacuum(db_with_signals, best_effort=False)
+        after = os.path.getsize(db_with_signals.path)
         assert after <= before

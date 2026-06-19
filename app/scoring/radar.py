@@ -404,9 +404,6 @@ def score_all(
 
     empty = pd.DataFrame()
     rows = []
-    # 子因子分數累計（給 /diagnostics sub-factor IC 用）。長格式，每檔 × 每個 horizon 子項一列。
-    # 統一在這層收，避免 snapshot_today 還要重跑 score_*_term 一次。
-    parts_rows: list[dict] = []
     for sid, name in stocks:
         price = price_groups.get(sid, empty)
         if price.empty or len(price) < min_days:
@@ -450,15 +447,6 @@ def score_all(
             # v5c Wave 2 Phase 2：算 4 個 Style Score 一起寫入 snapshot
             from app.scoring.style import compute_style_scores
             styles = compute_style_scores(short.parts, mid.parts, long_.parts)
-            # 收子因子分數（None 也記，下游 IC 算法跑 dropna 自動排除）
-            for horizon_name, breakdown in (("short", short), ("mid", mid), ("long", long_)):
-                for factor_name, factor_score in breakdown.parts.items():
-                    parts_rows.append({
-                        "stock_id": sid,
-                        "horizon": horizon_name,
-                        "factor": factor_name,
-                        "score": factor_score,
-                    })
             # vr26 原始值給 _strat_vr_macd 做更嚴格的 filter（VR>150）
             last_row = price.iloc[-1]
             vr26_val = float(last_row["vr26"]) if pd.notna(last_row.get("vr26")) else None
@@ -517,13 +505,6 @@ def score_all(
         except Exception as e:
             logger.debug("score %s 失敗: %s", sid, e)
     out = pd.DataFrame(rows)
-    # 子因子分數透過 .attrs 帶出（保持 score_all 簽名不變，避免 monkeypatch 測試破壞）。
-    # snapshot_today 是唯一讀者，讀完就寫入 signal_history_factor_parts。
-    if parts_rows and not out.empty:
-        as_of_value = out["as_of"].iloc[0]
-        parts_df = pd.DataFrame(parts_rows)
-        parts_df["as_of"] = as_of_value
-        out.attrs["parts"] = parts_df
     return out
 
 
@@ -633,16 +614,6 @@ def _strat_long_value(df: pd.DataFrame) -> pd.DataFrame:
     return df[(df["long"] >= 65) & (df["mid"] >= 50)]
 
 
-def _strat_foreign_buy(df: pd.DataFrame) -> pd.DataFrame:
-    """外資連買訊號：連續 ≥5 個交易日（一週以上）+ 20 日淨買超 + 短期不弱。
-    3 日太短（一週才 5 個交易日），易反轉；改為 5 日才當訊號。"""
-    return df[
-        (df["foreign_streak_buy"] >= 5)
-        & (df["foreign_cum20"].fillna(0) > 0)
-        & (df["short"] >= 50)
-    ]
-
-
 def _strat_oversold_rebound(df: pd.DataFrame) -> pd.DataFrame:
     # 短期偏弱但中長期良好 = 可能是回檔進場機會
     return df[
@@ -654,20 +625,6 @@ def _strat_oversold_rebound(df: pd.DataFrame) -> pd.DataFrame:
 
 def _strat_allround(df: pd.DataFrame) -> pd.DataFrame:
     return df[(df["short"] >= 55) & (df["mid"] >= 60) & (df["long"] >= 55)]
-
-
-def _strat_rs_strong(df: pd.DataFrame) -> pd.DataFrame:
-    """20 日跑贏大盤 >5%，且短期不弱。"""
-    if "rs20" not in df.columns:
-        return df.head(0)
-    return df[(df["rs20"].fillna(-99) > 0.05) & (df["short"] >= 50)]
-
-
-def _strat_revenue_surge(df: pd.DataFrame) -> pd.DataFrame:
-    """月營收年增 > 20% 的標的（只有已抓月營收資料的股票會出現）。"""
-    if "rev_yoy_month" not in df.columns:
-        return df.head(0)
-    return df[df["rev_yoy_month"].fillna(-99) > 0.20]
 
 
 def _strat_revenue_growth_streak(df: pd.DataFrame) -> pd.DataFrame:
@@ -722,12 +679,6 @@ STRATEGIES: dict[str, Strategy] = {
         sort_by="long",
         stocks_only=True,  # 長期分數依賴 ROE/EPS/股利，ETF 無此資料
     ),
-    "外資連買": Strategy(
-        name="外資連買",
-        description="外資連買≥5日（一週以上）+ 20日淨買超，短期不弱",
-        filter_fn=_strat_foreign_buy,
-        sort_by="foreign_cum20",
-    ),
     "回檔布局": Strategy(
         name="回檔布局",
         description="短期弱但中長期強，可能是低接機會",
@@ -740,19 +691,6 @@ STRATEGIES: dict[str, Strategy] = {
         filter_fn=_strat_allround,
         sort_by="composite",
         stocks_only=True,  # 需要長期分數才能達標
-    ),
-    "相對強勢": Strategy(
-        name="相對強勢",
-        description="20 日跑贏加權指數 >5%，且短期分數≥50（不追弱勢股）",
-        filter_fn=_strat_rs_strong,
-        sort_by="rs20",
-    ),
-    "月營收爆發": Strategy(
-        name="月營收爆發",
-        description="月營收年增率 > 20%（最新單月，可能是淡旺季效應）",
-        filter_fn=_strat_revenue_surge,
-        sort_by="rev_yoy_month",
-        stocks_only=True,
     ),
     "營收持續成長": Strategy(
         name="營收持續成長",

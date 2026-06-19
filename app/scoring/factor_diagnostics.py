@@ -10,10 +10,9 @@
 - Quintile spread = top 20% 的平均 forward return − bottom 20%；越大越有區分力
 - 樣本守則：單日 < 30 檔（信號太稀）或全期 < 5 個 IC 點（樣本太少）→ 不算
 
-效能：原始 compute 端每次 ~13s（74% 時間在讀 4M 列 factor_parts），所以加 `factor_ic_cache`
-表：cache key = (scope, signal_history.MAX(as_of), lookback_days)；snapshot 不變時 cache hit
-直接秒回，snapshot 推進就重算一次寫回 cache。對外呼叫者用 `get_factor_ic_cached` /
-`get_subfactor_ic_cached`。
+效能：原始 compute 端每次 ~3-5s（cross-sectional Spearman × 5 factor × 3 horizon），所以加
+`factor_ic_cache` 表：cache key = (scope, signal_history.MAX(as_of), lookback_days)；snapshot
+不變時 cache hit 直接秒回，snapshot 推進就重算一次寫回 cache。對外呼叫者用 `get_factor_ic_cached`。
 """
 from __future__ import annotations
 
@@ -473,135 +472,7 @@ def compute_rolling_ic_for_horizon(
 
 
 # ======================================================================
-# 子因子（sub-factor）IC：拆解 short/mid/long 內部各小項的預測力
-# ======================================================================
-
-@dataclass(frozen=True)
-class SubFactorICResult:
-    """單一 (horizon, factor) 子因子的 IC 結果。
-
-    例：horizon='short', factor='rsi' → RSI 子分數對 5/20/60 日 forward return 的相關性。
-    """
-    horizon: str
-    factor: str
-    forward_horizon: int  # 該 IC 量測的 forward return 天數
-    ic: float | None
-    ic_ir: float | None
-    top_quintile_return: float | None
-    bot_quintile_return: float | None
-    n_dates: int
-    avg_n_stocks: float
-    ic_ci_lo: float | None = None  # 95% CI（Newey-West HAC）
-    ic_ci_hi: float | None = None
-
-
-def _fetch_subfactor_data(db: Database, lookback_days: int, max_horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """讀 signal_history_factor_parts + 對應的 daily_price。
-    參考 _fetch_data 的 lookback 計算。"""
-    today = taipei_today()
-    earliest = (today - timedelta(days=lookback_days + max_horizon + 30)).isoformat()
-    with db.connect() as conn:
-        parts = pd.read_sql_query(
-            "SELECT as_of, stock_id, horizon, factor, score "
-            "FROM signal_history_factor_parts WHERE as_of >= ?",
-            conn, params=[earliest],
-        )
-        prices = read_close_with_adj_coalesced(conn, since=earliest)
-    return parts, prices
-
-
-def compute_subfactor_ic(
-    db: Database,
-    *,
-    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-    horizons: tuple[int, ...] = DEFAULT_HORIZONS,
-) -> list[SubFactorICResult]:
-    """對 signal_history_factor_parts 內每個 (horizon, factor) 子分數算 IC。
-
-    輸出可拿來回答「短期分數整體 IC ≈ 0，是哪個子因子（RSI / KD / MA / foreign...）拖累？」。
-    """
-    if not horizons:
-        return []
-    parts, prices = _fetch_subfactor_data(db, lookback_days, max(horizons))
-    if parts.empty or prices.empty:
-        logger.info("subfactor_diagnostics: 資料不足 (parts=%d, prices=%d)", len(parts), len(prices))
-        return []
-
-    parts = parts.copy()
-    parts["as_of"] = pd.to_datetime(parts["as_of"])
-    price_wide = _build_price_pivot(prices)
-    if price_wide.empty:
-        return []
-
-    # parts 表可能 ~ 50k row/day × 90 day = 4.5M 列，pivot_table 一次太大 →
-    # 改 groupby (horizon, factor) 拆成 N 個小 pivot，每個 pivot 只用該因子的 row。
-    # 同時把 price_wide 縮到 parts 涵蓋的 stock 集合（剔除權證等）。
-    factor_stocks = parts["stock_id"].unique()
-    common_cols = price_wide.columns.intersection(factor_stocks)
-    if not common_cols.empty:
-        price_wide = price_wide[common_cols]
-
-    out: list[SubFactorICResult] = []
-    # 預 rank forward_returns（per horizon）。21 個 sub-factor 共用，省 21 × 3 - 3 = 60 次 rank。
-    forward_returns_by_h: dict[int, pd.DataFrame] = {}
-    fwd_ranked_by_h: dict[int, _RankedFrame] = {}
-    for horizon in horizons:
-        forward_close = price_wide.shift(-horizon)
-        fr = (forward_close / price_wide) - 1.0
-        forward_returns_by_h[horizon] = fr
-        fwd_ranked_by_h[horizon] = _rank_frame(fr)
-
-    for (horizon_name, factor_name), grp in parts.groupby(["horizon", "factor"], sort=False):
-        # pivot 此子因子分數：rows=as_of, cols=stock_id
-        try:
-            factor_pivot = grp.pivot_table(
-                index="as_of", columns="stock_id", values="score", aggfunc="first",
-            )
-        except Exception as e:
-            logger.warning("subfactor pivot 失敗 (%s/%s): %s", horizon_name, factor_name, e)
-            continue
-        # 預 rank 此 sub-factor（3 horizon 共用，省 2 次重複）
-        factor_ranked = _rank_frame(factor_pivot)
-
-        for fwd_h, forward_returns in forward_returns_by_h.items():
-            ic_per_date, q5_per_date, q1_per_date, n_per_date = _vectorized_ic_metrics(
-                factor_pivot, forward_returns,
-                factor_ranked=factor_ranked, fwd_ranked=fwd_ranked_by_h[fwd_h],
-            )
-
-            if len(ic_per_date) < MIN_DATES_PER_FACTOR:
-                out.append(SubFactorICResult(
-                    horizon=str(horizon_name), factor=str(factor_name), forward_horizon=fwd_h,
-                    ic=None, ic_ir=None,
-                    top_quintile_return=None, bot_quintile_return=None,
-                    n_dates=len(ic_per_date),
-                    avg_n_stocks=float(np.mean(n_per_date)) if n_per_date else 0.0,
-                ))
-                continue
-
-            mean_ic = float(np.mean(ic_per_date))
-            std_ic = float(np.std(ic_per_date, ddof=1)) if len(ic_per_date) > 1 else 0.0
-            ic_ir = mean_ic / std_ic if std_ic > 1e-9 else None
-            ci_lo, ci_hi = _newey_west_mean_ci(ic_per_date, lag=max(1, fwd_h - 1))
-
-            out.append(SubFactorICResult(
-                horizon=str(horizon_name), factor=str(factor_name), forward_horizon=fwd_h,
-                ic=mean_ic, ic_ir=ic_ir,
-                top_quintile_return=float(np.mean(q5_per_date)) if q5_per_date else None,
-                bot_quintile_return=float(np.mean(q1_per_date)) if q1_per_date else None,
-                n_dates=len(ic_per_date),
-                avg_n_stocks=float(np.mean(n_per_date)),
-                ic_ci_lo=ci_lo, ic_ci_hi=ci_hi,
-            ))
-    return out
-
-
-def subfactor_to_dict_list(results: list[SubFactorICResult]) -> list[dict]:
-    return [asdict(r) for r in results]
-
-
-# ======================================================================
-# Cache layer：把 compute_* 結果存進 factor_ic_cache，避免每次 reload 4M 列
+# Cache layer：把 compute_factor_ic 結果存進 factor_ic_cache，避免每次重算
 # ======================================================================
 
 def _signal_history_max_as_of(db: Database) -> str | None:
@@ -734,44 +605,5 @@ def get_factor_ic_cached(
         for r in results
     ]
     _cache_write(db, scope="aggregate", snapshot_max_as_of=max_as_of,
-                 lookback_days=lookback_days, rows=rows_for_cache)
-    return results
-
-
-def get_subfactor_ic_cached(
-    db: Database, *, lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-    horizons: tuple[int, ...] = DEFAULT_HORIZONS,
-) -> list[SubFactorICResult]:
-    """Cache-first wrapper for compute_subfactor_ic。"""
-    max_as_of = _signal_history_max_as_of(db)
-    if max_as_of is None:
-        return []
-    cached = _cache_read(db, scope="subfactor", snapshot_max_as_of=max_as_of, lookback_days=lookback_days)
-    if cached is not None:
-        return [
-            SubFactorICResult(
-                horizon=r["horizon"], factor=r["factor"], forward_horizon=int(r["forward_horizon"]),
-                ic=r["ic"], ic_ir=r["ic_ir"],
-                top_quintile_return=r["top_quintile_return"],
-                bot_quintile_return=r["bot_quintile_return"],
-                n_dates=r["n_dates"], avg_n_stocks=r["avg_n_stocks"],
-                ic_ci_lo=r.get("ic_ci_lo"), ic_ci_hi=r.get("ic_ci_hi"),
-            )
-            for r in cached
-        ]
-
-    results = compute_subfactor_ic(db, lookback_days=lookback_days, horizons=horizons)
-    rows_for_cache = [
-        {
-            "horizon": r.horizon, "factor": r.factor, "forward_horizon": r.forward_horizon,
-            "ic": r.ic, "ic_ir": r.ic_ir,
-            "top_quintile_return": r.top_quintile_return,
-            "bot_quintile_return": r.bot_quintile_return,
-            "n_dates": r.n_dates, "avg_n_stocks": r.avg_n_stocks,
-            "ic_ci_lo": r.ic_ci_lo, "ic_ci_hi": r.ic_ci_hi,
-        }
-        for r in results
-    ]
-    _cache_write(db, scope="subfactor", snapshot_max_as_of=max_as_of,
                  lookback_days=lookback_days, rows=rows_for_cache)
     return results

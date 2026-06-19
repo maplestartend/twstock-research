@@ -119,16 +119,6 @@ def snapshot_today(
     })
     n = db.upsert_df(out, "signal_history")
     logger.info("signal_history: 寫入 %d 筆（as_of=%s）", n, as_of)
-
-    # 子因子分數（給 /diagnostics sub-factor IC 用）。score_all 透過 .attrs 帶出長格式 DataFrame。
-    # 缺值（資料不足造成的 None）也寫，下游 IC 算法跑 dropna 排除。
-    parts_df = df.attrs.get("parts") if hasattr(df, "attrs") else None
-    if parts_df is not None and not parts_df.empty:
-        # 與 signal_history 同 transaction 邏輯：upsert by (stock_id, as_of, horizon, factor)
-        # NaN/None → SQL NULL；upsert_df 會處理。
-        m = db.upsert_df(parts_df, "signal_history_factor_parts")
-        logger.info("signal_history_factor_parts: 寫入 %d 筆（as_of=%s）", m, as_of)
-
     return n
 
 

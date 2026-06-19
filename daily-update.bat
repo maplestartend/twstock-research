@@ -66,8 +66,8 @@ if %RC4% neq 0 (
     echo [WARN] backfill_etf_adj_yfinance failed with code %RC4%.
 )
 
-REM signal_history + factor_parts 保留（每天刪舊列；VACUUM 每週日一次回收磁碟）
-REM 近 365 天逐日 + 之前只留週一；刪 factor_parts 會連動清空 factor_ic_cache。
+REM signal_history 保留（每天刪舊列；VACUUM 每週日一次回收磁碟）
+REM 近 365 天逐日 + 之前只留週一；刪 signal_history 列會連動清空 factor_ic_cache。
 REM idempotent：第二次跑刪 0 列。VACUUM best-effort：dashboard 鎖住 DB 時自動跳過。
 REM 不綁 market_update 的 RC：prune 只動歷史表，與當日抓取成敗無關；失敗只 WARN 不中斷。
 %PYTHON% -m scripts.prune_signals --vacuum-weekly

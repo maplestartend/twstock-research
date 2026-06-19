@@ -15,7 +15,6 @@ from app.scoring.factor_diagnostics import (
     DEFAULT_ROLLING_WINDOW,
     compute_rolling_ic_for_horizon,
     get_factor_ic_cached,
-    get_subfactor_ic_cached,
 )
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
@@ -81,68 +80,6 @@ def factor_ic(
         for r in results
     ]
     return FactorICResponse(
-        lookback_days=lookback_days,
-        horizons=list(horizons),
-        forward_return_basis=FORWARD_RETURN_BASIS,
-        execution_assumption=EXECUTION_ASSUMPTION,
-        ic_ci_method=IC_CI_METHOD,
-        rows=rows,
-    )
-
-
-class SubFactorICRow(CamelModel):
-    horizon: str
-    factor: str
-    forward_horizon: int
-    ic: float | None
-    ic_ir: float | None
-    top_quintile_return: float | None
-    bot_quintile_return: float | None
-    n_dates: int
-    avg_n_stocks: float
-    ic_ci_lo: float | None = None
-    ic_ci_hi: float | None = None
-
-
-class SubFactorICResponse(CamelModel):
-    lookback_days: int
-    horizons: list[int]
-    forward_return_basis: str
-    execution_assumption: str
-    ic_ci_method: str
-    rows: list[SubFactorICRow]
-
-
-@router.get("/sub-factor-ic", response_model=SubFactorICResponse)
-def sub_factor_ic(
-    lookback_days: int = Query(default=DEFAULT_LOOKBACK_DAYS, ge=30, le=2000),
-    db: Database = Depends(get_db),
-) -> SubFactorICResponse:
-    """子因子 IC 拆解：每個 (horizon, factor, forward_horizon) 的預測力。
-
-    回答「短期分數整體 IC ≈ 0，是哪個子因子（rsi / kd / ma_alignment / foreign...）拖累？」。
-    讀 signal_history_factor_parts 表，需先用 backfill_signal_history 寫入分數歷史；
-    舊 schema（沒寫 parts）的 DB 會回空 rows。
-    """
-    horizons = DEFAULT_HORIZONS
-    results = get_subfactor_ic_cached(db, lookback_days=lookback_days, horizons=horizons)
-    rows = [
-        SubFactorICRow(
-            horizon=r.horizon,
-            factor=r.factor,
-            forward_horizon=r.forward_horizon,
-            ic=r.ic,
-            ic_ir=r.ic_ir,
-            top_quintile_return=r.top_quintile_return,
-            bot_quintile_return=r.bot_quintile_return,
-            n_dates=r.n_dates,
-            avg_n_stocks=r.avg_n_stocks,
-            ic_ci_lo=r.ic_ci_lo,
-            ic_ci_hi=r.ic_ci_hi,
-        )
-        for r in results
-    ]
-    return SubFactorICResponse(
         lookback_days=lookback_days,
         horizons=list(horizons),
         forward_return_basis=FORWARD_RETURN_BASIS,

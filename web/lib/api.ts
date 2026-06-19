@@ -726,29 +726,6 @@ export type FactorICResponse = {
   rows: FactorICRow[];
 };
 
-export type SubFactorICRow = {
-  horizon: string;            // 'short' | 'mid' | 'long'
-  factor: string;             // 'rsi', 'kd', 'ma_alignment', etc.
-  forwardHorizon: number;     // 5 / 20 / 60
-  ic: number | null;
-  icIr: number | null;
-  topQuintileReturn: number | null;
-  botQuintileReturn: number | null;
-  nDates: number;
-  avgNStocks: number;
-  icCiLo: number | null;
-  icCiHi: number | null;
-};
-
-export type SubFactorICResponse = {
-  lookbackDays: number;
-  horizons: number[];
-  forwardReturnBasis: string;
-  executionAssumption: string;
-  icCiMethod: string;
-  rows: SubFactorICRow[];
-};
-
 export type RollingICRow = {
   date: string;                    // YYYY-MM-DD
   short: number | null;

@@ -15,7 +15,6 @@ from app import watchlist as wl_mod
 from app.data.db import Database
 from app.scoring import preset as preset_mod
 from app.scoring.engine import score_stock
-from app.scoring.snapshot_freshness import ensure_fresh
 from app.scoring.rubric import (
     BEGINNER_VISIBLE_KEYS,
     LONG_TERM_WEIGHTS,
@@ -50,119 +49,31 @@ class TunerBreakdownResponse(CamelModel):
     default_weights: DefaultWeights
 
 
-def _empty_parts() -> tuple[dict[str, float | None], dict[str, float | None], dict[str, float | None]]:
-    return (
-        {k: None for k in SHORT_TERM_WEIGHTS},
-        {k: None for k in MID_TERM_WEIGHTS},
-        {k: None for k in LONG_TERM_WEIGHTS},
-    )
-
-
-def _breakdown_from_snapshot(
-    db: Database,
-    watch_items: list[tuple[str, str]],
-) -> tuple[list[StockBreakdown], set[str]]:
-    """優先從 signal_history + factor_parts 載入，避免逐檔 score_stock。"""
-    if not watch_items:
-        return [], set()
-
-    sids = [sid for sid, _ in watch_items]
-    with db.connect() as conn:
-        latest_row = conn.execute("SELECT MAX(as_of) AS m FROM signal_history").fetchone()
-        as_of = latest_row["m"] if latest_row and latest_row["m"] else None
-        if as_of is None:
-            return [], set(sids)
-
-        ph = ",".join("?" for _ in sids)
-        snapshot_rows = conn.execute(
-            f"SELECT stock_id, stock_name, close, short, mid, long, composite "
-            f"FROM signal_history WHERE as_of=? AND stock_id IN ({ph})",
-            (as_of, *sids),
-        ).fetchall()
-        part_rows = conn.execute(
-            f"SELECT stock_id, horizon, factor, score "
-            f"FROM signal_history_factor_parts WHERE as_of=? AND stock_id IN ({ph})",
-            (as_of, *sids),
-        ).fetchall()
-
-    by_sid = {r["stock_id"]: r for r in snapshot_rows}
-    parts_by_sid: dict[str, dict[str, dict[str, float | None]]] = {}
-    for r in part_rows:
-        sid = r["stock_id"]
-        horizon = str(r["horizon"] or "").lower()
-        factor = str(r["factor"] or "")
-        if not sid or not factor:
-            continue
-        if horizon not in ("short", "mid", "long"):
-            continue
-        if sid not in parts_by_sid:
-            short_parts, mid_parts, long_parts = _empty_parts()
-            parts_by_sid[sid] = {
-                "short": short_parts,
-                "mid": mid_parts,
-                "long": long_parts,
-            }
-        target = parts_by_sid[sid][horizon]
-        if factor in target:
-            target[factor] = _sf(r["score"])
-
-    stocks: list[StockBreakdown] = []
-    missing: set[str] = set()
-    for sid, watch_name in watch_items:
-        snap = by_sid.get(sid)
-        parts = parts_by_sid.get(sid)
-        if snap is None or parts is None:
-            missing.add(sid)
-            continue
-        stocks.append(StockBreakdown(
-            stock_id=sid,
-            stock_name=(snap["stock_name"] or watch_name or sid),
-            close=_sf(snap["close"]),
-            short_parts=parts["short"],
-            mid_parts=parts["mid"],
-            long_parts=parts["long"],
-            short_default=_sf(snap["short"]),
-            mid_default=_sf(snap["mid"]),
-            long_default=_sf(snap["long"]),
-            composite_default=_sf(snap["composite"]),
-        ))
-    return stocks, missing
-
-
 @router.get("/breakdown", response_model=TunerBreakdownResponse)
 def breakdown(db: Database = Depends(get_db)) -> TunerBreakdownResponse:
     wl = wl_mod.load()
     watch_items = list(wl.items())
     stocks: list[StockBreakdown] = []
-    missing_sids: set[str] = set()
 
-    # 先確保快照新鮮，再吃快照資料，只有缺漏才 fallback 即時計分。
-    ensure_fresh(db)
-    snapshot_stocks, missing_sids = _breakdown_from_snapshot(db, watch_items)
-    stocks.extend(snapshot_stocks)
-    if missing_sids:
-        for sid, name in watch_items:
-            if sid not in missing_sids:
-                continue
-            s = score_stock(db, sid, name)
-            if s is None:
-                continue
-            stocks.append(StockBreakdown(
-                stock_id=s.stock_id,
-                stock_name=s.stock_name,
-                close=_sf(s.close),
-                short_parts={k: _sf(v) for k, v in s.short.parts.items()},
-                mid_parts={k: _sf(v) for k, v in s.mid.parts.items()},
-                long_parts={k: _sf(v) for k, v in s.long.parts.items()},
-                short_default=_sf(s.short.total),
-                mid_default=_sf(s.mid.total),
-                long_default=_sf(s.long.total),
-                composite_default=_sf(s.signals.get("composite_score")),
-            ))
-
-    # 依 watchlist 原順序回傳，維持 UI 可預期排序。
-    order = {sid: i for i, (sid, _) in enumerate(watch_items)}
-    stocks.sort(key=lambda s: order.get(s.stock_id, 10**9))
+    # 自選清單通常只有數檔～數十檔，直接逐檔即時計分（score_stock ~13ms/檔），取得短/中/長期
+    # 子因子分數供前端 client-side 即時重算權重。依 watch_items 原順序 append，維持 UI 排序。
+    # （2026-06：原本優先讀 signal_history_factor_parts 快取拆解，該表已整張移除 → 統一走即時計分。）
+    for sid, name in watch_items:
+        s = score_stock(db, sid, name)
+        if s is None:
+            continue
+        stocks.append(StockBreakdown(
+            stock_id=s.stock_id,
+            stock_name=s.stock_name,
+            close=_sf(s.close),
+            short_parts={k: _sf(v) for k, v in s.short.parts.items()},
+            mid_parts={k: _sf(v) for k, v in s.mid.parts.items()},
+            long_parts={k: _sf(v) for k, v in s.long.parts.items()},
+            short_default=_sf(s.short.total),
+            mid_default=_sf(s.mid.total),
+            long_default=_sf(s.long.total),
+            composite_default=_sf(s.signals.get("composite_score")),
+        ))
 
     return TunerBreakdownResponse(
         stocks=stocks,

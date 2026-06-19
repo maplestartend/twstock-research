@@ -95,18 +95,15 @@ def main() -> int:
     if args.clear and not args.dry_run:
         with db.connect() as conn:
             n_sh = conn.execute("SELECT COUNT(*) FROM signal_history").fetchone()[0]
-            n_parts = conn.execute("SELECT COUNT(*) FROM signal_history_factor_parts").fetchone()[0]
             n_cache = conn.execute("SELECT COUNT(*) FROM factor_ic_cache").fetchone()[0]
             conn.execute("DELETE FROM signal_history")
-            conn.execute("DELETE FROM signal_history_factor_parts")
             # IC cache key 是 (scope, snapshot_max_as_of, lookback)；--clear 用同一個日期重寫，
             # 不清 cache 會回舊算法的 IC 值（髒讀）。
             conn.execute("DELETE FROM factor_ic_cache")
             conn.commit()
-        logger.info("--clear: 清掉 signal_history %d 列 + factor_parts %d 列 + ic_cache %d 列",
-                    n_sh, n_parts, n_cache)
+        logger.info("--clear: 清掉 signal_history %d 列 + ic_cache %d 列", n_sh, n_cache)
     elif args.clear and args.dry_run:
-        logger.info("[dry-run] would DELETE FROM signal_history + factor_parts + ic_cache")
+        logger.info("[dry-run] would DELETE FROM signal_history + ic_cache")
 
     today = date.today()
     targets = _trading_days_back(db, args.days, today)
@@ -179,16 +176,14 @@ def main() -> int:
         from app.scoring.factor_diagnostics import (
             DEFAULT_LOOKBACK_DAYS,
             get_factor_ic_cached,
-            get_subfactor_ic_cached,
         )
         with db.connect() as conn:
             conn.execute("DELETE FROM factor_ic_cache")
             conn.commit()
         t_cache = time.time()
         agg = get_factor_ic_cached(db, lookback_days=DEFAULT_LOOKBACK_DAYS)
-        sub = get_subfactor_ic_cached(db, lookback_days=DEFAULT_LOOKBACK_DAYS)
-        logger.info("預熱 IC cache：aggregate %d 列 + subfactor %d 列，耗時 %.1fs",
-                    len(agg), len(sub), time.time() - t_cache)
+        logger.info("預熱 IC cache：aggregate %d 列，耗時 %.1fs",
+                    len(agg), time.time() - t_cache)
     except Exception:
         logger.exception("預熱 IC cache 失敗（可忽略，UI 第一次進頁時會重算）")
     return 0

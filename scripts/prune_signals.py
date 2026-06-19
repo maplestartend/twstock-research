@@ -1,15 +1,15 @@
-"""S2-4：signal_history + signal_history_factor_parts retention。
+"""S2-4：signal_history retention。
 
-每天 market_update 寫入兩張歷史表 → 不清理就無限長大：
-- signal_history       ~2,000 列/天
-- signal_history_factor_parts  ~48,000 列/天（每檔 × 3 horizon × ~21 sub-factor）
-
-本腳本壓縮歷史以控制 DB 體積，兩張表用同一套保留策略：
+每天 market_update 寫入 signal_history（~2,000 列/天）→ 不清理就無限長大。
+本腳本壓縮歷史以控制 DB 體積：
 - 近 N 天（預設 365）逐日完整保留（雷達 / 歷史追蹤 / diagnostics 預設窗需要）
 - 超過 N 天只保留週一（壓縮率 ≈ 5x）
 
+（2026-06：signal_history_factor_parts 子因子歷史表已整張移除 — sub-factor IC 診斷下架，
+而它佔了全庫一半磁碟。詳見 docs/architecture.md。本腳本因此只剩 signal_history 一張表。）
+
 用法：
-    python -m scripts.prune_signals                  # 刪兩表舊列（不可逆），不 VACUUM
+    python -m scripts.prune_signals                  # 刪舊列（不可逆），不 VACUUM
     python -m scripts.prune_signals --dry-run        # 只報告會刪幾筆，不動資料
     python -m scripts.prune_signals --keep 365       # 改保留近 365 天
     python -m scripts.prune_signals --vacuum         # 刪完後 VACUUM 回收磁碟
@@ -22,9 +22,9 @@
      釋放的空間會留在 DB 內成為 free pages，下次成功 VACUUM 再回收。
    - 手動完整 VACUUM（例如首次清積壓）請先 `stop.bat` 收掉服務，再跑 `--vacuum`。
 
-刪 signal_history_factor_parts 會連動清空 factor_ic_cache：IC cache key 只追蹤
-signal_history 的 MAX(as_of)，不追蹤 factor_parts 內容；不清的話 lookback > N 天的
-sub-factor IC 會回到 prune 前的舊結果（stale）。詳見 prune_all()。
+刪 signal_history 列會連動清空 factor_ic_cache：cache key 含 COUNT(DISTINCT as_of)，prune
+後雖會自然 key-miss，但留著的 dead rows 無謂佔位，且 prune 表示日期集合已變、舊 IC 已過期，
+故一併清掉。詳見 prune_all()。
 """
 from __future__ import annotations
 
@@ -48,7 +48,6 @@ logger = logging.getLogger("prune_signals")
 _DEFAULT_KEEP_DAYS = 365
 
 _SIGNAL_TABLE = "signal_history"
-_PARTS_TABLE = "signal_history_factor_parts"
 
 # 週一壓縮的 WHERE：strftime('%w', as_of) 0=Sun..6=Sat，週一 = '1'。
 # table 用字串插值（SQLite 不能 bind identifier）；只接受本模組常數、非使用者輸入 → 安全
@@ -105,33 +104,29 @@ def prune_all(
     keep_days: int = _DEFAULT_KEEP_DAYS,
     dry_run: bool = False,
 ) -> dict:
-    """壓縮 signal_history + signal_history_factor_parts，並在實際刪到 factor_parts 列時
-    清空 factor_ic_cache。
+    """壓縮 signal_history，並在實際刪到列時清空 factor_ic_cache。
 
     為什麼要清 cache：factor_ic_cache 的 key 是
-    `{IC_ALGO_VERSION}:{signal_history.MAX(as_of)}:n{distinct as_of}`，**只追蹤
-    signal_history、不追蹤 factor_parts 內容**。prune factor_parts 後若不清 cache，
-    lookback_days > keep_days 的 /api/diagnostics/sub-factor-ic 會 cache hit 回到 prune 前
-    的舊 IC（stale）。這與 backfill_signal_history.py --clear 的「刪 parts → 清 cache」是同一
-    個不變式。only 在「真的刪到 parts 列」時清，避免無謂讓 cache 失效。
+    `{IC_ALGO_VERSION}:{signal_history.MAX(as_of)}:n{distinct as_of}`。prune 後 distinct
+    count 變、key 自然 miss，但留著的舊 cache row 無謂佔位、且日期集合已變代表舊 IC 已過期，
+    故在「真的刪到列」時一併清掉。only 在有刪除時清，避免無謂失效。
 
-    回傳 {signal_history: {...}, factor_parts: {...}, ic_cache_cleared: int}
+    回傳 {signal_history: {...}, ic_cache_cleared: int}
     """
     sh = prune(db, table=_SIGNAL_TABLE, keep_days=keep_days, dry_run=dry_run)
-    fp = prune(db, table=_PARTS_TABLE, keep_days=keep_days, dry_run=dry_run)
 
     cache_cleared = 0
-    if not dry_run and fp["deleted"] > 0:
+    if not dry_run and sh["deleted"] > 0:
         with db.connect() as conn:
             cur = conn.execute("DELETE FROM factor_ic_cache")
             cache_cleared = cur.rowcount
             conn.commit()
         logger.info(
-            "factor_ic_cache 已清空 %d 列（factor_parts 有刪除 → sub-factor IC 將重算）",
+            "factor_ic_cache 已清空 %d 列（signal_history 有刪除 → IC 將重算）",
             cache_cleared,
         )
 
-    return {"signal_history": sh, "factor_parts": fp, "ic_cache_cleared": cache_cleared}
+    return {"signal_history": sh, "ic_cache_cleared": cache_cleared}
 
 
 def _db_size_mb(db: Database) -> float:
@@ -180,7 +175,7 @@ def vacuum(db: Database, *, best_effort: bool = False) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Prune signal_history + factor_parts（近 N 天逐日 + 之前只留週一）"
+        description="Prune signal_history（近 N 天逐日 + 之前只留週一）"
     )
     parser.add_argument(
         "--keep",
@@ -219,13 +214,12 @@ def main() -> int:
     result = prune_all(db, keep_days=args.keep, dry_run=args.dry_run)
 
     mode = "[DRY-RUN]" if args.dry_run else "[DONE]"
-    for key in ("signal_history", "factor_parts"):
-        r = result[key]
-        logger.info(
-            "%s %s: %s 筆 -> %s 筆 (刪 %s 筆, cutoff=%s)",
-            mode, r["table"],
-            f"{r['before']:,}", f"{r['after']:,}", f"{r['deleted']:,}", r["cutoff_date"],
-        )
+    r = result["signal_history"]
+    logger.info(
+        "%s %s: %s 筆 -> %s 筆 (刪 %s 筆, cutoff=%s)",
+        mode, r["table"],
+        f"{r['before']:,}", f"{r['after']:,}", f"{r['deleted']:,}", r["cutoff_date"],
+    )
 
     if args.dry_run:
         return 0
