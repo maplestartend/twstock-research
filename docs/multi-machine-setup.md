@@ -127,7 +127,7 @@ set "CLOUD_DIR=%USERPROFILE%\OneDrive - ACME\台股備份"
 
 雙擊 `sync-from-cloud.bat` → 自動找雲端最新一份覆蓋 `data\stock.db` → 雙擊 `launch.bat`。
 
-第一次建議跑一下 `python -m pytest tests/ -q` 驗證 DB 沒被同步壞掉（529 collected，多數 passed + 2 skipped；prod-DB 整合測試需本機 data/stock.db）。
+第一次建議跑一下 `python -m pytest tests/ -q` 驗證 DB 沒被同步壞掉（535 collected，多數 passed + 2 skipped；prod-DB 整合測試需本機 data/stock.db）。
 
 > 命名澄清：`sync-from-cloud.bat` 名字像「雙向同步」其實是「**單向 pull**」（把 OneDrive
 > 的最新 DB 蓋到本機 `data\stock.db`）。新增 `pull-latest-db.bat` 為更精確的別名，

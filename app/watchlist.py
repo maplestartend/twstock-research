@@ -18,6 +18,9 @@ YAML 結構（v2，向後相容 v1）：
 """
 from __future__ import annotations
 
+import copy
+import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -26,12 +29,65 @@ from app.config import PROJECT_ROOT
 
 WATCHLIST_PATH = PROJECT_ROOT / "watchlist.yaml"
 
+# watchlist.yaml 每個請求會被讀好幾次（例如 /dashboard/home 一次就有 ex_dividend /
+# my_score_changes / movers↑ / movers↓ 各自 load() → 4 次 YAML parse）。檔案極少變動，
+# 用 (mtime_ns, size) 當 key 快取已解析的 raw dict：命中就跳過 open + yaml.safe_load。
+#
+# 正確性保證：
+# - 程式自身寫入一律走 _write_raw（atomic replace），它會主動 _invalidate_cache，
+#   **不依賴 mtime 解析度** → in-process 的 add/remove/save/set_tags 永遠拿得到新值。
+# - _read_raw() 永遠回 deepcopy：save/save_tags 等 mutator 會就地改 raw，回 copy 才不會
+#   污染到快取物件。watchlist 很小（數十檔），deepcopy 成本遠低於重新 parse YAML。
+#
+# 外部改檔（app 外手動編輯）偵測：靠 size 變化 + mtime 變化。但 Windows 檔案 mtime 受
+# 系統時鐘粗 tick 限制（實測同一 ~ms tick 內多次寫入會拿到相同 st_mtime_ns，並非奈秒解析度），
+# 故「同大小、且落在同一 mtime tick」的改寫理論上會撞 key。用 _MTIME_SETTLE_NS 防護：
+# mtime 距今很近（檔案可能還在變動）時不信任快取、強制重讀且不快取，等檔案「定下來」
+# 超過此窗才開始快取 → 任何外部改檔只要 read 發生在改檔後 1s 內就一定重讀到新內容。
+_MTIME_SETTLE_NS = 1_000_000_000  # 1s：mtime 距今 < 此值視為「剛寫過、可能還在變」
+_cache_lock = threading.Lock()
+_raw_cache: dict | None = None
+_raw_cache_key: tuple[int, int] | None = None
+
 
 def _read_raw() -> dict:
-    if not WATCHLIST_PATH.exists():
+    global _raw_cache, _raw_cache_key
+    try:
+        st = WATCHLIST_PATH.stat()
+    except OSError:
+        # 檔案不存在 / 無法 stat → 視為空，並清掉可能殘留的快取
+        with _cache_lock:
+            _raw_cache = None
+            _raw_cache_key = None
         return {}
+    key = (st.st_mtime_ns, st.st_size)
+    # 剛寫過的檔（mtime 距今 < settle 窗）不信任快取：避開粗 mtime tick 下「同大小、同 tick」
+    # 改寫被快取鎖成陳舊的風險。穩態下 watchlist 幾乎不變動，此分支幾乎永遠為 False。
+    fresh_write = (time.time_ns() - st.st_mtime_ns) < _MTIME_SETTLE_NS
+    with _cache_lock:
+        if not fresh_write and _raw_cache_key == key and _raw_cache is not None:
+            return copy.deepcopy(_raw_cache)
+    # cache miss：在鎖外做 IO + parse（避免長時間持鎖）
     with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        data = {}
+    with _cache_lock:
+        if fresh_write:
+            # 檔案可能還在變動 → 不鎖進快取（避免把中途版本當成穩定值）
+            _raw_cache = None
+            _raw_cache_key = None
+        else:
+            _raw_cache = data
+            _raw_cache_key = key
+    return copy.deepcopy(data)
+
+
+def _invalidate_cache() -> None:
+    global _raw_cache, _raw_cache_key
+    with _cache_lock:
+        _raw_cache = None
+        _raw_cache_key = None
 
 
 def _write_raw(payload: dict) -> None:
@@ -42,6 +98,8 @@ def _write_raw(payload: dict) -> None:
             payload, f, allow_unicode=True, default_flow_style=False, sort_keys=False
         )
     tmp.replace(WATCHLIST_PATH)
+    # 寫入後立即失效，不靠 mtime 解析度偵測（同一奈秒內的後續讀取也保證拿到新內容）
+    _invalidate_cache()
 
 
 def _normalize_tags(tags: list[str] | None) -> list[str]:

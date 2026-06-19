@@ -1,4 +1,5 @@
 import { PART_LABEL } from "@/lib/labels";
+import { scoreTier } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export function ScoreBreakdownBars({ parts }: { parts: Record<string, number | null> }) {
@@ -11,7 +12,8 @@ export function ScoreBreakdownBars({ parts }: { parts: Record<string, number | n
   return (
     <ul className="flex flex-col gap-2">
       {entries.map(([k, v]) => {
-        const tier = v >= 70 ? "strong-pos" : v >= 55 ? "pos" : v >= 45 ? "neutral" : v >= 30 ? "caution" : "danger";
+        // entries 已過濾成有限數字，scoreTier 不會回 "unknown"；門檻與舊內聯版一致（70/55/45/30）
+        const tier = scoreTier(v);
         return (
           <li key={k} className="flex items-center gap-3">
             <span className="w-20 text-xs text-[var(--text-secondary)] shrink-0 truncate">{PART_LABEL[k] ?? k}</span>

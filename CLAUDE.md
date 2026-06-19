@@ -50,7 +50,7 @@ type-check + build 綠燈不代表畫面對。改 `web/components/`、`web/app/`
 ## 跑測試
 
 ```bash
-python -m pytest tests/ -q     # 全套 529 collected（本機含 data/stock.db 才跑得動 prod-DB 整合測試）
+python -m pytest tests/ -q     # 全套 535 collected（本機含 data/stock.db 才跑得動 prod-DB 整合測試）
 cd web && npx tsc --noEmit     # frontend type check
 ```
 
@@ -58,7 +58,7 @@ cd web && npx tsc --noEmit     # frontend type check
 
 ### CI 自動化（`.github/workflows/ci.yml`）
 這些關卡以前只靠人工跑，現由 GitHub Actions 在 `push: main` / PR 自動執行（硬關卡）：
-- `pytest -m "not needs_prod_db"`（459 題的 DB-independent 子集）、`scripts.dump_openapi --check`（OpenAPI drift）
+- `pytest -m "not needs_prod_db"`（465 題的 DB-independent 子集）、`scripts.dump_openapi --check`（OpenAPI drift）
 - 前端 `tsc --noEmit`、`scripts/check_bat.py *.bat`（BOM/CR-only=fail）、`gitleaks`（secret scan）
 - SCA（`pip-audit` + `npm audit`）是**報告型**（`continue-on-error`），不阻擋。
 
