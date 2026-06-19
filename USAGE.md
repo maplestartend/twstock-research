@@ -286,7 +286,7 @@ python -m scripts.backfill_financials_history --quarters 8
 | `python -m scripts.daily_update --stock 2330` | 個股財報深度補完（FinMind） | ~8 秒 |
 | `python -m scripts.dq_check` / `--push` | 資料品質檢查 | ~1 秒 |
 | `python -m scripts.run_stats` / `--tail 20` / `--show-errors` | 執行統計 | ~1 秒 |
-| `python -m scripts.prune_signals` / `--dry-run` / `--keep 365` | signal_history **+ signal_history_factor_parts** 壓縮（近 365 天逐日 + 之前只留週一），刪 factor_parts 會連動清空 factor_ic_cache。**已接到 `daily-update.bat`** 每天跑 | 刪列 ~1 秒 |
+| `python -m scripts.prune_signals` / `--dry-run` / `--keep 365` | signal_history 壓縮（近 365 天逐日 + 之前只留週一），刪列會連動清空 factor_ic_cache。**已接到 `daily-update.bat`** 每天跑 | 刪列 ~1 秒 |
 | `python -m scripts.prune_signals --vacuum` | 刪完後完整 VACUUM 回收磁碟（**需 exclusive lock，先 stop.bat**）；首次清 ~3.7 年積壓用這個 | DELETE ~數秒、VACUUM 數分鐘 |
 | `python -m scripts.prune_signals --vacuum-weekly` | 排程用：只在**週日** best-effort VACUUM（dashboard 鎖住 DB 就跳過不報錯）。`daily-update.bat` 跑的就是這條 | ~1 秒（非週日）|
 | `python -m scripts.backfill_signal_history --days 60` | 把 signal_history 回填 60 個交易日（給「因子檢定」頁吃）；改過 scoring 邏輯後加 `--clear` 先清舊算法的快照再重算。可搭配 `--skip-existing`（只補缺）或 `--no-fundamentals`（加速）；`--workers N` 並行（預設 4，i5-13400F 建議 6） | 含財報約 40~60 秒/天；workers=6 1000 天約 ~100 分鐘 |

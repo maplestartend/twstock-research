@@ -106,10 +106,10 @@ python -m scripts.run_stats --show-errors  # 只看錯誤
 ```bash
 pip install -r requirements.lock.txt   # 內含 pytest / httpx
 python -m pytest tests/ -q
-# 509 collected：本機 507 passed + 2 skipped（含吃 data/stock.db 的 prod-DB 整合測試）
+# 529 collected：本機含吃 data/stock.db 的 prod-DB 整合測試（70 題標 needs_prod_db）
 ```
 
-> CI（`.github/workflows/ci.yml`）只跑 `-m "not needs_prod_db"` 的 449 題 DB-independent 子集（`data/stock.db` ~9.4GB 不在 git），外加 `dump_openapi --check` / 前端 `tsc` / `scripts/check_bat.py` / gitleaks；SCA（pip-audit / npm audit）報告型不阻擋。
+> CI（`.github/workflows/ci.yml`）只跑 `-m "not needs_prod_db"` 的 459 題 DB-independent 子集（`data/stock.db` ~1.2GB 不在 git），外加 `dump_openapi --check` / 前端 `tsc` / `scripts/check_bat.py` / gitleaks；SCA（pip-audit / npm audit）報告型不阻擋。
 
 覆蓋（重點）：
 - `tests/test_risk.py`：ATR、部位計算、集中度
