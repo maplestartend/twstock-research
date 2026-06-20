@@ -5,6 +5,8 @@ __pycache__/
 venv/
 .env
 config.yaml
+# 個人自選股清單（含個人關注標的）；範本走 watchlist.yaml.example
+watchlist.yaml
 data/*.db
 data/*.db-journal
 data/*.db-wal
