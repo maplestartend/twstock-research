@@ -1,13 +1,18 @@
 """雷達：掃描 DB 內所有股票，套用評分，依照不同策略篩選候選名單。
 
 效能設計：批次載入全市場歷史資料到記憶體，而非每支股票 5 次 DB 查詢。
-對 ~2300 檔（上市+上櫃，is_tradable=1，排除權證/ETN）掃描 ~20-30 秒。
+對 ~2300 檔（上市+上櫃，is_tradable=1，排除權證/ETN）序列掃描 ~55s；全市場快照預設用
+多進程切塊並行（score_all 的 max_workers），~14s（4x，輸出與序列 bit-identical）。
 """
 from __future__ import annotations
 
 import logging
+import multiprocessing as mp
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Callable
 
 import pandas as pd
@@ -22,6 +27,13 @@ from app.indicators import technical as tech
 from app.scoring import engine as eng
 
 logger = logging.getLogger(__name__)
+
+# score_all 並行門檻：只有全市場快照（~2300 檔）才值得開 process pool；小批次（盤中即時頁
+# ≤50 檔）並行開銷大於收益 → 序列。實測：per-stock 評分是 GIL-bound（pandas/Python 為主），
+# 執行緒只會更慢（0.76x），必須用「多進程切塊」才有真加速（8 進程 ~4x）。worker 上限 8：
+# 再多會被「每個 worker 各自重算 taiex/regime/yield_z 等全市場 context」的固定成本吃掉邊際收益。
+_PARALLEL_MIN_STOCKS = 200
+_PARALLEL_MAX_WORKERS = 8
 
 
 import re
@@ -166,6 +178,87 @@ def _bulk_load(
     return df
 
 
+def _resolve_score_workers(
+    max_workers: int | None,
+    stock_ids: list[str] | None,
+    live_prices: dict[str, float] | None,
+    n_stocks: int,
+) -> int:
+    """決定 score_all 用幾個 worker。回傳 1 = 序列。
+
+    - max_workers 明確指定（含 1）→ 直接用（給測試 / benchmark / 強制序列）。
+    - 否則 auto：只有「全市場快照」（無 stock_ids、無 live_prices、檔數 ≥ 門檻）才並行。
+    - **nested 防護**：若自己已經在某個 multiprocessing 子進程裡（如 backfill_signal_history
+      的 day-worker，本身就是 ProcessPool 子進程），`mp.parent_process()` 非 None → 退回序列，
+      避免 4 day-workers × 8 = 32 進程過度訂閱。
+    """
+    if max_workers is not None:
+        return max(1, max_workers)
+    if stock_ids is not None or live_prices is not None:
+        return 1
+    if n_stocks < _PARALLEL_MIN_STOCKS:
+        return 1
+    if mp.parent_process() is not None:
+        return 1
+    return min(_PARALLEL_MAX_WORKERS, (os.cpu_count() or 1))
+
+
+def _even_chunks(items: list, n: int) -> list[list]:
+    """把 items 平均切成最多 n 塊（保序、不留空塊）。"""
+    n = max(1, min(n, len(items)))
+    k, m = divmod(len(items), n)
+    out: list[list] = []
+    i = 0
+    for j in range(n):
+        size = k + (1 if j < m else 0)
+        out.append(items[i:i + size])
+        i += size
+    return out
+
+
+def _score_all_chunk_worker(packed: tuple) -> list[dict]:
+    """ProcessPool worker（必須是 module-level 才可 pickle）：對一塊股票跑序列 score_all，
+    回傳 row dicts（不是 DataFrame）→ 讓 parent 一次性建 DataFrame，dtype 與序列版一致
+    （避免 pd.concat 多塊時 float64/object 混型）。"""
+    db_path, chunk, as_of, min_days, include_fundamentals = packed
+    db = Database(Path(db_path))
+    df = score_all(
+        db,
+        min_days=min_days,
+        include_fundamentals=include_fundamentals,
+        as_of=as_of,
+        candidate_stocks=chunk,
+        stock_ids=[sid for sid, _ in chunk],
+        max_workers=1,
+    )
+    return df.to_dict("records")
+
+
+def _score_all_parallel(
+    db: Database,
+    stocks: list[tuple[str, str]],
+    workers: int,
+    *,
+    as_of: str,
+    min_days: int,
+    include_fundamentals: bool,
+) -> pd.DataFrame:
+    """切塊跑多進程 score_all，合併所有 worker 的 row dicts 後一次建 DataFrame。
+
+    列順序 = chunk 順序串接（ex.map 保序）→ 與序列版逐列一致。
+    """
+    chunks = _even_chunks(stocks, workers)
+    packed = [
+        (str(db.path), chunk, as_of, min_days, include_fundamentals)
+        for chunk in chunks
+    ]
+    rows: list[dict] = []
+    with ProcessPoolExecutor(max_workers=len(packed)) as ex:
+        for recs in ex.map(_score_all_chunk_worker, packed):
+            rows.extend(recs)
+    return pd.DataFrame(rows)
+
+
 def score_all(
     db: Database,
     min_days: int = 60,
@@ -176,6 +269,7 @@ def score_all(
     candidate_stocks: list[tuple[str, str]] | None = None,
     stock_ids: list[str] | None = None,
     live_prices: dict[str, float] | None = None,
+    max_workers: int | None = None,
 ) -> pd.DataFrame:
     """對 DB 所有有足夠資料的股票打分。
 
@@ -198,6 +292,12 @@ def score_all(
     不變式：當 live_prices[sid] == 該檔快照當下的收盤、且 stock_ids 涵蓋該檔時，本函式對該檔
     產出的 short/mid/long/composite 與「stock_ids=None 的全市場快照」逐位元相同
     （override 為 no-op、z 用全市場、視窗一致）。由 tests/test_intraday_score.py 守住。
+
+    max_workers: 全市場快照的並行度。None（預設）→ auto：主進程跑全市場（≥200 檔、無
+    stock_ids/live_prices）時切塊跑多進程（per-stock 評分 GIL-bound，執行緒無效、多進程
+    ~4x），且若自己已在子進程內（backfill day-worker）自動退序列防 nested。傳明確值可強制
+    （1=序列，給 backfill/測試）。並行輸出與序列 **bit-identical（含 dtype）**，見
+    tests/test_score_all_parallel.py。
     """
     if as_of is None:
         as_of_d = taipei_today()
@@ -214,6 +314,17 @@ def score_all(
         stocks = stocks[:limit]
     if not stocks:
         return pd.DataFrame()
+
+    # 並行分派：必須在昂貴的批次載入「之前」（否則 parent 白載一次全市場再丟掉）。只有全市場
+    # 快照（無 stock_ids / 無 live_prices、檔數夠多）才切塊跑多進程；worker 內 max_workers=1
+    # 跑序列。每個 worker 用 stock_ids=chunk 載自己那塊 → per-stock 分數與全市場快照等價
+    # （score_all 不變式，tests/test_intraday_score 守住），rows 合併後一次建 DataFrame。
+    workers = _resolve_score_workers(max_workers, stock_ids, live_prices, len(stocks))
+    if workers > 1:
+        return _score_all_parallel(
+            db, stocks, workers,
+            as_of=as_of_str, min_days=min_days, include_fundamentals=include_fundamentals,
+        )
 
     # 分窗讀取：
     # - 技術指標只需 ma240 + slope/oscillator 暖機，300 天足夠（較原 400 天省 ~25% I/O）
@@ -403,11 +514,18 @@ def score_all(
     fin_derived_groups = {k: g for k, g in fin_derived_all.groupby("stock_id")} if not fin_derived_all.empty else {}
 
     empty = pd.DataFrame()
-    rows = []
-    for sid, name in stocks:
+    # v5c Wave 2 Phase 2 Style Score：hoist 出迴圈只 import 一次（原本每檔重 import）
+    from app.scoring.style import compute_style_scores
+
+    def _score_one(sid: str, name: str) -> dict | None:
+        """單檔評分（純函式：只讀上面批次載入好的共享資料，回傳一列 dict 或 None）。
+
+        無共享可變狀態 → 可被 ThreadPoolExecutor 並行呼叫（_override_last_close /
+        enrich 都在 copy 上操作、compute_rs 只讀 taiex）。
+        """
         price = price_groups.get(sid, empty)
         if price.empty or len(price) < min_days:
-            continue
+            return None
         try:
             # 盤中即時重算：enrich 前覆寫最後一根 close（與 score_stock 的 live_price 同機制）。
             # high/low 同步擴張包住新 close，技術指標（MA/KD/RSI/Bollinger/VR）才反映盤中價。
@@ -444,8 +562,6 @@ def score_all(
             mid = eng.score_mid_term(price, chip_snap, fund_snap, stock_id=sid)
             long_ = eng.score_long_term(fund_snap, stock_id=sid)
             vr_macd_val = short.parts.get("vr_macd")
-            # v5c Wave 2 Phase 2：算 4 個 Style Score 一起寫入 snapshot
-            from app.scoring.style import compute_style_scores
             styles = compute_style_scores(short.parts, mid.parts, long_.parts)
             # vr26 原始值給 _strat_vr_macd 做更嚴格的 filter（VR>150）
             last_row = price.iloc[-1]
@@ -454,14 +570,14 @@ def score_all(
 
             composite, _comp_usage = eng.composite_score(short.total, mid.total, long_.total, regime=regime)
             data_completeness = eng.overall_completeness(short, mid, long_, regime=regime)
-            as_of_str = str(price.iloc[-1]["date"].date())
-            is_stale = eng.check_stale(as_of_str)
+            as_of_row = str(price.iloc[-1]["date"].date())
+            is_stale = eng.check_stale(as_of_row)
             rs20 = mkt_ctx.compute_rs(price, taiex, 20)
             rs60 = mkt_ctx.compute_rs(price, taiex, 60)
             rev_mom = rev_latest.get(sid, {}).get("mom_pct") if rev_latest else None
             rev_yoy_m = rev_latest.get(sid, {}).get("yoy_pct") if rev_latest else None
             rev_streak = rev_streaks.get(sid, {})
-            rows.append({
+            return {
                 "stock_id": sid,
                 "stock_name": name,
                 "close": float(price.iloc[-1]["close"]),
@@ -495,17 +611,24 @@ def score_all(
                 "rev_yoy_streak_hot": rev_streak.get("rev_yoy_streak_hot"),
                 "amount_20d": liquidity_by_sid.get(sid, {}).get("amount_20d"),
                 "pct_change_today": liquidity_by_sid.get(sid, {}).get("pct_change_today"),
-                "as_of": as_of_str,
+                "as_of": as_of_row,
                 # v5c Wave 2 Phase 2：4 個 Style Score 寫入 snapshot
                 "style_value": styles.get("value"),
                 "style_growth": styles.get("growth"),
                 "style_momentum": styles.get("momentum"),
                 "style_income": styles.get("income"),
-            })
+            }
         except Exception as e:
             logger.debug("score %s 失敗: %s", sid, e)
-    out = pd.DataFrame(rows)
-    return out
+            return None
+
+    # 序列評分（此函式本身已是「單塊」：並行時各 worker 進程跑這條路徑、parent 不會走到這）。
+    rows: list[dict] = []
+    for sid, name in stocks:
+        r = _score_one(sid, name)
+        if r is not None:
+            rows.append(r)
+    return pd.DataFrame(rows)
 
 
 def _score_to_float(v) -> float | None:
