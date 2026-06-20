@@ -49,9 +49,8 @@ class TestWarrantFilter:
         twse_inst = _mk_chip(["2330", "70001"])
         tpex_inst = _mk_chip(["5483", "03241"])
 
-        with patch.object(updater.twse, "daily_ohlcv", return_value=twse_ohlcv), \
+        with patch.object(updater.twse, "daily_ohlcv_and_indices", return_value=(twse_ohlcv, pd.DataFrame())), \
              patch.object(updater.tpex, "daily_ohlcv", return_value=tpex_ohlcv), \
-             patch.object(updater.twse, "daily_indices", return_value=pd.DataFrame()), \
              patch.object(updater.twse, "institutional", return_value=twse_inst), \
              patch.object(updater.tpex, "institutional", return_value=tpex_inst), \
              patch.object(updater.twse, "margin", return_value=pd.DataFrame()), \
@@ -86,9 +85,8 @@ class TestWarrantFilter:
 
         twse_ohlcv = _mk_ohlcv([("70001", "權證A"), ("70002", "權證B")])
 
-        with patch.object(updater.twse, "daily_ohlcv", return_value=twse_ohlcv), \
+        with patch.object(updater.twse, "daily_ohlcv_and_indices", return_value=(twse_ohlcv, pd.DataFrame())), \
              patch.object(updater.tpex, "daily_ohlcv", return_value=pd.DataFrame()), \
-             patch.object(updater.twse, "daily_indices", return_value=pd.DataFrame()), \
              patch.object(updater.twse, "institutional", return_value=pd.DataFrame()), \
              patch.object(updater.tpex, "institutional", return_value=pd.DataFrame()), \
              patch.object(updater.twse, "margin", return_value=pd.DataFrame()), \
@@ -111,9 +109,8 @@ class TestWarrantFilter:
 
         twse_ohlcv = _mk_ohlcv([("0050", "元大台灣50"), ("00878", "國泰永續高股息")])
 
-        with patch.object(updater.twse, "daily_ohlcv", return_value=twse_ohlcv), \
+        with patch.object(updater.twse, "daily_ohlcv_and_indices", return_value=(twse_ohlcv, pd.DataFrame())), \
              patch.object(updater.tpex, "daily_ohlcv", return_value=pd.DataFrame()), \
-             patch.object(updater.twse, "daily_indices", return_value=pd.DataFrame()), \
              patch.object(updater.twse, "institutional", return_value=pd.DataFrame()), \
              patch.object(updater.tpex, "institutional", return_value=pd.DataFrame()), \
              patch.object(updater.twse, "margin", return_value=pd.DataFrame()), \

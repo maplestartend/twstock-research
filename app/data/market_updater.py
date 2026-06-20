@@ -1,11 +1,13 @@
 """市場級資料更新：用 TWSE + TPEx 官方 Open Data，每天一次全市場抓取。
 
-每日流程（~8 個 HTTP requests）：
-1. TWSE daily OHLCV      → daily_price
-2. TWSE institutional    → institutional
-3. TWSE margin           → margin
-4. TWSE PER/PBR          → per_pbr
-5-8. 同上，但換成 TPEx
+每日流程（7 個 HTTP requests，TWSE 4 + TPEx 3）：
+- TWSE：OHLCV+價格指數（共用一個 MI_INDEX 請求）、institutional、margin、PER/PBR
+- TPEx：OHLCV、institutional、margin、PER/PBR（TPEx 無價格指數）
+
+抓取分兩階段（見 fetch_one_date）：
+- Phase 1（並行 I/O）：TWSE 組與 TPEx 組是獨立 host、rate-limit 互不相干，用兩條
+  執行緒並行抓（各用自己的 requests.Session）。
+- Phase 2（序列 DB）：合併、過濾權證、upsert，全部序列做（不並發寫 SQLite）。
 
 也負責：
 - 更新 stock_info（以 OHLCV 裡的代號/名稱為準）
@@ -14,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from typing import Iterable
 
@@ -41,23 +44,18 @@ class MarketUpdater:
         """抓取單一日期，兩個市場共 8 個端點。回傳每個 dataset 寫入的筆數。"""
         results: dict[str, int] = {}
 
-        def _run(label: str, fn, table: str, market_tag: str | None = None):
-            try:
-                df = fn(date_ymd)
-            except (TwseError, TpexError) as e:
-                logger.warning("%s %s 失敗: %s", market_tag, label, e)
-                return 0
-            if df.empty:
-                return 0
-            n = self.db.upsert_df(df, table)
-            return n
+        # Phase 1（並行 I/O）：TWSE 與 TPEx 是各自獨立的 host、rate-limit 互不相干 → 兩組
+        # HTTP 並行抓。每個 fetcher 用自己的 requests.Session、各跑在自己的執行緒、不共用
+        # 連線 → thread-safe；所有 DB 寫入留到 Phase 2 序列做（不並發寫 SQLite）。
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market") as ex:
+            fut_twse = ex.submit(self._fetch_twse_bundle, date_ymd)
+            fut_tpex = ex.submit(self._fetch_tpex_bundle, date_ymd)
+            twse_b = fut_twse.result()
+            tpex_b = fut_tpex.result()
 
-        # OHLCV：要先抓，因為也更新 stock_info
-        twse_ohlcv = self._safe(self.twse.daily_ohlcv, date_ymd, label="TWSE OHLCV")
-        tpex_ohlcv = self._safe(self.tpex.daily_ohlcv, date_ymd, label="TPEx OHLCV")
+        # Phase 2（序列 DB 寫入）：以下沿用原邏輯，只是資料改從已抓好的 bundle 取。
+        twse_ohlcv, indices, tpex_ohlcv = twse_b["ohlcv"], twse_b["indices"], tpex_b["ohlcv"]
 
-        # 指數（與 OHLCV 共用 MI_INDEX 請求，但為了封裝清楚還是獨立 call 一次）
-        indices = self._safe(self.twse.daily_indices, date_ymd, label="TWSE 指數")
         if not indices.empty:
             results["index_daily"] = self.db.upsert_df(indices, "index_daily")
 
@@ -132,21 +130,13 @@ class MarketUpdater:
             if not price_all.empty:
                 results["daily_price"] = self.db.upsert_df(price_all, "daily_price")
 
-        # 其他三個 dataset
-        for label, twse_fn, tpex_fn, table in [
-            ("institutional", self.twse.institutional, self.tpex.institutional, "institutional"),
-            ("margin", self.twse.margin, self.tpex.margin, "margin"),
-            ("per_pbr", self.twse.per_pbr, self.tpex.per_pbr, "per_pbr"),
-        ]:
-            frames = []
-            for fn, market in [(twse_fn, "twse"), (tpex_fn, "tpex")]:
-                df = self._safe(fn, date_ymd, label=f"{market} {label}")
-                if not df.empty:
-                    frames.append(df)
+        # 其他三個 dataset（HTTP 已在 Phase 1 並行抓完，這裡只合併 + 過濾 + 寫入）
+        for key in ("institutional", "margin", "per_pbr"):
+            frames = [b[key] for b in (twse_b, tpex_b) if not b[key].empty]
             if frames:
                 combined = _filter_tradable(pd.concat(frames, ignore_index=True))
                 if not combined.empty:
-                    results[table] = self.db.upsert_df(combined, table)
+                    results[key] = self.db.upsert_df(combined, key)
 
         return results
 
@@ -156,6 +146,37 @@ class MarketUpdater:
         except (TwseError, TpexError) as e:
             logger.warning("%s 失敗: %s", label, e)
             return pd.DataFrame()
+
+    def _safe_pair(self, fn, *args, label: str = "") -> tuple[pd.DataFrame, pd.DataFrame]:
+        """同 _safe，但對應「一次回傳兩個 DataFrame」的 fetcher（如 daily_ohlcv_and_indices）。"""
+        try:
+            return fn(*args)
+        except (TwseError, TpexError) as e:
+            logger.warning("%s 失敗: %s", label, e)
+            return pd.DataFrame(), pd.DataFrame()
+
+    # ------------------------------------------------------------------
+    # 單一市場的全部端點（純 I/O，無 DB 副作用）→ 供 Phase 1 並行抓
+    # ------------------------------------------------------------------
+    def _fetch_twse_bundle(self, date_ymd: str) -> dict[str, pd.DataFrame]:
+        ohlcv, indices = self._safe_pair(
+            self.twse.daily_ohlcv_and_indices, date_ymd, label="TWSE OHLCV+指數",
+        )
+        return {
+            "ohlcv": ohlcv,
+            "indices": indices,
+            "institutional": self._safe(self.twse.institutional, date_ymd, label="twse institutional"),
+            "margin": self._safe(self.twse.margin, date_ymd, label="twse margin"),
+            "per_pbr": self._safe(self.twse.per_pbr, date_ymd, label="twse per_pbr"),
+        }
+
+    def _fetch_tpex_bundle(self, date_ymd: str) -> dict[str, pd.DataFrame]:
+        return {
+            "ohlcv": self._safe(self.tpex.daily_ohlcv, date_ymd, label="TPEx OHLCV"),
+            "institutional": self._safe(self.tpex.institutional, date_ymd, label="tpex institutional"),
+            "margin": self._safe(self.tpex.margin, date_ymd, label="tpex margin"),
+            "per_pbr": self._safe(self.tpex.per_pbr, date_ymd, label="tpex per_pbr"),
+        }
 
     # ======================================================================
     # 日期範圍批次

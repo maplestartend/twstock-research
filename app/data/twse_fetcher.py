@@ -88,13 +88,29 @@ class TwseFetcher:
     # ======================================================================
     # 1) 每日收盤行情（OHLCV）
     # ======================================================================
+    def _fetch_mi_index(self, date_ymd: str) -> dict | None:
+        """打一次 MI_INDEX 端點，回傳原始 JSON（OHLCV 與價格指數同源於這一份）。"""
+        url = f"{BASE}/exchangeReport/MI_INDEX"
+        return self._get_json(url, {"response": "json", "date": date_ymd, "type": "ALLBUT0999"})
+
     def daily_ohlcv(self, date_ymd: str) -> pd.DataFrame:
         """date_ymd 格式 YYYYMMDD（西元）。回傳全上市股票當日 OHLCV。"""
-        url = f"{BASE}/exchangeReport/MI_INDEX"
-        j = self._get_json(url, {"response": "json", "date": date_ymd, "type": "ALLBUT0999"})
+        return self._parse_ohlcv(self._fetch_mi_index(date_ymd), date_ymd)
+
+    def daily_ohlcv_and_indices(self, date_ymd: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """OHLCV 與價格指數共用同一個 MI_INDEX 請求 → 一次抓、解析出兩個 DataFrame。
+
+        原本 daily_ohlcv() 與 daily_indices() 各打一次相同 URL（每日多一個 HTTP + 一個
+        request_delay）。回傳 (ohlcv_df, indices_df)，與分開呼叫等價但省一次往返。
+        """
+        j = self._fetch_mi_index(date_ymd)
+        return self._parse_ohlcv(j, date_ymd), self._parse_indices(j, date_ymd)
+
+    @staticmethod
+    def _parse_ohlcv(j: dict | None, date_ymd: str) -> pd.DataFrame:
         if not j or j.get("stat") != "OK":
             return pd.DataFrame()
-        table = self._find_table(j, "每日收盤行情")
+        table = TwseFetcher._find_table(j, "每日收盤行情")
         if not table:
             return pd.DataFrame()
 
@@ -139,7 +155,10 @@ class TwseFetcher:
                 "spread": spread,
             })
         df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
+        # rows 非空但所有 sid 都被濾掉時 data==[]，空 df 無 date 欄 → 防 KeyError
+        # （與 _parse_indices 的 `if not df.empty` 防禦對稱）。
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
         return df
 
     # ======================================================================
@@ -147,8 +166,10 @@ class TwseFetcher:
     # ======================================================================
     def daily_indices(self, date_ymd: str) -> pd.DataFrame:
         """從 MI_INDEX table[0] 抽取當日價格指數（發行量加權股價指數 等）。"""
-        url = f"{BASE}/exchangeReport/MI_INDEX"
-        j = self._get_json(url, {"response": "json", "date": date_ymd, "type": "ALLBUT0999"})
+        return self._parse_indices(self._fetch_mi_index(date_ymd), date_ymd)
+
+    @staticmethod
+    def _parse_indices(j: dict | None, date_ymd: str) -> pd.DataFrame:
         if not j or j.get("stat") != "OK":
             return pd.DataFrame()
         tables = j.get("tables", []) or []
