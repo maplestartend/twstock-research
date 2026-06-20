@@ -7,6 +7,7 @@ trade_log 表：每筆買/賣的紀錄（append-only，不刪改）
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
@@ -15,6 +16,8 @@ import pandas as pd
 
 from app.config import Config
 from app.data.db import Database
+
+logger = logging.getLogger(__name__)
 
 BUY = "BUY"
 SELL = "SELL"
@@ -430,6 +433,15 @@ def realized_pnl(db: Database, stock_id: str | None = None) -> pd.DataFrame:
                     remain -= use
                     if head["shares"] <= 0:
                         buy_queue.pop(0)
+                if remain > 1e-9:
+                    # 賣超 / 賣在買之前（無對應庫存）：FIFO 沒有做空概念，殘量無法配對。
+                    # 原本是「靜默丟棄」→ 已實現損益會悄悄少算且使用者無從察覺；
+                    # 至少記一筆 WARNING，提示 trade_log 資料可能不一致（observability）。
+                    logger.warning(
+                        "realized_pnl: %s 在 %s 賣出 %s 股超過可配對庫存，"
+                        "未配對 %s 股無法計入已實現損益（trade_log 資料可能不一致）",
+                        sid, t["trade_date"], t["shares"], remain,
+                    )
     return pd.DataFrame(out_rows)
 
 
